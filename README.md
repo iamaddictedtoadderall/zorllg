@@ -7,6 +7,7 @@ Open `index.html` in a browser.
 
 - Tap the tree to gather essence
 - Invite creatures and decorate the grove, from picnic blankets and swings to hot springs and crystals
+- Open the Map to unlock and travel to new places: Snowy Peak, Lakeside, Mushroom Hollow and the Floating Isle
 - Open the Journal to see every creature, coat and weather event you've found
 - Tap a creature to pet it, give it a treat, or see it up close
 - Drag to look around, scroll or pinch to zoom
