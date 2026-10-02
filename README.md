@@ -9,5 +9,7 @@ Open `index.html` in a browser.
 - Invite creatures and decorate the grove
 - Tap a creature to pet it, give it a treat, or see it up close
 - Drag to look around, scroll or pinch to zoom
+- New creatures can arrive with rare coats, from Pale and Frost up to Golden and Prismatic
+- Watch for weather events, from fog and snow to meteor showers, auroras and a blue moon
 
 Progress saves in your browser.
