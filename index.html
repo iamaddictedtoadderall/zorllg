@@ -49,6 +49,21 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .pill{padding:7px 12px;font-size:14px;white-space:nowrap}
 .btn-ghost{cursor:pointer}
 .btn-ghost:hover{background:var(--panel-2)}
+#jBtn{position:relative}
+.jdot{position:absolute;top:-4px;right:-4px;width:10px;height:10px;background:var(--gold);border:2px solid var(--gold-ink)}
+.jsec{margin-top:12px}
+.jsec h3{margin:0 0 6px;font-size:15px;font-weight:700;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.jsec h3 small{font-family:var(--f-tag);font-size:10px;color:var(--muted);letter-spacing:.05em}
+.jprog{height:10px;background:var(--shade);border:2px solid var(--edge);position:relative;margin:2px 0 4px}
+.jprog i{position:absolute;inset:0 auto 0 0;background:var(--gold)}
+.jgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.jc{display:flex;gap:8px;align-items:center;padding:6px 8px;background:rgba(0,0,0,.18);min-width:0}
+.jc.locked{opacity:.55}
+.jc .it-main{min-width:0}
+.jc .it-name{font-size:14px}
+.jc .it-sub{overflow-wrap:anywhere}
+.jicon{width:26px;height:26px;flex:none;border:2px solid var(--shade);display:grid;place-items:center;font-size:14px;background:var(--panel-2);color:var(--gold)}
+.t-common{background:var(--edge);color:var(--ink)}
 
 .log{position:absolute;left:12px;top:calc(76px + env(safe-area-inset-top,0px));display:grid;gap:4px;max-width:min(360px,calc(100% - 24px));pointer-events:none}
 .log div{font-size:13px;color:var(--ink);text-shadow:0 2px 0 var(--shade),0 0 6px rgba(0,0,0,.6);transition:opacity .6s}
@@ -154,6 +169,7 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
       </div>
     </div>
     <div class="hud-right">
+      <button id="jBtn" class="panel pill btn-ghost" aria-label="Open journal">Journal<span id="jDot" class="jdot" hidden></span></button>
       <div id="clock" class="panel pill">☀ Day</div>
       <button id="snd" class="panel pill btn-ghost" aria-label="Toggle sound">♪ On</button>
     </div>
@@ -246,15 +262,23 @@ const DECOR={
   pond:{name:'Pond',cost:140,stage:0,fp:1.4,desc:'Splashing and drinking spot.'},
   mushring:{name:'Mushroom Ring',cost:260,stage:1,fp:1.1,desc:'Glows softly. Mystical creatures gather here.'},
   musicstone:{name:'Music Stone',cost:420,stage:1,fp:.6,desc:'Hums a tune. Playful creatures dance.'},
-  campfire:{name:'Campfire',cost:700,stage:2,fp:.8,desc:'Everyone huddles here on cold nights.'}
+  campfire:{name:'Campfire',cost:700,stage:2,fp:.8,desc:'Everyone huddles here on cold nights.'},
+  picnic:{name:'Picnic Blanket',cost:60,stage:0,fp:.8,desc:'Snacks and gossip. Social and hungry ones gather here.'},
+  birdbath:{name:'Bird Bath',cost:90,stage:0,fp:.5,desc:'Birds splash in it, small creatures sip from it.'},
+  swing:{name:'Swing',cost:120,stage:0,fp:.8,desc:'Back and forth, back and forth. Playful ones love it.'},
+  hammock:{name:'Hammock',cost:180,stage:1,fp:1.1,desc:'The best nap spot in the grove.'},
+  rock:{name:'Stargazing Rock',cost:220,stage:1,fp:.9,desc:'A flat warm rock for sunning by day and stargazing by night.'},
+  chimes:{name:'Wind Chimes',cost:150,stage:1,fp:.4,desc:'Sings in the breeze. Creatures dance when it gets windy.'},
+  hotspring:{name:'Hot Spring',cost:900,stage:2,fp:1.3,desc:'A steamy soak. Extra popular on cold and rainy nights.'},
+  crystal:{name:'Crystal Cluster',cost:1500,stage:3,fp:.7,desc:'Hums with old magic. Mystical creatures gather here.'}
 };
-const DECOR_ORDER=['flowers','lantern','berrybush','bench','pond','mushring','musicstone','campfire'];
+const DECOR_ORDER=['flowers','lantern','berrybush','picnic','bench','birdbath','swing','pond','chimes','hammock','rock','mushring','musicstone','campfire','hotspring','crystal'];
 
 const PERS={
-  Lazy:{fav:['nap','sit'],loves:'long naps',w:{nap:3,wander:.5,sit:2},lines:['five more minutes...','is it nap time? it is now.','*big yawn*']},
+  Lazy:{fav:['nap','sit','soak'],loves:'long naps',w:{nap:3,wander:.5,sit:2,soak:2},lines:['five more minutes...','is it nap time? it is now.','*big yawn*']},
   Shy:{fav:['hide'],loves:'quiet hiding spots',w:{hide:4,social:.4,play:.5},lines:['oh! h-hello.','i like it here. quietly.','...hi.']},
   Curious:{fav:['explore','wander'],loves:'exploring new things',w:{wander:2,explore:3},lines:["what's over there?",'ooh, shiny!','i wonder...']},
-  Playful:{fav:['play','dance'],loves:'tag and dancing',w:{play:3,dance:2.5},lines:["tag! you're it!",'wheee!','again! again!']},
+  Playful:{fav:['play','dance','swing'],loves:'tag and dancing',w:{play:3,dance:2.5,swing:2.5},lines:["tag! you're it!",'wheee!','again! again!']},
   Social:{fav:['social','warm'],loves:'chatting with friends',w:{social:3,warm:1.6},lines:['hey friend!','did you hear about the owl?','everyone come sit!']},
   Hungry:{fav:['eat'],loves:'berries and flowers',w:{eat:3.5},lines:['snack time.','berries. now.','can i eat that mushroom?']},
   Dreamy:{fav:['stargaze','bask'],loves:'stars and lantern light',w:{stargaze:3,bask:2.5,sit:1.5},lines:['the stars look soft tonight.','i dreamed i was a cloud.','~ ~ ~']},
@@ -264,7 +288,8 @@ const PERS_KEYS=Object.keys(PERS);
 const NAMES=['Clover','Pip','Bramble','Moss','Juniper','Fern','Acorn','Thistle','Hazel','Willow','Pebble','Sorrel','Tansy','Nutmeg','Bean','Maple','Wren','Basil','Poppy','Rowan','Sprout','Biscuit','Mallow','Tumble','Dewdrop','Cinder','Quill','Olive','Figgy','Lumen','Nova','Ember','Sage','Pudding','Button','Marigold','Truffle','Sable','Breeze','Puddle','Barley','Mochi','Toffee','Sundew','Kestrel','Wisp','Bumble','Cosmo'];
 
 /* ---------- State ---------- */
-const state={essence:25,stage:0,time:DAY*0.03,taps:0,total:0,night:0,light:1,sound:true};
+const state={essence:25,stage:0,time:DAY*0.03,taps:0,total:0,night:0,light:1,sound:true,journal:{sp:{},co:{},ev:{}}};
+let loading=false;
 const creatures=[], decor=[];
 let uid=1, selected=null, follow=null, visitor=null, visitorCD=25, placing=null, openTab=null;
 
@@ -381,7 +406,7 @@ function eligible(E){
   if(E.when==='day') return state.light>.6; if(E.when==='night') return state.night>.6; return true;
 }
 function startEvent(id){
-  const E=EVENTS[id]; weather.cur={id,t:rand(E.dur[0],E.dur[1]),ending:false}; weather.amt=Math.min(weather.amt,.05);
+  const E=EVENTS[id]; discover('ev',id); weather.cur={id,t:rand(E.dur[0],E.dur[1]),ending:false}; weather.amt=Math.min(weather.amt,.05);
   log(E.start);
   if(E.tier!=='common'){toast(EV_TIER[E.tier]+E.name+'!'); chord(E.tier==='legend'?[523.25,659.25,783.99,1046.5,1318.5]:[587.33,739.99,880]);}
   if(id==='starfall') visitorCD=Math.min(visitorCD,4);
@@ -944,12 +969,32 @@ function buildDecor(type){
   else if(type==='mushring'){for(let i=0;i<7;i++){const a=i/7*TAU,x=Math.cos(a)*.95,z=Math.sin(a)*.95; B(g,.1,.18,.1,0xf0e6d0,x,.09,z); d.caps.push(B(g,.26,.1,.26,0x58d6c4,x,.22,z,true));}}
   else if(type==='musicstone'){const s1=B(g,.7,.9,.5,0x8c9294,0,.45,0); s1.rotation.y=.2; B(g,.5,.2,.4,0x7a8082,.05,.95,0); d.glow=B(g,.22,.3,.02,0xc6b4ff,.05,.55,.26,true); d.notes=true;}
   else if(type==='campfire'){for(let i=0;i<8;i++){const a=i/8*TAU; B(g,.2,.14,.16,0x8a8f8c,Math.cos(a)*.55,.07,Math.sin(a)*.55).rotation.y=-a;} B(g,.8,.12,.12,0x5a3a26,0,.1,0).rotation.y=.5; B(g,.8,.12,.12,0x4e3222,0,.16,0).rotation.y=-.6; [[.26,0xff8a3d,0],[.18,0xffc24a,.08],[.1,0xfff1a8,.16]].forEach(([s,c,y])=>d.flames.push(B(g,s,s*1.4,s,c,0,.3+y,0,true))); d.light={y:.6,color:0xff9a4a,k:1.6};}
-  g.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+  else if(type==='picnic'){B(g,1.4,.02,1.1,0xd8544a,0,.01,0); for(let i=0;i<4;i++)for(let j=0;j<4;j++) if((i+j)%2) B(g,.35,.022,.275,0xf3ead6,-.525+i*.35,.011,-.4125+j*.275);
+    B(g,.32,.2,.24,0x9a6a3a,.35,.12,-.2); B(g,.34,.03,.26,0x7a5028,.35,.23,-.2); B(g,.03,.14,.03,0x7a5028,.22,.3,-.2); B(g,.03,.14,.03,0x7a5028,.48,.3,-.2); B(g,.29,.03,.03,0x7a5028,.35,.37,-.2);
+    B(g,.24,.02,.24,0xffffff,-.3,.03,.2); [[-.34,.17],[-.27,.24],[-.25,.15]].forEach(([x,z])=>B(g,.06,.06,.06,0xd8414f,x,.07,z)); B(g,.2,.08,.12,0xe0b26a,.1,.06,.3);}
+  else if(type==='birdbath'){B(g,.42,.08,.42,0x8a8f8c,0,.04,0); B(g,.16,.66,.16,0x9da19a,0,.4,0); B(g,.72,.1,.72,0x9da19a,0,.78,0); B(g,.76,.06,.06,0x8a8f8c,0,.84,.35); B(g,.76,.06,.06,0x8a8f8c,0,.84,-.35); B(g,.06,.06,.64,0x8a8f8c,.35,.84,0); B(g,.06,.06,.64,0x8a8f8c,-.35,.84,0);
+    B(g,.62,.02,.62,0x5fb3d4,0,.84,0);}
+  else if(type==='swing'){[-1,1].forEach(k=>{B(g,.09,1.5,.09,0x5a3f2c,k*.62,.72,.22).rotation.x=-.15; B(g,.09,1.5,.09,0x5a3f2c,k*.62,.72,-.22).rotation.x=.15;}); B(g,1.36,.09,.09,0x6e4a33,0,1.44,0);
+    const S=new THREE.Group(); S.position.y=1.42; g.add(S); [-1,1].forEach(k=>B(S,.02,.95,.02,0xd8c49a,k*.24,-.48,0)); B(S,.62,.06,.28,0x8a5f3c,0,-.97,0); d.seat=S; d.swingA=0;}
+  else if(type==='hammock'){[-1,1].forEach(k=>{B(g,.1,1.1,.1,0x5a3f2c,k*.95,.55,0); B(g,.12,.06,.12,0x4a3020,k*.95,1.1,0);});
+    [[-.72,.62],[-.4,.5],[0,.45],[.4,.5],[.72,.62]].forEach(([x,y],i)=>{B(g,.36,.05,.5,i%2?0x5aa8e0:0xe8d7a0,x,y,0).rotation.z=x*-.25;}); [-1,1].forEach(k=>B(g,.2,.02,.02,0xd8c49a,k*.88,.72,0).rotation.z=k*.6);}
+  else if(type==='rock'){const r1=B(g,1.25,.42,.95,0x8a8f8c,0,.21,0); r1.rotation.y=.3; const r2=B(g,1.0,.14,.78,0x9da19a,0,.48,0); r2.rotation.y=.25; B(g,.34,.02,.22,0x6cbf6a,.25,.56,.1); B(g,.2,.02,.14,0x5fae5c,-.3,.56,-.15);
+    [[.55,.25],[-.6,-.2],[.2,-.5]].forEach(([x,z])=>B(g,.22,.16,.2,0x7a7f7b,x,.08,z));}
+  else if(type==='chimes'){B(g,.08,1.6,.08,0x5a3f2c,0,.8,0); B(g,.6,.05,.05,0x5a3f2c,.25,1.56,0); B(g,.28,.05,.28,0x6e4a33,.45,1.48,0); d.chimes=[];
+    for(let i=0;i<5;i++){const a=i/5*TAU, C=new THREE.Group(); C.position.set(.45+Math.cos(a)*.1,1.45,Math.sin(a)*.1); B(C,.012,.12,.012,0xd8c49a,0,-.06,0); B(C,.04,.24+i*.05,.04,0xcfd8e0,0,-.24-i*.025,0,true); g.add(C); d.chimes.push(C);}
+    d.chimeT=rand(3,8);}
+  else if(type==='hotspring'){const w=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.2,.06,10),M(0x86d6dc)); w.position.y=.03; g.add(w);
+    for(let i=0;i<13;i++){const a=i/13*TAU,s=rand(.24,.38); const m=B(g,s*1.3,s*.75,s,pick([0x8a8f8c,0x9da19a,0x6f7470]),Math.cos(a)*1.32,s*.32,Math.sin(a)*1.32); m.rotation.y=-a;}
+    d.steam=[]; for(let i=0;i<5;i++){const m=new THREE.Mesh(boxGeo,halo(0xffffff,.2)); m.userData.o=i/5; m.userData.x=rand(-.6,.6); m.userData.z=rand(-.6,.6); g.add(m); d.steam.push(m);}}
+  else if(type==='crystal'){B(g,.9,.22,.7,0x6f7470,0,.11,0).rotation.y=.4; d.crystals=[];
+    [[0,.9,0,0,0],[.22,.6,.1,.35,.2],[-.2,.7,-.05,-.4,-.1],[.05,.5,-.22,.1,-.45],[-.08,.45,.2,-.2,.4]].forEach(([x,h,z,rz,rx])=>{const m=B(g,.18,h,.18,0xb48cff,x,.2+h/2,z,true); m.rotation.set(rx,.6,rz); d.crystals.push(m); B(g,.1,h*.4,.1,0xe8dcff,x,.2+h*.78,z,true).rotation.set(rx,.6,rz);});
+    d.light={y:.8,color:0xb48cff,k:1.1};}
+  g.traverse(o=>{if(o.isMesh&&!(o.material&&o.material.transparent)){o.castShadow=true;o.receiveShadow=true;}});
   return d;
 }
 function addDecor(type,x,z,rot){
   const d=buildDecor(type); d.type=type; d.pos=new V(x,0,z);
-  d.rot=rot!=null?rot:(type==='bench'?Math.atan2(-x,-z):rand(0,TAU));
+  d.rot=rot!=null?rot:(type==='bench'||type==='swing'?Math.atan2(-x,-z):rand(0,TAU));
   d.g.position.copy(d.pos); d.g.rotation.y=d.rot; scene.add(d.g); decor.push(d); assignLights(); return d;
 }
 function assignLights(){
@@ -996,6 +1041,7 @@ function chooseActivity(c){
     if(sp.perch&&treeInfo.perches.length){const sleepy=sp.nocturnal?!night:night; add(sleepy?'nap':'perch',sleepy?4:2.5,{target:perchPoint(),dur:rand(10,18),label:sleepy?'snoozing on a branch':'perched on a branch',emote:sleepy?'z':'♪'});}
     if(night) add('stargaze',1.2,{target:skyPoint(sp),dur:rand(5,9),label:'stargazing',emote:'✦'});
     eventReact(c,add);
+    {const bb=decorOf('birdbath'); if(bb.length&&!sp.big){const d=pick(bb); add('bathe',1.4,{target:d.pos.clone().add(new V(0,.86,0)),dur:rand(6,10),label:'splashing in the bird bath',emote:'~'});}}
     if(sp.id==='glowmoth'){const l=decorOf('lantern'); if(l.length){const d=pick(l); add('bask',night?4:1,{target:d.pos.clone().add(new V(rand(-.4,.4),1.4+rand(0,.5),rand(-.4,.4))),dur:rand(6,10),label:'fluttering around a lantern',emote:'✦'});}}
     return weighted(opts);
   }
@@ -1012,6 +1058,16 @@ function chooseActivity(c){
   if((d=pickD('bench'))) add('sit',1.3,Object.assign(benchSpot(d),{dur:rand(8,14),label:'resting on the bench',emote:'…'}));
   if((d=pickD('campfire'))) add('warm',night?2.6:.5,Object.assign(decorSpot(d,1.25,true),{dur:rand(8,14),label:'warming up by the campfire',emote:'~'}));
   if((d=pickD('lantern'))) add('bask',night?1.6:.25,Object.assign(decorSpot(d,.7,true),{dur:rand(6,10),label:'basking in the lantern glow',emote:'✦'}));
+  // Seats (swing, hammock, rock) hold one creature at a time.
+  const free=t=>{if(sp.kind==='float') return null; const a=decorOf(t).filter(q=>!(q.user&&q.user!==c&&creatures.includes(q.user)&&q.user.act&&q.user.act.decor===q)); return a.length?pick(a):null;};
+  if((d=free('swing'))) add('swing',1.2,{target:d.pos.clone(),faceYaw:d.rot,lift:.5,decor:d,dur:rand(7,12),label:'swinging on the swing',emote:'♪'});
+  if((d=free('hammock'))) add('nap',night?2:1,{target:d.pos.clone(),faceYaw:d.rot+Math.PI/2,lift:.4,decor:d,dur:rand(12,20),label:'napping in the hammock',emote:'z'});
+  if((d=free('rock'))) add(night?'stargaze':'bask',night?2.2:.7,{target:d.pos.clone(),faceYaw:rand(0,TAU),lift:.56,decor:d,dur:rand(8,14),label:night?'stargazing from the rock':'sunning on the rock',emote:night?'✦':'☀'});
+  if((d=pickD('picnic'))){add('eat',1.6,Object.assign(decorSpot(d,.6,true),{dur:rand(6,10),label:'snacking on the picnic blanket',emote:'nom'})); add('social',1.2,Object.assign(decorSpot(d,.65,true),{dur:rand(6,10),label:'chatting on the picnic blanket',emote:'…'}));}
+  if((d=pickD('hotspring'))) add('soak',(night||evOn('snow')||evOn('rain'))?3:1.2,Object.assign(decorSpot(d,.75,false),{lift:-.14,dur:rand(10,16),label:'soaking in the hot spring',emote:'~'}));
+  if((d=pickD('chimes'))) add('dance',evOn('wind')?3:.7,Object.assign(decorSpot(d,.9,true),{dur:rand(6,10),label:'listening to the wind chimes',emote:'♪'}));
+  if((d=pickD('crystal'))) add('bask',sp.mystic?3:.6,Object.assign(decorSpot(d,1,true),{dur:rand(7,12),label:'glowing by the crystals',emote:'✦'}));
+  if((d=pickD('birdbath'))&&sp.size<.7) add('drink',1.2,Object.assign(decorSpot(d,.6,true),{dur:rand(5,8),label:'sipping from the bird bath',emote:'~'}));
   if(decor.length){d=pick(decor); add('explore',.8,Object.assign(decorSpot(d,1.3,true),{dur:rand(3,5),label:'checking out the '+DECOR[d.type].name.toLowerCase(),emote:'?'}));}
   const others=creatures.filter(o=>o!==c&&!o.leaving&&o.sp.kind!=='fly'&&o.mesh.position.y<.5);
   if(others.length){
@@ -1034,6 +1090,7 @@ function startActivity(c){
   const p=c.mesh.position;
   if(act.loop){c.loopR=clamp(Math.hypot(p.x,p.z),treeInfo.r+2.5,c.sp.big?13:10); c.loopA=Math.atan2(p.z,p.x); c.loopDir=Math.random()<.5?-1:1; c.loopY=p.y; c.mode='do'; c.timer=act.dur; announce(c); return;}
   if(act.target) constrain(act.target,c.sp,c.leaving);
+  if(act.decor) act.decor.user=c;
   c.path=c.follow?[]:(c.sp.kind==='climb'?climbPath(p,act.target):[act.target]);
   c.mode='move';
 }
@@ -1058,7 +1115,7 @@ function finish(c){
   if(a.partner&&creatures.includes(a.partner)) a.partner.happy=clamp(a.partner.happy+2,5,100);
   resetPose(c); c.follow=null; startActivity(c);
 }
-function resetPose(c){const P=c.mesh.userData.parts; P.g.position.y=0; P.g.scale.set(1,1,1); if(P.head) P.head.rotation.x=0;}
+function resetPose(c){const P=c.mesh.userData.parts; P.g.position.set(0,0,0); P.g.scale.set(1,1,1); if(P.head) P.head.rotation.x=0;}
 function lerpAngle(a,b,t){let d=((b-a+Math.PI)%TAU+TAU)%TAU-Math.PI; return a+d*t;}
 const tmpV=new V(), tmpT=new V();
 
@@ -1092,7 +1149,10 @@ function updateCreature(c,dt,t){
       if(dist>1){tmpV.multiplyScalar(Math.min(dist,sp.speed*1.25*dt)/dist); p.add(tmpV); c.mesh.rotation.y=Math.atan2(tmpV.x,tmpV.z); moving=true;}
       else g.position.y=Math.abs(Math.sin(t*10))*.12*s;
     }
+    else if(a==='swing'){const d=c.act.decor; g.position.z=-Math.sin(d?d.swingA:0)*.95;}
+    else if(a==='bathe'){g.position.y=Math.abs(Math.sin(t*9+c.seed))*.06; if(c.bubbleT<=0&&Math.random()<dt*.3) bubble(c,'~');}
     else {g.scale.y=1+Math.sin(t*2+c.seed)*.025;}
+    if(c.act.lift!=null) g.position.y=lerp(g.position.y,c.act.lift+(a==='soak'?Math.sin(t*1.5+c.seed)*.02:0),dt*6);
     if(c.timer<=0) finish(c);
   }
   // legs & bob
@@ -1109,7 +1169,7 @@ function updateCreature(c,dt,t){
     P.wings.forEach(W=>{const base=W.userData.base||0; W.rotation.z=resting?lerp(W.rotation.z,base,dt*6):base+W.userData.k*Math.sin(t*rate+c.seed)*amp;});
   }
   // height + bounds
-  if(fly){ if(!(c.mode==='do'&&(c.act.type==='perch'||c.act.type==='nap'))&&c.act.type!=='loop') g.position.y=Math.sin(t*2.2+c.seed)*.12; constrain(p,sp); }
+  if(fly){ if(!(c.mode==='do'&&(c.act.type==='perch'||c.act.type==='nap'||c.act.type==='bathe'))&&c.act.type!=='loop') g.position.y=Math.sin(t*2.2+c.seed)*.12; constrain(p,sp); }
   else if(climb){ if(p.y<.3) p.y=Math.max(0,p.y); constrain(p,sp,c.leaving); }
   else { p.y=sp.kind==='float'?.35+Math.sin(t*2+c.seed)*.1:0; constrain(p,sp,c.leaving); }
   detailAnim(c,t);
@@ -1131,6 +1191,7 @@ function createCreature(id,o){
   constrain(mesh.position,sp);
   scene.add(mesh);
   c.bubbleEl=document.createElement('div'); c.bubbleEl.className='bubble'; c.bubbleEl.hidden=true; $('#bubbles').appendChild(c.bubbleEl);
+  discover('sp',id); if(tint.tier!=='natural') discover('co',tint.id,sp.name);
   creatures.push(c); startActivity(c);
   return c;
 }
@@ -1335,13 +1396,48 @@ function renderPanel(tab){
     if(!list.length) return `<div class="ph"><h2>Your friends</h2><p>No one lives here yet. Invite someone from the Creatures tab.</p></div>`;
     return `<div class="ph"><h2>Your friends</h2><p>${list.length} creature${list.length>1?'s':''} call this tree home. Tap one to visit.</p></div><div class="list">${list.map(c=>`<div class="item clickable" data-friend="${c.uid}"><span class="sw" style="--a:${hex(coatHex(c,c.sp.a))};--b:${hex(coatHex(c,c.sp.b))}"></span><div class="it-main"><div class="it-name">${c.name} <span class="it-sub">${c.pers} ${c.sp.name}</span>${tierChip(c.tint)}</div><div class="it-sub" data-act="${c.uid}">${c.act?c.act.label:''}</div></div><span class="mini-bar"><i data-mood="${c.uid}" style="width:${c.happy}%"></i></span></div>`).join('')}</div>`;
   }
+  if(tab==='journal') return renderJournal();
   if(tab==='tree'){
     const S=STAGES[state.stage], N=STAGES[state.stage+1];
     return `<div class="ph"><h2>${S.name}</h2><p>Every tap on the tree gathers ${S.tap} essence.</p></div><div class="stages">${STAGES.map((_,i)=>`<span class="${i<=state.stage?'on':''}"></span>`).join('')}</div>${N?`<div class="tree-next"><div><div class="it-name">Next: ${N.name}</div><div class="it-sub">${N.unlock}</div></div><button class="btn gold" data-grow="1" data-cost="${N.cost}">Grow · ${fmt(N.cost)} ✦</button></div>`:`<div class="tree-next"><div class="it-name">Fully grown</div><div class="it-sub">Your World Tree is complete. Keep filling it with friends.</div></div>`}<div class="stats"><div><b>${creatures.filter(c=>!c.visitor).length}</b><small>FRIENDS</small></div><div><b>${decor.length}</b><small>DECOR</small></div><div><b>${fmt(state.total)}</b><small>GATHERED</small></div></div>`;
   }
   return '';
 }
-function openPanel(tab){openTab=tab; $('#panel').hidden=false; document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab))); $('#panelBody').innerHTML=renderPanel(tab); updateAfford(); if(innerWidth<=640&&selected) deselect();}
+/* ---------- Journal ---------- */
+// Records every species, coat and weather event the player has seen. Undiscovered ones show as ???.
+const JOURNAL_SP=[...SHOP,'starfox'], JOURNAL_CO=Object.keys(TINTS).filter(k=>k!=='natural'), JOURNAL_EV=Object.keys(EVENTS);
+const JOURNAL_NAMES={sp:id=>SPECIES[id].name,co:id=>TINTS[id].name+' coat',ev:id=>EVENTS[id].name};
+function discover(kind,id,val){
+  const J=state.journal[kind]; if(J[id]) return; J[id]=val||1;
+  if(loading) return;
+  $('#jDot').hidden=false; log(`📖 Added to your journal: ${JOURNAL_NAMES[kind](id)}.`);
+  if(openTab==='journal') refreshPanel();
+}
+function coatSwatch(t){
+  if(t.live==='prism') return 'linear-gradient(135deg,#ff8a8a,#ffe08a,#8affc1,#8ac8ff,#d08aff)';
+  const cs=[0x8a5a3a,0xc98f5a,0xf0dcc0].map(h=>hex(tintColor(t,h)));
+  return `linear-gradient(135deg,${cs[0]},${cs[1]} 55%,${cs[2]})`;
+}
+function jSection(title,ids,kind,cell){
+  const found=ids.filter(id=>state.journal[kind][id]).length;
+  return `<div class="jsec"><h3>${title}<small>${found} / ${ids.length}</small></h3><div class="jgrid">${ids.map(id=>cell(id,!!state.journal[kind][id])).join('')}</div></div>`;
+}
+function renderJournal(){
+  const J=state.journal, total=JOURNAL_SP.length+JOURNAL_CO.length+JOURNAL_EV.length;
+  const got=JOURNAL_SP.filter(i=>J.sp[i]).length+JOURNAL_CO.filter(i=>J.co[i]).length+JOURNAL_EV.filter(i=>J.ev[i]).length;
+  const lock='<span class="jicon">?</span>';
+  return `<div class="ph"><h2>Journal</h2><p>Everything you've discovered in the grove. ${got} of ${total} found.</p></div><div class="jprog"><i style="width:${got/total*100}%"></i></div>`
+  +jSection('Creatures',JOURNAL_SP,'sp',(id,ok)=>{const sp=SPECIES[id];
+    return ok?`<div class="jc"><span class="sw" style="--a:${hex(sp.a)};--b:${hex(sp.b)}"></span><div class="it-main"><div class="it-name">${sp.name}</div><div class="it-sub">${sp.visitorOnly?'Rare night visitor':layerName(sp)}</div></div></div>`
+      :`<div class="jc locked">${lock}<div class="it-main"><div class="it-name">???</div><div class="it-sub">${sp.visitorOnly?'Visits on some nights':state.stage<sp.stage?'Grow to '+STAGES[sp.stage].name:'Not invited yet'}</div></div></div>`;})
+  +jSection('Coats',JOURNAL_CO,'co',(id,ok)=>{const t=TINTS[id];
+    return ok?`<div class="jc"><span class="sw" style="background:${coatSwatch(t)}"></span><div class="it-main"><div class="it-name">${t.name} ${tierChip(t)}</div><div class="it-sub">First seen on a ${String(J.co[id]).toLowerCase()}</div></div></div>`
+      :`<div class="jc locked">${lock}<div class="it-main"><div class="it-name">??? <span class="tchip t-${t.tier}">${TIERS[t.tier].name.toUpperCase()}</span></div><div class="it-sub">Not found yet</div></div></div>`;})
+  +jSection('Weather',JOURNAL_EV,'ev',(id,ok)=>{const E=EVENTS[id], chip=`<span class="tchip t-${E.tier}">${E.tier==='legend'?'VERY RARE':E.tier.toUpperCase()}</span>`;
+    return ok?`<div class="jc"><span class="jicon">${E.label.split(' ')[0]}</span><div class="it-main"><div class="it-name">${E.name} ${chip}</div><div class="it-sub" title="${E.start}">${E.start}</div></div></div>`
+      :`<div class="jc locked">${lock}<div class="it-main"><div class="it-name">??? ${chip}</div><div class="it-sub">${E.when==='night'?'Happens at night':E.when==='day'?'Happens by day':'Any time'}</div></div></div>`;});
+}
+function openPanel(tab){if(tab==='journal') $('#jDot').hidden=true; openTab=tab; $('#panel').hidden=false; document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab))); $('#panelBody').innerHTML=renderPanel(tab); updateAfford(); if(innerWidth<=640&&selected) deselect();}
 function closePanel(){openTab=null; $('#panel').hidden=true; document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected','false'));}
 function refreshPanel(){if(!openTab) return; const pb=$('#panel'), st=pb.scrollTop; $('#panelBody').innerHTML=renderPanel(openTab); pb.scrollTop=st; updateAfford();}
 function updateAfford(){document.querySelectorAll('#panelBody [data-cost]').forEach(b=>{b.disabled=state.essence<+b.dataset.cost;});}
@@ -1355,6 +1451,7 @@ $('#panelBody').addEventListener('click',e=>{
   else if(t.dataset.grow) growTree();
   else if(t.dataset.friend){const c=creatures.find(c=>c.uid===+t.dataset.friend); if(c){select(c,true); if(innerWidth<=640) closePanel();}}
 });
+$('#jBtn').addEventListener('click',()=>{ensureAudio(); openTab==='journal'?closePanel():openPanel('journal');});
 $('#cClose').addEventListener('click',deselect);
 $('#cPet').addEventListener('click',pet);
 $('#cTreat').addEventListener('click',treat);
@@ -1419,7 +1516,7 @@ function handleTap(x,y){
 function serialize(){
   return {v:1,essence:state.essence,stage:state.stage,time:state.time,taps:state.taps,total:state.total,sound:state.sound,
     creatures:creatures.filter(c=>!c.visitor).map(c=>({s:c.sp.id,n:c.name,p:c.pers,h:Math.round(c.happy),t:c.tint.tier!=='natural'?c.tint.id:undefined,x:+c.mesh.position.x.toFixed(2),z:+c.mesh.position.z.toFixed(2)})),
-    decor:decor.map(d=>({t:d.type,x:+d.pos.x.toFixed(2),z:+d.pos.z.toFixed(2),r:+d.rot.toFixed(2)})),saved:Date.now()};
+    decor:decor.map(d=>({t:d.type,x:+d.pos.x.toFixed(2),z:+d.pos.z.toFixed(2),r:+d.rot.toFixed(2)})),j:state.journal,saved:Date.now()};
 }
 function save(){try{localStorage.setItem(STORE,JSON.stringify(serialize()));}catch(e){}}
 function readStore(){try{const s=localStorage.getItem(STORE); return s?JSON.parse(s):null;}catch(e){return null;}}
@@ -1430,11 +1527,14 @@ function load(data){
   state.time=ok&&isFinite(data.time)?data.time:DAY*.03;
   state.taps=ok?data.taps|0:0; state.total=ok&&isFinite(data.total)?data.total:0;
   state.sound=ok&&data.sound===false?false:true; $('#snd').textContent=state.sound?'♪ On':'♪ Off';
+  const j=ok&&data.j||{}; state.journal={sp:Object.assign({},j.sp),co:Object.assign({},j.co),ev:Object.assign({},j.ev)};
+  loading=true;
   buildTree(state.stage);
   if(ok&&Array.isArray(data.decor)) data.decor.forEach(d=>{if(DECOR[d.t]) addDecor(d.t,+d.x||3,+d.z||3,d.r);});
   else {addDecor('lantern',3.2,2.2); addDecor('flowers',-3,1.8);}
   if(ok&&Array.isArray(data.creatures)) data.creatures.forEach(c=>{if(SPECIES[c.s]) createCreature(c.s,{name:c.n,pers:c.p,happy:c.h,tint:c.t,x:c.x,z:c.z});});
   else createCreature('rabbit',{name:'Clover',pers:'Lazy',happy:75,x:2.5,z:-2.5});
+  loading=false;
   if(state.taps>=5) $('#hint').hidden=true;
   camDefaults(); cam.dist=cam.tDist+6; cam.look.copy(cam.tLook);
   if(ok&&data.saved){const away=Math.min((Date.now()-data.saved)/1000,8*3600); const earned=totalRate()*away*.5; if(away>60&&earned>=1){state.essence+=earned; state.total+=earned; setTimeout(()=>toast(`While you were away, your grove gathered ${fmt(earned)} essence.`),600);}}
@@ -1467,12 +1567,18 @@ function frame(now){
   const rate=totalRate(); state.essence+=rate*dt; state.total+=rate*dt;
   for(let i=creatures.length-1;i>=0;i--) if(creatures[i]) updateCreature(creatures[i],dt,t);
   // decor life
-  lightPool.forEach(l=>{const d=l.userData.d; if(!d){l.intensity=0; return;} l.intensity=d.type==='campfire'?(.4+state.night)*d.light.k*(.85+.15*Math.sin(t*13)+.08*Math.sin(t*29)):state.night*d.light.k;});
+  lightPool.forEach(l=>{const d=l.userData.d; if(!d){l.intensity=0; return;} l.intensity=d.type==='campfire'?(.4+state.night)*d.light.k*(.85+.15*Math.sin(t*13)+.08*Math.sin(t*29)):d.type==='crystal'?(.3+state.night)*d.light.k*(.8+.2*Math.sin(t*1.6)):state.night*d.light.k;});
   noteT-=dt;
   decor.forEach(d=>{
     d.flames.forEach((f,i)=>{f.scale.y=(.26-.08*i)*1.4*(.8+.35*Math.abs(Math.sin(t*(9+i*3)+i)));});
     d.caps.forEach((c,i)=>{const k=1+Math.sin(t*2+i)*.08*(.3+state.night); c.scale.set(.26*k,.1,.26*k);});
     if(d.notes&&noteT<=0&&Math.random()<.25) burst(d.pos.clone().add(new V(0,1.1,0)),0xc6b4ff,1,.3);
+    const wind=amtOf('wind');
+    if(d.seat){const busy=creatures.some(c=>c.mode==='do'&&c.act&&c.act.decor===d&&c.act.type==='swing'); d.amp=lerp(d.amp||0,busy?.38:.05+wind*.15,dt*1.5); d.swingA=Math.sin(t*1.9+d.pos.x)*d.amp; d.seat.rotation.x=d.swingA;}
+    if(d.chimes){d.chimes.forEach((C,i)=>{C.rotation.z=Math.sin(t*(2.4+i*.3)+i)*(.06+wind*.3); C.rotation.x=Math.cos(t*2+i)*(.04+wind*.2);});
+      d.chimeT-=dt; if(d.chimeT<=0){d.chimeT=wind>.3?rand(.4,1.4):rand(5,12); tone(pick(PENTA)*2,1.4,.012+wind*.018);}}
+    if(d.steam) d.steam.forEach(m=>{const f=(t*.35+m.userData.o)%1, s=.08+f*.16; m.position.set(m.userData.x+Math.sin(t+m.userData.o*6)*.1,.15+f*1.3,m.userData.z); m.scale.set(s,s*.7,s);});
+    if(d.crystals) d.crystals.forEach((m,i)=>{const k=1+Math.sin(t*1.6+i)*.04; m.scale.x=.18*k; m.scale.z=.18*k;});
   });
   if(noteT<=0) noteT=.6;
   treeInfo.twinkle.forEach((m,i)=>m.scale.setScalar(.7+.4*Math.abs(Math.sin(t*1.5+i))));
