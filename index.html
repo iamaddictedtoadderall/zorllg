@@ -230,10 +230,10 @@ const STORE='worldroot-grove-v1', DAY=300, CLEAR_R=17.5, MAX_CREATURES=60;
 /* ---------- Game data ---------- */
 const STAGES=[
   {name:'Sapling',   h:2.2, r:0.18, cost:0,     tap:1,  unlock:''},
-  {name:'Young Tree',h:4.0, r:0.38, cost:150,   tap:3,  unlock:'Roots spread wide. Deer, moles and mushroom folk move in.'},
-  {name:'Grand Tree',h:6.5, r:0.62, cost:1200,  tap:8,  unlock:'Branches reach out. Squirrels, owls, badgers and glow moths arrive.'},
-  {name:'Elder Tree',h:9.0, r:0.92, cost:6000,  tap:20, unlock:'The tree hums with old magic. Tiny dragons take notice.'},
-  {name:'World Tree',h:12.5,r:1.25, cost:25000, tap:55, unlock:'A true World Tree. Phoenixes and sky whales circle the canopy.'}
+  {name:'Young Tree',h:4.0, r:0.38, cost:150,   tap:3,  unlock:'Roots spread wide. Deer, moles, raccoons, wisps and mushroom folk move in.'},
+  {name:'Grand Tree',h:6.5, r:0.62, cost:1200,  tap:8,  unlock:'Branches reach out. Squirrels, owls, badgers, glow moths, hummingbirds, bear cubs and otters arrive.'},
+  {name:'Elder Tree',h:9.0, r:0.92, cost:6000,  tap:20, unlock:'The tree hums with old magic. Tiny dragons, kitsune and crystal tortoises take notice.'},
+  {name:'World Tree',h:12.5,r:1.25, cost:25000, tap:55, unlock:'A true World Tree. Phoenixes, cloud sheep, star jellyfish and sky whales circle the canopy.'}
 ];
 const SPECIES={
   rabbit:{name:'Rabbit',shape:'quad',kind:'ground',cost:15,stage:0,rate:0.3,size:0.55,speed:1.6,a:0xd8c7ad,b:0xf6eee2,c:0xc9b294,ears:'long',tail:'puff',legH:0.12,hop:true},
@@ -249,10 +249,24 @@ const SPECIES={
   dragon:{name:'Tiny Dragon',shape:'quad',kind:'fly',cost:6500,stage:3,rate:45,size:0.8,speed:2.8,a:0x5fb08a,b:0xe8d7a0,c:0x2f6b55,ears:'horns',tail:'dragon',legH:0.18,wings:true,mystic:true,perch:true,yMin:.3,yMax:1.0},
   phoenix:{name:'Phoenix',shape:'bird',variant:'phoenix',kind:'fly',cost:18000,stage:4,rate:110,size:1.0,speed:3.2,a:0xff8a3d,b:0xffd36a,c:0xff4f3a,mystic:true,perch:true,yMin:.75,yMax:1.3},
   skywhale:{name:'Sky Whale',shape:'whale',kind:'fly',cost:32000,stage:4,rate:180,size:1.6,speed:1.2,a:0x6f7fc9,b:0xd7defa,c:0xc6b4ff,mystic:true,yMin:1.12,yMax:1.45,big:true},
-  starfox:{name:'Starlit Fox',shape:'quad',kind:'ground',cost:0,stage:1,rate:25,size:0.8,speed:2.0,a:0x34437f,b:0xd6e2ff,c:0x1f2850,d:0x26336a,ears:'pointy',tail:'star',legH:0.2,mystic:true,visitorOnly:true}
+  starfox:{name:'Starlit Fox',shape:'quad',kind:'ground',cost:0,stage:1,rate:25,size:0.8,speed:2.0,a:0x34437f,b:0xd6e2ff,c:0x1f2850,d:0x26336a,ears:'pointy',tail:'star',legH:0.2,mystic:true,visitorOnly:true,loves:'starlight and quiet company',hint:'Visits on some nights'},
+  hedgehog:{name:'Hedgehog',shape:'quad',kind:'ground',cost:30,stage:0,rate:.5,size:.55,speed:1.3,a:0x6e5038,b:0xe8d2b0,c:0x4a3424},
+  frog:{name:'Frog',shape:'quad',kind:'ground',cost:70,stage:0,rate:1,size:.5,speed:1.6,a:0x6fbf4a,b:0xe8f0b0,c:0x3f8a3a,hop:true,hopAmp:.35,home:'pond',needs:'pond',layer:'Pond'},
+  raccoon:{name:'Raccoon',shape:'quad',kind:'ground',cost:330,stage:1,rate:3.6,size:.7,speed:1.7,a:0x8a8a90,b:0xf0eee8,c:0x2a2a30},
+  wisp:{name:'Lantern Wisp',shape:'sprite',kind:'float',cost:380,stage:1,rate:4.2,size:.7,speed:1.1,a:0xffd27a,b:0xffb84a,mystic:true,layer:'Clearing · night'},
+  hummingbird:{name:'Hummingbird',shape:'bird',kind:'fly',cost:1100,stage:2,rate:10,size:.4,speed:3,a:0x3fbf8a,b:0xeef6f0,c:0xe0365a,perch:true,yMin:.1,yMax:.45,wingRate:45,layer:'Flowers'},
+  bearcub:{name:'Bear Cub',shape:'quad',kind:'ground',cost:2300,stage:2,rate:18,size:.85,speed:1.2,a:0x7a5236,b:0xc9a27a,c:0x4a3020},
+  otter:{name:'Otter',shape:'quad',kind:'ground',cost:2600,stage:2,rate:20,size:.7,speed:1.6,a:0x7a5a3e,b:0xe8d6b8,c:0x4e3826,home:'pond',needs:'pond',layer:'Pond'},
+  tortoise:{name:'Crystal Tortoise',shape:'quad',kind:'ground',cost:7500,stage:3,rate:52,size:.9,speed:.35,a:0x5a6b6a,b:0x8fae7a,c:0x3e4a48,mystic:true},
+  kitsune:{name:'Kitsune',shape:'quad',kind:'ground',cost:9000,stage:3,rate:60,size:.75,speed:2,a:0xf6f1e8,b:0xffffff,c:0xc8443a,d:0xe8dccb,kitsune:true,mystic:true},
+  cloudsheep:{name:'Cloud Sheep',shape:'quad',kind:'float',floatY:1,drift:true,cost:22000,stage:4,rate:130,size:.9,speed:.9,a:0xf6f8ff,b:0x5a5f78,c:0xdfe6f6,mystic:true,layer:'Sky over the clearing'},
+  jellyfish:{name:'Star Jellyfish',shape:'jelly',kind:'fly',cost:28000,stage:4,rate:160,size:1,speed:.9,a:0xc6b4ff,b:0xe8dcff,c:0x9fd8ff,mystic:true,yMin:.7,yMax:1.15},
+  snowhare:{name:'Snow Hare',shape:'quad',kind:'ground',cost:0,stage:0,rate:30,size:.6,speed:1.8,a:0xf4f7fb,b:0xffffff,c:0xc9d6e6,hop:true,visitorOnly:true,loves:'fresh snow',hint:'Appears during snowfall'},
+  rainbowfawn:{name:'Rainbow Fawn',shape:'quad',kind:'ground',cost:0,stage:0,rate:40,size:.8,speed:1.6,a:0xf6efe6,b:0xffffff,d:0xf0d8e8,rainbow:true,noAntlers:true,mystic:true,visitorOnly:true,loves:'rainbows and sunshine',hint:'Appears with a rainbow'},
+  auroramoth:{name:'Aurora Moth',shape:'moth',kind:'fly',cost:0,stage:0,rate:35,size:.9,speed:1.6,a:0xeafff6,b:0x8affc8,c:0xb48cff,d:0x6fe0ff,mystic:true,visitorOnly:true,yMin:.2,yMax:.8,loves:'the northern lights',hint:'Appears during an aurora'}
 };
 Object.keys(SPECIES).forEach(k=>SPECIES[k].id=k);
-const SHOP=['rabbit','fox','mosssprite','mole','deer','mushfolk','squirrel','owl','badger','glowmoth','dragon','phoenix','skywhale'];
+const SHOP=['rabbit','hedgehog','fox','frog','mosssprite','mole','deer','raccoon','wisp','mushfolk','squirrel','hummingbird','owl','badger','glowmoth','bearcub','otter','dragon','tortoise','kitsune','phoenix','cloudsheep','jellyfish','skywhale'];
 
 const DECOR={
   flowers:{name:'Flower Patch',cost:20,stage:0,fp:.6,desc:'Hungry creatures nibble, everyone sniffs.'},
@@ -595,6 +609,7 @@ function minDecorR(type){return treeInfo.r*1.5+1.2+DECOR[type].fp;}
 // Each species has its own builder. Parts: legs (pivot at hip), wings (k = side), head, tail,
 // plus eyes/ears/nose/orbit used by the small idle details (blinks, ear twitches).
 const EYE=0x1a1414, WHITE=0xffffff;
+const RAINBOW=[0xff8a8a,0xffc27a,0xffe680,0x9ce89a,0x8ac8ff,0xb79bff,0xf0a6e8];
 const scaled=u=>(p,w,h,d,c,x,y,z,basic)=>B(p,w*u,h*u,d*u,c,x*u,y*u,z*u,basic);
 function grp(parent,u,x,y,z){const G=new THREE.Group(); G.position.set(x*u,y*u,z*u); parent.add(G); return G;}
 function buildCreature(sp){
@@ -647,9 +662,14 @@ function fox(g,sp,P){
     b(Ear,.15,.2,.08,A,0,.1,0); b(Ear,.08,.12,.02,Bc,0,.08,.045); b(Ear,.09,.05,.08,C,0,.22,0);
     Ear.userData.rx=0; P.ears.push(Ear);
   });
-  const T=grp(g,u,0,.66,-.36); T.rotation.x=.25; P.tail=T;
-  b(T,.2,.2,.24,A,0,0,-.12); b(T,.28,.28,.26,A,0,-.01,-.36); b(T,.2,.04,.24,D,0,.145,-.36);
-  b(T,.26,.26,.16,Bc,0,-.02,-.56,star); b(T,.16,.16,.08,star?WHITE:Bc,0,-.02,-.68,star);
+  // A kitsune grows up to five tails; detailAnim shows more of them as it gets happier.
+  P.tails=[];
+  for(let i=0;i<(sp.kitsune?5:1);i++){
+    const T=grp(g,u,0,.66,-.36); T.rotation.x=.25; if(sp.kitsune) P.tails.push(T); else P.tail=T;
+    b(T,.2,.2,.24,A,0,0,-.12); b(T,.28,.28,.26,A,0,-.01,-.36); b(T,.2,.04,.24,D,0,.145,-.36);
+    b(T,.26,.26,.16,Bc,0,-.02,-.56,star); b(T,.16,.16,.08,star?WHITE:sp.kitsune?0x9fe0ff:Bc,0,-.02,-.68,star||sp.kitsune);
+  }
+  if(sp.kitsune){b(H,.04,.04,.02,C,0,.1,.151); [-1,1].forEach(k=>b(H,.03,.09,.02,C,k*.1,.1,.152));}
   if(star){
     [[.1,.75,.1],[-.12,.7,-.15],[.05,.76,-.25],[-.06,.62,.2],[.21,.6,-.05],[-.21,.55,.05]].forEach(([x,y,z])=>b(g,.04,.04,.04,0xe8f0ff,x,y,z,true));
     b(H,.05,.05,.02,0xe8f0ff,0,.1,.151,true);
@@ -658,9 +678,10 @@ function fox(g,sp,P){
 
 function deer(g,sp,P){
   const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, ANT=0xcbb08a, HOOF=0x2a201a;
-  b(g,.42,.4,.86,A,0,.8,0); b(g,.3,.04,.7,0x93603a,0,1.015,-.02); b(g,.32,.06,.6,Bc,0,.6,.04);
+  b(g,.42,.4,.86,A,0,.8,0); b(g,.3,.04,.7,sp.d||0x93603a,0,1.015,-.02); b(g,.32,.06,.6,Bc,0,.6,.04);
   b(g,.3,.26,.04,Bc,0,.84,-.44); b(g,.12,.14,.06,A,0,.95,-.46); b(g,.1,.1,.03,WHITE,0,.92,-.49);
-  [[.12,.1],[-.1,-.05],[.08,-.22],[-.12,.22],[0,-.32],[.04,.28]].forEach(([x,z])=>b(g,.06,.02,.06,Bc,x,1.03,z));
+  [[.12,.1],[-.1,-.05],[.08,-.22],[-.12,.22],[0,-.32],[.04,.28]].forEach(([x,z],i)=>b(g,.06,.02,.06,sp.rainbow?RAINBOW[i]:Bc,x,1.03,z,!!sp.rainbow));
+  if(sp.rainbow) RAINBOW.forEach((col,i)=>b(g,.06,.06,.05,col,0,1.22+i*.035,.4-i*.05,true));
   [-1,1].forEach(k=>[[.9,.2],[.86,-.1],[.92,-.28]].forEach(([y,z])=>b(g,.02,.05,.05,Bc,k*.211,y,z)));
   b(g,.2,.4,.22,A,0,1.08,.36); b(g,.14,.22,.03,Bc,0,1.02,.475);
   [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{
@@ -672,6 +693,7 @@ function deer(g,sp,P){
     const E=grp(H,u,k*.135,.03,.05); b(E,.02,.07,.07,EYE,0,0,0); b(E,.01,.025,.025,WHITE,k*.006,.02,.015,true); P.eyes.push(E);
     const Ear=grp(H,u,k*.15,.1,-.06); Ear.rotation.z=-k*1.0; b(Ear,.08,.2,.05,A,0,.1,0); b(Ear,.05,.13,.02,0xf2c9b8,0,.1,.03);
     Ear.userData.rx=0; P.ears.push(Ear);
+    if(sp.noAntlers) return;
     const An=grp(H,u,k*.07,.13,-.04); An.rotation.z=-k*.35; An.rotation.x=-.2;
     b(An,.045,.3,.045,ANT,0,.15,0); b(An,.04,.12,.04,ANT,0,.24,.07).rotation.x=.6; b(An,.04,.1,.04,ANT,0,.12,.06).rotation.x=.8; b(An,.04,.1,.04,ANT,k*.04,.33,-.02).rotation.z=-k*.5;
   });
@@ -841,8 +863,8 @@ function glowmoth(g,sp,P){
     const E=grp(g,u,k*.05,.02,.2); b(E,.04,.05,.04,0x223344,0,0,0); b(E,.015,.015,.01,WHITE,0,.012,.02,true); P.eyes.push(E);
     const An=grp(g,u,k*.04,.06,.2); An.rotation.z=-k*.35; An.rotation.x=.35; b(An,.02,.16,.02,A,0,.08,0); b(An,.06,.02,.02,Bc,0,.1,0); b(An,.05,.02,.02,Bc,0,.14,0);
     const W=grp(g,u,k*.06,.03,0); W.userData.k=k; P.wings.push(W);
-    b(W,.4,.02,.28,Bc,k*.2,0,.06,true); b(W,.28,.02,.2,Bc,k*.15,0,-.16,true); b(W,.4,.021,.03,0x7cc4f0,k*.2,0,.2,true);
-    b(W,.08,.022,.08,0xe8f6ff,k*.24,0,.08,true); b(W,.04,.024,.04,0x5aa8e0,k*.24,0,.08,true); b(W,.05,.022,.05,0xe8f6ff,k*.16,0,-.17,true);
+    b(W,.4,.02,.28,Bc,k*.2,0,.06,true); b(W,.28,.02,.2,Bc,k*.15,0,-.16,true); b(W,.4,.021,.03,sp.c||0x7cc4f0,k*.2,0,.2,true);
+    b(W,.08,.022,.08,0xe8f6ff,k*.24,0,.08,true); b(W,.04,.024,.04,sp.d||0x5aa8e0,k*.24,0,.08,true); b(W,.05,.022,.05,0xe8f6ff,k*.16,0,-.17,true);
   });
   g.add(new THREE.Mesh(ico(.3*u),halo(Bc,.16)));
 }
@@ -863,7 +885,143 @@ function skywhale(g,sp,P){
   b(T,.4,.35,.8,A,0,0,-.4); b(T,1.3,.08,.45,A,0,0,-.85); [-1,1].forEach(k=>b(T,.2,.085,.2,C,k*.55,0,-.95,true));
 }
 
-const MODELS={rabbit,fox,starfox:fox,deer,mole,squirrel,badger,owl,phoenix,dragon,mosssprite,mushfolk,glowmoth,skywhale};
+function hedgehog(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, TIP=0xe8d8b8;
+  const BD=grp(g,u,0,0,0); P.body=BD;
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=grp(BD,u,lx*.12,.1,lz*.13); b(L,.07,.1,.07,0x3a2a22,0,-.05,0); P.legs.push(L);});
+  b(BD,.36,.12,.48,Bc,0,.15,.02); b(BD,.46,.26,.54,A,0,.3,-.05); b(BD,.36,.12,.44,A,0,.47,-.07);
+  [-.17,-.06,.06,.17].forEach((x,i)=>[-.28,-.15,-.02,.11].forEach((z,j)=>{const y=.44+(Math.abs(x)<.1?.08:0)-(j===3?.06:0); b(BD,.05,.09,.05,C,x,y,z).rotation.x=-.6; b(BD,.03,.03,.03,TIP,x,y+.04,z-.04);}));
+  const H=grp(BD,u,0,.26,.26); P.head=H;
+  b(H,.26,.2,.16,Bc,0,0,0); b(H,.12,.1,.12,Bc,0,-.03,.12); P.nose=b(H,.05,.04,.03,EYE,0,-.01,.19); P.nose.userData.h=P.nose.scale.y;
+  [-1,1].forEach(k=>{const E=grp(H,u,k*.07,.04,.081); b(E,.04,.05,.02,EYE,0,0,0); b(E,.015,.015,.01,WHITE,-k*.008,.012,.011,true); P.eyes.push(E);
+    b(H,.06,.05,.03,0xc9a882,k*.11,.11,-.02); b(H,.05,.025,.02,0xf3a3a3,k*.1,-.04,.081);});
+  const BL=grp(g,u,0,.22,0); BL.visible=false; P.ball=BL;
+  b(BL,.42,.4,.42,A,0,0,0);
+  for(let i=0;i<22;i++){const v=new V(rand(-1,1),rand(-.3,1),rand(-1,1)).normalize(); const m=b(BL,.06,.06,.06,C,v.x*.25,v.y*.24,v.z*.25); m.rotation.set(rand(0,3),rand(0,3),0); b(BL,.035,.035,.035,TIP,v.x*.29,v.y*.28,v.z*.29);}
+  b(BL,.05,.04,.03,EYE,0,-.06,.22);
+}
+
+function frog(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, D=0x4f9a3a;
+  b(g,.5,.26,.5,A,0,.2,0); b(g,.42,.06,.42,Bc,0,.08,.04);
+  [[-.12,-.1],[.14,-.16],[.02,.06],[-.16,.12]].forEach(([x,z])=>b(g,.08,.02,.08,C,x,.335,z));
+  b(g,.46,.18,.2,A,0,.24,.3); b(g,.47,.02,.02,0x2f5a2a,0,.19,.401);
+  P.throat=b(g,.24,.08,.12,Bc,0,.13,.34); P.throat.userData.h=P.throat.scale.y;
+  [-1,1].forEach(k=>{
+    const E=grp(g,u,k*.15,.38,.3); b(E,.14,.14,.14,A,0,0,0); b(E,.1,.1,.03,0xf6f6e0,0,.01,.07); b(E,.07,.04,.02,EYE,0,.01,.085); b(E,.02,.02,.01,WHITE,-k*.02,.025,.092,true); P.eyes.push(E);
+    b(g,.06,.03,.02,0xf2a1a1,k*.18,.22,.401);
+    b(g,.12,.14,.24,A,k*.27,.12,-.12); b(g,.14,.03,.2,D,k*.29,.015,-.02);
+    const L=grp(g,u,k*.16,.12,.24); b(L,.06,.12,.06,A,0,-.06,0); b(L,.1,.02,.08,D,0,-.115,.03); P.legs.push(L);
+  });
+}
+
+function raccoon(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, D=0x6e6e76;
+  b(g,.42,.34,.66,A,0,.5,0); b(g,.32,.04,.52,D,0,.685,-.04); b(g,.3,.06,.48,0xb8b8bc,0,.33,.06);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=grp(g,u,lx*.13,.33,lz*.22); b(L,.11,.22,.11,A,0,-.11,0); b(L,.12,.11,.13,C,0,-.27,.01); P.legs.push(L);});
+  const H=grp(g,u,0,.72,.38); P.head=H;
+  b(H,.38,.3,.3,A,0,0,0); b(H,.4,.12,.2,Bc,0,-.08,.06); b(H,.42,.09,.12,C,0,.03,.1); b(H,.3,.04,.02,Bc,0,.1,.151);
+  b(H,.16,.1,.14,Bc,0,-.06,.2); P.nose=b(H,.06,.05,.04,C,0,-.03,.28); P.nose.userData.h=P.nose.scale.y;
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.09,.03,.161); b(E,.05,.05,.01,0x111111,0,0,0); b(E,.022,.022,.01,WHITE,-k*.01,.01,.006,true); P.eyes.push(E);
+    const Ear=grp(H,u,k*.13,.15,-.04); b(Ear,.1,.1,.06,A,0,.05,0); b(Ear,.1,.03,.061,Bc,0,.09,0); b(Ear,.05,.05,.02,C,0,.04,.031); Ear.userData.rx=0; P.ears.push(Ear);
+    b(H,.14,.01,.01,0xeeeeee,k*.17,-.07,.24,true).rotation.z=k*.15;
+  });
+  const T=grp(g,u,0,.55,-.33); T.rotation.x=.35; P.tail=T;
+  for(let i=0;i<5;i++) b(T,.18-i*.012,.18-i*.012,.12,i%2?C:A,0,0,-.06-i*.12);
+  b(T,.1,.1,.06,C,0,0,-.66);
+}
+
+function hummingbird(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c;
+  b(g,.2,.2,.32,A,0,.2,0); b(g,.14,.12,.2,Bc,0,.14,.04); b(g,.14,.08,.06,C,0,.22,.16,true);
+  b(g,.12,.03,.18,0x2f8a6a,0,.17,-.24).rotation.x=-.3; b(g,.14,.03,.06,0x1f5a4a,0,.13,-.34);
+  [-1,1].forEach(k=>{b(g,.02,.06,.02,0x2a2a2a,k*.04,.08,.03);
+    const W=grp(g,u,k*.1,.26,0); W.userData.k=k; const m=new THREE.Mesh(boxGeo,halo(0xd8fff0,.55)); m.scale.set(.34*u,.015*u,.12*u); m.position.x=k*.17*u; W.add(m); P.wings.push(W);});
+  const H=grp(g,u,0,.32,.14); P.head=H;
+  b(H,.16,.16,.16,A,0,0,0); b(H,.025,.025,.26,0x2a2a2a,0,-.01,.2);
+  [-1,1].forEach(k=>{const E=grp(H,u,k*.081,.02,.03); b(E,.02,.045,.045,EYE,0,0,0); b(E,.01,.015,.015,WHITE,k*.006,.012,.01,true); P.eyes.push(E);});
+}
+
+function bearcub(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c;
+  b(g,.56,.46,.66,A,0,.5,0); b(g,.3,.22,.04,0x9a6a46,0,.52,.34); b(g,.44,.1,.4,A,0,.77,-.08); b(g,.1,.1,.08,A,0,.6,-.36);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=grp(g,u,lx*.17,.3,lz*.2); b(L,.16,.3,.16,A,0,-.15,0); b(L,.17,.06,.18,C,0,-.28,.02); P.legs.push(L);});
+  const H=grp(g,u,0,.8,.36); P.head=H;
+  b(H,.4,.36,.34,A,0,0,0); b(H,.2,.14,.12,Bc,0,-.08,.2); P.nose=b(H,.1,.06,.05,C,0,-.03,.27); P.nose.userData.h=P.nose.scale.y; b(H,.02,.04,.02,C,0,-.12,.262);
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.1,.05,.171); b(E,.05,.06,.02,EYE,0,0,0); b(E,.02,.02,.01,WHITE,-k*.01,.015,.011,true); P.eyes.push(E);
+    b(H,.06,.03,.02,0xe8a0a0,k*.14,-.06,.171);
+    const Ear=grp(H,u,k*.16,.18,-.04); b(Ear,.12,.11,.06,A,0,.04,0); b(Ear,.07,.06,.02,Bc,0,.03,.031); Ear.userData.rx=0; P.ears.push(Ear);
+  });
+}
+
+function otter(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c;
+  b(g,.34,.3,.8,A,0,.38,0); b(g,.26,.08,.4,Bc,0,.24,.18); b(g,.26,.22,.04,Bc,0,.38,.41);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=grp(g,u,lx*.13,.22,lz*.26); b(L,.1,.2,.1,A,0,-.1,0); b(L,.13,.03,.15,C,0,-.2,.03); P.legs.push(L);});
+  const H=grp(g,u,0,.52,.46); P.head=H;
+  b(H,.3,.26,.26,A,0,0,0); b(H,.32,.14,.2,Bc,0,-.06,.05); b(H,.16,.1,.08,Bc,0,-.06,.15); P.nose=b(H,.08,.05,.04,C,0,-.02,.2); P.nose.userData.h=P.nose.scale.y;
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.08,.05,.131); b(E,.045,.05,.02,EYE,0,0,0); b(E,.018,.018,.01,WHITE,-k*.01,.014,.011,true); P.eyes.push(E);
+    b(H,.06,.06,.04,C,k*.13,.12,-.04); b(H,.15,.01,.01,0xf4ece0,k*.15,-.06,.17,true).rotation.z=k*.12;
+  });
+  const T=grp(g,u,0,.36,-.4); T.rotation.x=-.15; P.tail=T;
+  b(T,.2,.14,.24,A,0,0,-.12); b(T,.14,.1,.22,A,0,-.02,-.34); b(T,.08,.06,.16,A,0,-.03,-.52);
+}
+
+function wisp(g,sp,P){
+  const u=sp.size, b=scaled(u);
+  P.core=new THREE.MeshBasicMaterial({color:sp.a}); const core=new THREE.Mesh(ico(.18*u),P.core); core.position.y=.3*u; core.userData.noTint=true; g.add(core);
+  const h=new THREE.Mesh(ico(.32*u),halo(sp.b,.25)); h.position.y=.3*u; g.add(h);
+  b(g,.08,.12,.08,0xfff0b0,0,.5,0,true); b(g,.05,.08,.05,WHITE,0,.6,0,true);
+  [-1,1].forEach(k=>{const E=grp(g,u,k*.06,.32,.165); b(E,.035,.06,.02,0x5a3a10,0,0,0); P.eyes.push(E); b(g,.04,.02,.02,0xff9a7a,k*.1,.27,.16,true);});
+  const O=grp(g,u,0,.3,0); P.orbit=O; for(let i=0;i<3;i++){const a=i/3*TAU; b(O,.035,.035,.035,0xffe7a0,Math.cos(a)*.34,0,Math.sin(a)*.34,true);}
+  P.disk=new THREE.Mesh(new THREE.CircleGeometry(1.5,18),new THREE.MeshBasicMaterial({color:0xffc870,transparent:true,opacity:0,depthWrite:false,blending:THREE.AdditiveBlending}));
+  P.disk.rotation.x=-Math.PI/2; P.disk.userData.noTint=true; g.add(P.disk);
+}
+
+function tortoise(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, CR=0xb48cff;
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=grp(g,u,lx*.22,.18,lz*.2); b(L,.14,.18,.14,Bc,0,-.09,0); b(L,.15,.03,.15,C,0,-.17,.02); P.legs.push(L);});
+  b(g,.66,.05,.74,C,0,.2,0); b(g,.62,.2,.7,A,0,.3,0); b(g,.52,.12,.58,A,0,.46,0); b(g,.36,.08,.42,0x6b7d7b,0,.56,0);
+  [[-.16,.1],[.16,.1],[-.16,-.14],[.16,-.14]].forEach(([x,z])=>b(g,.13,.012,.13,0x7d908e,x,.525,z));
+  [[0,.24,0,0,0],[.14,.16,.12,.4,.3],[-.14,.18,-.1,-.4,-.2],[.08,.12,-.2,.2,-.5],[-.1,.12,.18,-.3,.4]].forEach(([x,h,z,rz,rx])=>{
+    const m=b(g,.09,h,.09,CR,x,.6+h/2,z,true); m.rotation.set(rx,.5,rz); b(g,.05,h*.4,.05,0xe8dcff,x,.6+h*.8,z,true).rotation.set(rx,.5,rz);});
+  b(g,.14,.12,.16,Bc,0,.3,.38); b(g,.06,.05,.1,Bc,0,.24,-.4);
+  const H=grp(g,u,0,.32,.46); P.head=H;
+  b(H,.2,.16,.2,Bc,0,0,.04); b(H,.21,.02,.02,C,0,-.04,.14);
+  [-1,1].forEach(k=>{const E=grp(H,u,k*.1,.03,.08); b(E,.02,.04,.04,EYE,0,0,0); b(E,.01,.015,.015,WHITE,k*.006,.01,.01,true); P.eyes.push(E);});
+}
+
+function cloudsheep(g,sp,P){
+  const u=sp.size, b=scaled(u), W=sp.a, F=sp.b, C=sp.c;
+  b(g,.56,.08,.62,C,0,.24,0); b(g,.6,.4,.7,W,0,.45,0); b(g,.34,.24,.34,WHITE,0,.7,0);
+  [[-.22,.2],[.22,.2],[-.22,-.2],[.22,-.2]].forEach(([x,z])=>b(g,.3,.26,.3,W,x,.62,z));
+  b(g,.14,.14,.1,W,0,.5,-.38);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=grp(g,u,lx*.16,.26,lz*.2); b(L,.08,.22,.08,F,0,-.11,0); b(L,.09,.04,.09,0x3a3e52,0,-.23,0); P.legs.push(L);});
+  const H=grp(g,u,0,.5,.42); P.head=H;
+  b(H,.26,.26,.22,F,0,0,0); b(H,.3,.12,.24,W,0,.15,-.02); b(H,.08,.03,.02,0x3a3e52,0,-.08,.111);
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.07,.03,.111); b(E,.06,.06,.02,WHITE,0,0,0); b(E,.03,.04,.01,EYE,0,0,.011); P.eyes.push(E);
+    const Ear=grp(H,u,k*.15,.06,-.02); Ear.rotation.z=-k*.4; b(Ear,.14,.06,.08,F,k*.05,0,0); b(Ear,.08,.03,.02,0xe8a8b8,k*.05,0,.041); Ear.userData.rx=0; P.ears.push(Ear);
+  });
+}
+
+function jellyfish(g,sp,P){
+  const u=sp.size, b=scaled(u);
+  const bell=new THREE.Mesh(ico(.32*u),halo(sp.a,.5)); bell.scale.y=.7; bell.position.y=.4*u; g.add(bell);
+  const core=new THREE.Mesh(ico(.16*u),M(sp.b,true)); core.position.y=.4*u; g.add(core);
+  const rim=new THREE.Mesh(boxGeo,halo(0xb49cf0,.55)); rim.scale.set(.56*u,.06*u,.56*u); rim.position.y=.27*u; g.add(rim);
+  [-1,1].forEach(k=>{const E=grp(g,u,k*.09,.42,.3); b(E,.04,.05,.02,0x3a2a5a,0,0,0); b(E,.015,.015,.01,WHITE,-k*.008,.012,.011,true); P.eyes.push(E); b(g,.05,.025,.02,0xff9ac8,k*.15,.36,.29,true);});
+  P.tent=[];
+  for(let i=0;i<6;i++){const a=i/6*TAU; let T=grp(g,u,Math.cos(a)*.18,.24,Math.sin(a)*.18); P.tent.push(T);
+    for(let j=0;j<3;j++){b(T,.03,.16,.03,j%2?sp.c:0xd8c8ff,0,-.08,0,true); const N=grp(T,u,0,-.16,0); P.tent.push(N); T=N;}}
+  [[.1,.6,.05],[-.12,.55,-.08],[.02,.62,-.12]].forEach(([x,y,z])=>b(g,.03,.03,.03,WHITE,x,y,z,true));
+}
+
+const MODELS={rabbit,fox,starfox:fox,deer,mole,squirrel,badger,owl,phoenix,dragon,mosssprite,mushfolk,glowmoth,skywhale,
+  hedgehog,frog,raccoon,hummingbird,bearcub,otter,wisp,tortoise,kitsune:fox,cloudsheep,jellyfish,snowhare:rabbit,rainbowfawn:deer,auroramoth:glowmoth};
 
 // Small idle details: blinks (eyes shut while napping), ear twitches, nose wiggles, owl head turns.
 function detailAnim(c,t){
@@ -874,7 +1032,12 @@ function detailAnim(c,t){
   if(P.swivel&&P.head){const busy=c.mode==='do'&&c.act&&['eat','drink','stargaze','nap'].includes(c.act.type); const ph=(t*.5+c.seed)%6; P.head.rotation.y=!busy&&ph<1?Math.sin(ph*Math.PI)*.9:0;}
   if(P.orbit) P.orbit.rotation.y=t*1.4+c.seed;
   tintAnim(P,t,c.seed);
+  if(P.ball){const curl=napping||(c.mode==='do'&&c.act&&c.act.type==='hide')||(c.curlUntil||0)>t; P.ball.visible=curl; P.body.visible=!curl;}
+  if(P.tails&&P.tails.length){const n=1+Math.min(4,Math.floor(c.happy/20)); P.tails.forEach((T,i)=>{T.visible=i<n; T.rotation.y=(i-(n-1)/2)*.38+Math.sin(t*2.5+c.seed+i)*.12; T.rotation.x=.25+Math.abs(i-(n-1)/2)*.1;});}
+  if(P.tent) P.tent.forEach((T,i)=>{T.rotation.x=Math.sin(t*2+i*.7+c.seed)*.25; T.rotation.z=Math.cos(t*1.7+i*.5)*.15;});
+  if(P.disk){const n=state.night; P.disk.position.y=-c.mesh.position.y+.03; P.disk.material.opacity=n*.35*(1+.15*Math.sin(t*3+c.seed)); P.core.color.setHex(0x8a6a3a).lerp(_wispC.setHex(c.sp.a),.25+.75*n);}
 }
+const _wispC=new THREE.Color();
 
 /* ---------- Coat tints ---------- */
 // Each new creature rolls a coat. Uncommon coats nudge hue/shade; rare ones gradient-map the
@@ -935,7 +1098,7 @@ function applyTint(root,t){
   root.updateMatrixWorld(true);
   const live=t.live?[]:null, body=[], wp=new V();
   root.traverse(o=>{
-    if(!o.isMesh) return;
+    if(!o.isMesh||o.userData.noTint) return;
     const m=o.material, hex=m.color.getHex(), shine=m.isMeshBasicMaterial&&hex===WHITE;
     if(eyes.has(o)){ if(t.eye&&!shine) o.material=M(t.eye,true); return; }
     _c.setHex(hex).getHSL(_hsl); if(shine||_hsl.l<.12) return;
@@ -1040,13 +1203,14 @@ function chooseActivity(c){
     add('loop',sp.big?3:1.4,{loop:true,dur:sp.big?rand(14,24):rand(8,14),label:sp.big?'drifting around the canopy':'circling the canopy',emote:sp.big?'~':null});
     if(sp.perch&&treeInfo.perches.length){const sleepy=sp.nocturnal?!night:night; add(sleepy?'nap':'perch',sleepy?4:2.5,{target:perchPoint(),dur:rand(10,18),label:sleepy?'snoozing on a branch':'perched on a branch',emote:sleepy?'z':'♪'});}
     if(night) add('stargaze',1.2,{target:skyPoint(sp),dur:rand(5,9),label:'stargazing',emote:'✦'});
-    eventReact(c,add);
+    eventReact(c,add); if(SPECIAL[sp.id]) SPECIAL[sp.id](c,add,night);
     {const bb=decorOf('birdbath'); if(bb.length&&!sp.big){const d=pick(bb); add('bathe',1.4,{target:d.pos.clone().add(new V(0,.86,0)),dur:rand(6,10),label:'splashing in the bird bath',emote:'~'});}}
     if(sp.id==='glowmoth'){const l=decorOf('lantern'); if(l.length){const d=pick(l); add('bask',night?4:1,{target:d.pos.clone().add(new V(rand(-.4,.4),1.4+rand(0,.5),rand(-.4,.4))),dur:rand(6,10),label:'fluttering around a lantern',emote:'✦'});}}
     return weighted(opts);
   }
   if(sp.kind==='climb'&&treeInfo.perches.length) add('perch',3,{target:perchPoint(),dur:rand(8,14),label:'scampering along a branch',emote:'♪'});
-  add('wander',sp.kind==='roots'?1.5:2,{target:groundPoint(sp),dur:rand(.5,2.5),label:'wandering about'});
+  const home=sp.home&&one(sp.home);
+  add('wander',sp.kind==='roots'?1.5:2,{target:home?near(home.pos,rand(1.6,4)):groundPoint(sp),dur:rand(.5,2.5),label:'wandering about'});
   add('nap',night?2.5:.9,{target:napPoint(sp),dur:rand(12,20),label:'napping',emote:'z'});
   const pickD=t=>{const a=decorOf(t); return a.length?pick(a):null;};
   let d;
@@ -1077,10 +1241,43 @@ function chooseActivity(c){
   add('hide',.4,{target:hidePoint(sp),dur:rand(8,14),label:'hiding behind the tree',emote:'…'});
   if(night) add('stargaze',1.2,{target:groundPoint(sp),dur:rand(6,10),label:'stargazing',emote:'✦'});
   if(sp.kind==='roots') add('dig',2,{target:groundPoint(sp),dur:rand(6,10),label:'digging tunnels',emote:'…'});
-  eventReact(c,add);
+  eventReact(c,add); if(SPECIAL[sp.id]) SPECIAL[sp.id](c,add,night);
   return weighted(opts);
 }
 
+/* Species-specific activities, added on top of the shared ones. */
+const one=t=>{const a=decorOf(t); return a.length?pick(a):null;};
+function freeSeat(c,t){const a=decorOf(t).filter(q=>!(q.user&&q.user!==c&&creatures.includes(q.user)&&q.user.act&&q.user.act.decor===q)); return a.length?pick(a):null;}
+function lilyPos(d){const x=.3,z=-.2,cs=Math.cos(d.rot),sn=Math.sin(d.rot); return new V(d.pos.x+x*cs+z*sn,0,d.pos.z-x*sn+z*cs);}
+const SPECIAL={
+  frog(c,add){const d=one('pond'); if(!d) return;
+    add('sit',3,{target:near(d.pos,1.55),faceTarget:d.pos.clone(),dur:rand(6,10),label:'sitting by the pond',emote:'~'});
+    add('lily',2.5,{target:lilyPos(d),lift:.06,dur:rand(6,10),label:'lounging on a lily pad',emote:'♪'});
+    add('croak',evOn('rain')?6:1,{target:near(d.pos,1.6),faceTarget:d.pos.clone(),dur:rand(5,8),label:evOn('rain')?'croaking in the rain':'croaking a little song',emote:'ribbit!'});},
+  otter(c,add){let d=one('pond'); if(d) add('swim',4,{target:near(d.pos,rand(0,.5)),lift:.25,dur:rand(8,14),label:'floating on its back in the pond',emote:'~'});
+    d=one('hotspring'); if(d) add('swim',2.5,{target:near(d.pos,rand(0,.5)),lift:.25,dur:rand(8,14),label:'floating in the hot spring',emote:'~'});},
+  raccoon(c,add){let d=one('picnic'); if(d) add('eat',4,Object.assign(decorSpot(d,.55,true),{dur:rand(5,9),label:'sneaking snacks from the picnic blanket',emote:'nom'}));
+    d=one('birdbath'); if(d) add('eat',3,Object.assign(decorSpot(d,.6,true),{dur:rand(5,8),label:'washing a snack in the bird bath',emote:'~'}));
+    d=one('berrybush'); if(d) add('eat',1.5,Object.assign(decorSpot(d,.85,true),{dur:rand(5,8),label:'raiding the berry bush',emote:'nom'}));},
+  bearcub(c,add){let d=one('berrybush'); if(d) add('eat',4,Object.assign(decorSpot(d,.9,true),{dur:rand(6,10),label:'stuffing its face with berries',emote:'nom'}));
+    d=freeSeat(c,'hammock'); if(d) add('nap',3,{target:d.pos.clone(),faceYaw:d.rot+Math.PI/2,lift:.4,decor:d,dur:rand(12,20),label:'napping in the hammock',emote:'z'});
+    d=one('hotspring'); if(d) add('soak',3,Object.assign(decorSpot(d,.75,false),{lift:-.14,dur:rand(10,16),label:'soaking in the hot spring',emote:'~'}));},
+  wisp(c,add,night){if(!night){add('nap',8,{target:napPoint(c.sp,true),dur:rand(12,20),label:'dozing until nightfall',emote:'z'}); return;}
+    let d=one('lantern'); if(d) add('bask',3,Object.assign(decorSpot(d,.6,true),{dur:rand(6,10),label:'glowing with the lantern',emote:'✦'}));
+    d=one('mushring'); if(d) add('dance',2,Object.assign(decorSpot(d,.45,false),{dur:rand(7,12),label:'twirling in the mushroom ring',emote:'✦'}));
+    add('wander',3,{target:groundPoint(c.sp),dur:rand(.5,2),label:'lighting up the grove'});},
+  kitsune(c,add,night){let d=one('mushring'); if(d) add('dance',3,Object.assign(decorSpot(d,.45,false),{dur:rand(7,12),label:'dancing in the mushroom ring',emote:'✦'}));
+    d=one('crystal'); if(d) add('bask',3,Object.assign(decorSpot(d,1,true),{dur:rand(7,12),label:'meditating by the crystals',emote:'✧'}));
+    if(night) add('stargaze',2,{target:groundPoint(c.sp),dur:rand(6,10),label:'gazing at the moon',emote:'◐'});},
+  tortoise(c,add){let d=one('crystal'); if(d) add('bask',4,Object.assign(decorSpot(d,1,true),{dur:rand(10,16),label:'resting by the crystals',emote:'✧'}));
+    d=one('pond'); if(d) add('drink',2,Object.assign(decorSpot(d,1.5,true),{dur:rand(8,12),label:'sipping at the pond',emote:'~'}));},
+  cloudsheep(c,add){const d=one('flowers'); if(d) add('eat',3,Object.assign(decorSpot(d,.7,true),{dur:rand(6,10),label:'grazing on the flowers',emote:'~'}));
+    if(evOn('wind')) add('wander',4,{target:groundPoint(c.sp),dur:rand(1,2),label:'drifting in the wind',emote:'~'});},
+  hummingbird(c,add){let d=one('flowers'); if(d) add('hover',4,{target:d.pos.clone().add(new V(rand(-.4,.4),.55,rand(-.4,.4))),dur:rand(5,9),label:'sipping nectar from the flowers',emote:'♥'});
+    d=one('berrybush'); if(d) add('hover',1.5,{target:d.pos.clone().add(new V(rand(-.4,.4),1.1,rand(-.4,.4))),dur:rand(4,7),label:'buzzing around the berry bush',emote:'♪'});},
+  snowhare(c,add){add('catch',3,{target:groundPoint(c.sp),dur:rand(6,10),label:'leaping through the snow',emote:'❄'});},
+  rainbowfawn(c,add){add('stargaze',3,{target:groundPoint(c.sp),dur:rand(6,10),label:'admiring the rainbow',emote:'♥'});}
+};
 function eventReact(c,add){
   if(!weather.cur||weather.cur.ending) return; const E=EVENTS[weather.cur.id];
   if(E.react) E.react(c,add,()=>c.sp.kind==='fly'?skyPoint(c.sp):groundPoint(c.sp));
@@ -1115,7 +1312,7 @@ function finish(c){
   if(a.partner&&creatures.includes(a.partner)) a.partner.happy=clamp(a.partner.happy+2,5,100);
   resetPose(c); c.follow=null; startActivity(c);
 }
-function resetPose(c){const P=c.mesh.userData.parts; P.g.position.set(0,0,0); P.g.scale.set(1,1,1); if(P.head) P.head.rotation.x=0;}
+function resetPose(c){const P=c.mesh.userData.parts; P.g.position.set(0,0,0); P.g.rotation.set(0,0,0); if(P.throat) P.throat.scale.y=P.throat.userData.h; P.g.scale.set(1,1,1); if(P.head) P.head.rotation.x=0;}
 function lerpAngle(a,b,t){let d=((b-a+Math.PI)%TAU+TAU)%TAU-Math.PI; return a+d*t;}
 const tmpV=new V(), tmpT=new V();
 
@@ -1150,6 +1347,8 @@ function updateCreature(c,dt,t){
       else g.position.y=Math.abs(Math.sin(t*10))*.12*s;
     }
     else if(a==='swing'){const d=c.act.decor; g.position.z=-Math.sin(d?d.swingA:0)*.95;}
+    else if(a==='croak'){if(P.throat) P.throat.scale.y=P.throat.userData.h*(1+Math.max(0,Math.sin(t*6+c.seed))*.9); if(c.bubbleT<=0&&Math.random()<dt*.5){bubble(c,'ribbit!'); tone(150+Math.random()*50,.18,.025);}}
+    else if(a==='swim'){g.rotation.z=lerp(g.rotation.z,Math.PI,dt*4); g.rotation.x=Math.sin(t*1.2+c.seed)*.06;}
     else if(a==='bathe'){g.position.y=Math.abs(Math.sin(t*9+c.seed))*.06; if(c.bubbleT<=0&&Math.random()<dt*.3) bubble(c,'~');}
     else {g.scale.y=1+Math.sin(t*2+c.seed)*.025;}
     if(c.act.lift!=null) g.position.y=lerp(g.position.y,c.act.lift+(a==='soak'?Math.sin(t*1.5+c.seed)*.02:0),dt*6);
@@ -1158,20 +1357,20 @@ function updateCreature(c,dt,t){
   // legs & bob
   if(P.legs.length){
     P.legs.forEach((L,i)=>{const ph=(i===0||i===3)?0:Math.PI; L.rotation.x=moving?Math.sin(t*sp.speed*7+ph)*.7:lerp(L.rotation.x,0,dt*8);});
-    if(moving&&!fly) g.position.y=Math.abs(Math.sin(t*sp.speed*7))*(sp.hop?.14:.035)*s;
+    if(moving&&!fly) g.position.y=Math.abs(Math.sin(t*sp.speed*7))*(sp.hopAmp||(sp.hop?.14:.035))*s;
   }
   if(P.tail&&sp.shape==='quad') P.tail.rotation.y=Math.sin(t*(3+amtOf('wind')*4)+c.seed)*(.3+amtOf('wind')*.3);
   if(P.tail&&sp.shape==='whale') P.tail.rotation.x=Math.sin(t*1.5+c.seed)*.25;
   if(P.wings.length){
     const resting=c.mode==='do'&&(c.act.type==='perch'||c.act.type==='nap');
-    const rate=sp.shape==='moth'?24:sp.shape==='whale'?1.6:sp.wings?9:sp.variant==='phoenix'?8:12;
-    const amp=sp.shape==='whale'?.3:.7;
+    const rate=sp.wingRate||(sp.shape==='moth'?24:sp.shape==='whale'?1.6:sp.wings?9:sp.variant==='phoenix'?8:12);
+    const amp=sp.shape==='whale'?.3:sp.wingRate?.9:.7;
     P.wings.forEach(W=>{const base=W.userData.base||0; W.rotation.z=resting?lerp(W.rotation.z,base,dt*6):base+W.userData.k*Math.sin(t*rate+c.seed)*amp;});
   }
   // height + bounds
   if(fly){ if(!(c.mode==='do'&&(c.act.type==='perch'||c.act.type==='nap'||c.act.type==='bathe'))&&c.act.type!=='loop') g.position.y=Math.sin(t*2.2+c.seed)*.12; constrain(p,sp); }
   else if(climb){ if(p.y<.3) p.y=Math.max(0,p.y); constrain(p,sp,c.leaving); }
-  else { p.y=sp.kind==='float'?.35+Math.sin(t*2+c.seed)*.1:0; constrain(p,sp,c.leaving); }
+  else { if(sp.drift) p.x+=amtOf('wind')*dt*1.4; p.y=sp.kind==='float'?(sp.floatY||.35)+Math.sin(t*2+c.seed)*.1:0; constrain(p,sp,c.leaving); }
   detailAnim(c,t);
 }
 
@@ -1198,7 +1397,7 @@ function createCreature(id,o){
 function removeCreature(c){
   scene.remove(c.mesh); c.bubbleEl.remove(); const i=creatures.indexOf(c); if(i>=0) creatures.splice(i,1);
   usedNames.delete(c.name);
-  if(selected===c) deselect(); if(visitor===c) visitor=null;
+  if(selected===c) deselect(); if(visitor===c) visitor=null; if(evVisitor===c) evVisitor=null;
   creatures.forEach(o=>{if(o.follow===c) o.follow=null;});
 }
 function bubble(c,text,dur){c.bubbleEl.textContent=text; c.bubbleT=dur||2.4; c.bubbleEl.classList.toggle('talk',text.length>4);}
@@ -1251,7 +1450,20 @@ function updateFireflies(t){
 }
 
 /* ---------- Visitors ---------- */
+// Weather visitors: each one turns up partway through its event and leaves when the event ends.
+const EV_VIS={snow:'snowhare',rainbow:'rainbowfawn',aurora:'auroramoth'};
+let evVisitor=null;
+function updateEventVisitor(dt){
+  const cur=weather.cur, vid=cur&&!cur.ending&&EV_VIS[cur.id];
+  if(vid&&!evVisitor&&!cur.visited){
+    if(cur.visT==null) cur.visT=rand(4,12); cur.visT-=dt;
+    if(cur.visT<=0&&creatures.length<MAX_CREATURES){const sp=SPECIES[vid]; cur.visited=true; evVisitor=createCreature(vid,{visitor:true});
+      log(`A ${sp.name} wandered in with the ${EVENTS[cur.id].name.toLowerCase()}. Tap it to say hello.`); toast(`✦ A ${sp.name} appeared!`); burst(evVisitor.mesh.position.clone().add(new V(0,.5,0)),0xc6b4ff,10);}
+  }
+  if(evVisitor&&evVisitor.visitor&&!evVisitor.leaving&&EV_VIS[cur&&!cur.ending?cur.id:'']!==evVisitor.sp.id){evVisitor.leaving=true; log(`The ${evVisitor.sp.name} slipped back into the forest.`); startActivity(evVisitor);}
+}
 function updateVisitor(dt){
+  updateEventVisitor(dt);
   if(!visitor){
     visitorCD-=dt;
     if(visitorCD<=0){visitorCD=rand(15,30); if((evOn('starfall')||state.night>.7&&Math.random()<.5)&&state.stage>=1&&creatures.length<MAX_CREATURES){visitor=createCreature('starfox',{visitor:true}); log(`A Starlit Fox is peeking in from the forest. Tap it to say hello.`); toast('✦ A rare visitor has appeared!'); burst(visitor.mesh.position.clone().add(new V(0,.5,0)),0xc6b4ff,10);}}
@@ -1264,11 +1476,12 @@ const spCost=id=>Math.round(SPECIES[id].cost*Math.pow(1.15,countOf(id)));
 const decorCost=t=>Math.round(DECOR[t].cost*Math.pow(1.12,decorOf(t).length));
 const cRate=c=>c.visitor?0:c.sp.rate*(.4+.8*c.happy/100)*TIERS[c.tint.tier].bonus*mod('rate')*(c.sp.mystic?mod('mystic'):1);
 const totalRate=()=>creatures.reduce((s,c)=>s+cRate(c),0);
-const layerName=sp=>({ground:'Clearing',float:'Clearing',roots:'Roots',climb:'Branches'})[sp.kind]||(sp.yMin>=.7?'Canopy':'Treetops');
+const layerName=sp=>sp.layer||({ground:'Clearing',float:'Clearing',roots:'Roots',climb:'Branches'})[sp.kind]||(sp.yMin>=.7?'Canopy':'Treetops');
 
 function buyCreature(id){
   const sp=SPECIES[id], cost=spCost(id);
   if(state.essence<cost||state.stage<sp.stage) return;
+  if(sp.needs&&!decorOf(sp.needs).length){toast(`The ${sp.name} needs a ${DECOR[sp.needs].name.toLowerCase()} first.`); return;}
   if(creatures.length>=MAX_CREATURES){toast('Your grove is full for now.'); return;}
   state.essence-=cost; const c=createCreature(id,{tint:rollTint(mod('tint')).id}), tn=c.tint, tier=tn.tier;
   burst(c.mesh.position.clone().add(new V(0,.5,0)),tier==='legend'?0xf5cc6e:tier==='rare'?0xc6b4ff:sp.mystic?0xc6b4ff:0xf5cc6e,tier==='legend'?28:tier==='rare'?18:10);
@@ -1328,6 +1541,7 @@ function tapTree(pt,x,y){
 const ring=new THREE.Mesh(new THREE.RingGeometry(.45,.6,16),new THREE.MeshBasicMaterial({color:0xf5cc6e,side:THREE.DoubleSide,transparent:true,opacity:.9}));
 ring.rotation.x=-Math.PI/2; ring.visible=false; scene.add(ring);
 function select(c,doFollow){
+  if(c.sp.id==='hedgehog') c.curlUntil=performance.now()/1000+1.6;
   selected=c; ring.visible=true; if(doFollow||follow) watch(c,!!doFollow); ring.scale.setScalar(Math.max(1,c.sp.size*1.3));
   $('#card').hidden=false; if(innerWidth<=640) closePanel();
   if(c.mode==='do'&&c.act.type==='nap') bubble(c,'!?'); else if(c.bubbleT<=0) bubble(c,c.visitor?'✦?':pick(['!','?','hi!']));
@@ -1351,7 +1565,7 @@ function renderCard(){
   $('#cSub').innerHTML=c.visitor?'A rare visitor from the forest':`${c.tint.tier!=='natural'?c.tint.name+' ':''}${c.pers} ${c.sp.name}${c.sp.mystic?' · Mystical':''} ${tierChip(c.tint)}`;
   $('#cMood').style.width=c.happy+'%'; $('#cMoodTxt').textContent=moodWord(c.happy);
   $('#cAct').textContent=c.act?c.act.label:'settling in';
-  $('#cFav').textContent=c.visitor?'starlight and quiet company':PERS[c.pers].loves;
+  $('#cFav').textContent=c.visitor?(c.sp.loves||'quiet company'):PERS[c.pers].loves;
   $('#cRate').textContent=c.visitor?`+${fmtR(c.sp.rate)} essence/s if it stays`:`+${fmtR(cRate(c))} essence/s`;
   const tc=treatCost(c);
   $('#cPet').hidden=c.visitor; $('#cTreat').hidden=c.visitor; $('#cFriend').hidden=!c.visitor;
@@ -1375,8 +1589,8 @@ function treat(){
 }
 function befriend(){
   const c=selected; if(!c||!c.visitor) return;
-  c.visitor=false; c.leaving=false; visitor=null; c.happy=90;
-  toast(`${c.name} the Starlit Fox decided to stay!`); log(`${c.name} the Starlit Fox curled up by the tree. Welcome home.`);
+  c.visitor=false; c.leaving=false; if(visitor===c) visitor=null; if(evVisitor===c) evVisitor=null; c.happy=90;
+  toast(`${c.name} the ${c.sp.name} decided to stay!`); log(`${c.name} the ${c.sp.name} settled in by the tree. Welcome home.`);
   bubble(c,'✦ ♥ ✦',3); burst(c.mesh.position.clone().add(new V(0,.6,0)),0xc6b4ff,14); chord([523.25,659.25,783.99,1046.5]);
   startActivity(c); renderCard(); refreshPanel(); save();
 }
@@ -1384,8 +1598,8 @@ function befriend(){
 /* ---------- Panels ---------- */
 function renderPanel(tab){
   if(tab==='creatures'){
-    return `<div class="ph"><h2>Invite creatures</h2><p>Each one brings essence over time. Happier creatures bring more.</p></div><div class="list">${SHOP.map(id=>{const sp=SPECIES[id],locked=state.stage<sp.stage,cost=spCost(id);
-      return `<div class="item${locked?' locked':''}"><span class="sw" style="--a:${hex(sp.a)};--b:${hex(sp.b)}"></span><div class="it-main"><div class="it-name">${sp.name}${sp.mystic?'<span class="chip">MYSTICAL</span>':''}</div><div class="it-sub">${locked?'Grow to '+STAGES[sp.stage].name+' to unlock':`${layerName(sp)} · +${fmtR(sp.rate)}/s · you have ${countOf(id)}`}</div></div>${locked?'<span class="lock">LOCKED</span>':`<button class="btn buy" data-buy="${id}" data-cost="${cost}">${fmt(cost)} ✦</button>`}</div>`;}).join('')}</div><p class="foot">Some creatures arrive with rare coats. Rare visitors sometimes wander in at night.</p>`;
+    return `<div class="ph"><h2>Invite creatures</h2><p>Each one brings essence over time. Happier creatures bring more.</p></div><div class="list">${SHOP.map(id=>{const sp=SPECIES[id],locked=state.stage<sp.stage,cost=spCost(id),needs=!locked&&sp.needs&&!decorOf(sp.needs).length;
+      return `<div class="item${locked?' locked':''}"><span class="sw" style="--a:${hex(sp.a)};--b:${hex(sp.b)}"></span><div class="it-main"><div class="it-name">${sp.name}${sp.mystic?'<span class="chip">MYSTICAL</span>':''}</div><div class="it-sub">${locked?'Grow to '+STAGES[sp.stage].name+' to unlock':needs?`Place a ${DECOR[sp.needs].name.toLowerCase()} first`:`${layerName(sp)} · +${fmtR(sp.rate)}/s · you have ${countOf(id)}`}</div></div>${locked?'<span class="lock">LOCKED</span>':needs?'<span class="lock">NEEDS '+DECOR[sp.needs].name.toUpperCase()+'</span>':`<button class="btn buy" data-buy="${id}" data-cost="${cost}">${fmt(cost)} ✦</button>`}</div>`;}).join('')}</div><p class="foot">Some creatures arrive with rare coats. Rare visitors wander in on some nights and during certain weather.</p>`;
   }
   if(tab==='decor'){
     return `<div class="ph"><h2>Decorate the grove</h2><p>Decor gives creatures new things to do. Pick one, then tap the ground.</p></div><div class="list">${DECOR_ORDER.map(t=>{const D=DECOR[t],locked=state.stage<D.stage,cost=decorCost(t);
@@ -1405,7 +1619,7 @@ function renderPanel(tab){
 }
 /* ---------- Journal ---------- */
 // Records every species, coat and weather event the player has seen. Undiscovered ones show as ???.
-const JOURNAL_SP=[...SHOP,'starfox'], JOURNAL_CO=Object.keys(TINTS).filter(k=>k!=='natural'), JOURNAL_EV=Object.keys(EVENTS);
+const JOURNAL_SP=[...SHOP,'starfox','snowhare','rainbowfawn','auroramoth'], JOURNAL_CO=Object.keys(TINTS).filter(k=>k!=='natural'), JOURNAL_EV=Object.keys(EVENTS);
 const JOURNAL_NAMES={sp:id=>SPECIES[id].name,co:id=>TINTS[id].name+' coat',ev:id=>EVENTS[id].name};
 function discover(kind,id,val){
   const J=state.journal[kind]; if(J[id]) return; J[id]=val||1;
@@ -1428,8 +1642,8 @@ function renderJournal(){
   const lock='<span class="jicon">?</span>';
   return `<div class="ph"><h2>Journal</h2><p>Everything you've discovered in the grove. ${got} of ${total} found.</p></div><div class="jprog"><i style="width:${got/total*100}%"></i></div>`
   +jSection('Creatures',JOURNAL_SP,'sp',(id,ok)=>{const sp=SPECIES[id];
-    return ok?`<div class="jc"><span class="sw" style="--a:${hex(sp.a)};--b:${hex(sp.b)}"></span><div class="it-main"><div class="it-name">${sp.name}</div><div class="it-sub">${sp.visitorOnly?'Rare night visitor':layerName(sp)}</div></div></div>`
-      :`<div class="jc locked">${lock}<div class="it-main"><div class="it-name">???</div><div class="it-sub">${sp.visitorOnly?'Visits on some nights':state.stage<sp.stage?'Grow to '+STAGES[sp.stage].name:'Not invited yet'}</div></div></div>`;})
+    return ok?`<div class="jc"><span class="sw" style="--a:${hex(sp.a)};--b:${hex(sp.b)}"></span><div class="it-main"><div class="it-name">${sp.name}</div><div class="it-sub">${sp.visitorOnly?'Rare visitor':layerName(sp)}</div></div></div>`
+      :`<div class="jc locked">${lock}<div class="it-main"><div class="it-name">???</div><div class="it-sub">${sp.visitorOnly?sp.hint:state.stage<sp.stage?'Grow to '+STAGES[sp.stage].name:'Not invited yet'}</div></div></div>`;})
   +jSection('Coats',JOURNAL_CO,'co',(id,ok)=>{const t=TINTS[id];
     return ok?`<div class="jc"><span class="sw" style="background:${coatSwatch(t)}"></span><div class="it-main"><div class="it-name">${t.name} ${tierChip(t)}</div><div class="it-sub">First seen on a ${String(J.co[id]).toLowerCase()}</div></div></div>`
       :`<div class="jc locked">${lock}<div class="it-main"><div class="it-name">??? <span class="tchip t-${t.tier}">${TIERS[t.tier].name.toUpperCase()}</span></div><div class="it-sub">Not found yet</div></div></div>`;})
