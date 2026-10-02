@@ -225,7 +225,7 @@ const $=s=>document.querySelector(s);
 const hex=n=>'#'+n.toString(16).padStart(6,'0');
 const fmt=n=>{n=Math.floor(n); if(n<1000) return String(n); if(n<1e6) return (n/1000).toFixed(n<1e4?1:0).replace(/\.0$/,'')+'k'; return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';};
 const fmtR=n=>n<10?n.toFixed(1).replace(/\.0$/,''):fmt(n);
-const STORE='worldroot-grove-v1', DAY=300, CLEAR_R=12.5, MAX_CREATURES=45;
+const STORE='worldroot-grove-v1', DAY=300, CLEAR_R=17.5, MAX_CREATURES=60;
 
 /* ---------- Game data ---------- */
 const STAGES=[
@@ -306,8 +306,8 @@ scene.background=new THREE.Color(0x9ad3e6);
 const hemi=new THREE.HemisphereLight(0xe6f6ff,0x4a6b3a,0.6); scene.add(hemi);
 const amb=new THREE.AmbientLight(0x5f6fb8,0.1); scene.add(amb);
 const sun=new THREE.DirectionalLight(0xfff1d6,0.9);
-sun.castShadow=true; sun.shadow.mapSize.set(1024,1024);
-Object.assign(sun.shadow.camera,{left:-20,right:20,top:20,bottom:-20,near:1,far:90});
+sun.castShadow=true; sun.shadow.mapSize.set(1536,1536);
+Object.assign(sun.shadow.camera,{left:-26,right:26,top:26,bottom:-26,near:1,far:100});
 sun.shadow.bias=-0.003; scene.add(sun); scene.add(sun.target);
 
 const lightPool=[];
@@ -330,16 +330,16 @@ const GROUND=new THREE.Color(0x3d6a3b), CLEAR=new THREE.Color(0x6fae5a), SNOWG=n
 (function buildWorld(){
   const ground=new THREE.Mesh(new THREE.CircleGeometry(80,36),groundMat);
   ground.rotation.x=-Math.PI/2; ground.position.y=-0.03; ground.receiveShadow=true; scene.add(ground);
-  const clearing=new THREE.Mesh(new THREE.CylinderGeometry(13.2,13.7,0.3,30),clearMat);
+  const clearing=new THREE.Mesh(new THREE.CylinderGeometry(18.2,18.7,0.3,40),clearMat);
   clearing.position.y=-0.15; clearing.receiveShadow=true; scene.add(clearing);
-  const tuftA=new THREE.InstancedMesh(boxGeo,M(0x5c9a4b),240), tuftB=new THREE.InstancedMesh(boxGeo,M(0x8fca6c),160);
+  const tuftA=new THREE.InstancedMesh(boxGeo,M(0x5c9a4b),440), tuftB=new THREE.InstancedMesh(boxGeo,M(0x8fca6c),300);
   const dm=new THREE.Object3D();
-  [[tuftA,240],[tuftB,160]].forEach(([im,n])=>{for(let i=0;i<n;i++){const a=rand(0,TAU),r=Math.sqrt(Math.random())*13; const h=rand(.1,.28); dm.position.set(Math.cos(a)*r,h/2,Math.sin(a)*r); dm.scale.set(.07,h,.07); dm.rotation.y=rand(0,3); dm.updateMatrix(); im.setMatrixAt(i,dm.matrix);} im.receiveShadow=true; scene.add(im);});
-  for(let i=0;i<14;i++){const a=rand(0,TAU),r=rand(9,13.5),s=rand(.2,.55); const m=B(scene,s*1.3,s,s,pick([0x8a8f8c,0x9da19a,0x7a7f7b]),Math.cos(a)*r,s/2-.05,Math.sin(a)*r); m.rotation.y=rand(0,3); m.castShadow=true;}
+  [[tuftA,440],[tuftB,300]].forEach(([im,n])=>{for(let i=0;i<n;i++){const a=rand(0,TAU),r=Math.sqrt(Math.random())*18; const h=rand(.1,.28); dm.position.set(Math.cos(a)*r,h/2,Math.sin(a)*r); dm.scale.set(.07,h,.07); dm.rotation.y=rand(0,3); dm.updateMatrix(); im.setMatrixAt(i,dm.matrix);} im.receiveShadow=true; scene.add(im);});
+  for(let i=0;i<22;i++){const a=rand(0,TAU),r=rand(12,18.5),s=rand(.2,.55); const m=B(scene,s*1.3,s,s,pick([0x8a8f8c,0x9da19a,0x7a7f7b]),Math.cos(a)*r,s/2-.05,Math.sin(a)*r); m.rotation.y=rand(0,3); m.castShadow=true;}
   const cones=[new THREE.ConeGeometry(1.6,3.2,6),new THREE.ConeGeometry(1.2,2.6,6),new THREE.ConeGeometry(2,3.8,6)];
   const greens=[0x2f5d3a,0x3a6d42,0x285236,0x46784a];
-  for(let i=0;i<95;i++){
-    const a=rand(0,TAU), r=rand(16,44), s=rand(.8,1.6), g=new THREE.Group();
+  for(let i=0;i<120;i++){
+    const a=rand(0,TAU), r=rand(21,50), s=rand(.8,1.6), g=new THREE.Group();
     g.position.set(Math.cos(a)*r,0,Math.sin(a)*r); g.scale.setScalar(s);
     B(g,.35,1,.35,0x5a3f2c,0,.5,0);
     const c1=new THREE.Mesh(pick(cones),PH(pick(greens))); c1.position.y=2.2; g.add(c1);
@@ -353,14 +353,14 @@ const starGeo=new THREE.BufferGeometry(); {const n=420,p=new Float32Array(n*3); 
 const starMat=new THREE.PointsMaterial({color:0xfff6dc,size:2,sizeAttenuation:false,transparent:true,opacity:0,fog:false,depthWrite:false});
 scene.add(new THREE.Points(starGeo,starMat));
 // Fireflies
-const FF=60, ffGeo=new THREE.BufferGeometry(), ffPos=new Float32Array(FF*3), ffSeed=[];
-for(let i=0;i<FF;i++){ffSeed.push({a:rand(0,TAU),r:rand(2,14),y:rand(.3,3),s:rand(.2,.6),o:rand(0,10)});}
+const FF=90, ffGeo=new THREE.BufferGeometry(), ffPos=new Float32Array(FF*3), ffSeed=[];
+for(let i=0;i<FF;i++){ffSeed.push({a:rand(0,TAU),r:rand(2,19),y:rand(.3,3),s:rand(.2,.6),o:rand(0,10)});}
 ffGeo.setAttribute('position',new THREE.BufferAttribute(ffPos,3));
 const ffMat=new THREE.PointsMaterial({color:0xe9ff8a,size:2,sizeAttenuation:false,transparent:true,opacity:0,depthWrite:false});
 scene.add(new THREE.Points(ffGeo,ffMat));
 // Rain
-const RN=420, rainPos=new Float32Array(RN*6), rainGeo=new THREE.BufferGeometry();
-for(let i=0;i<RN;i++){const a=rand(0,TAU),r=Math.sqrt(Math.random())*17,y=rand(0,22),x=Math.cos(a)*r,z=Math.sin(a)*r; rainPos.set([x,y,z,x+.05,y+.6,z],i*6);}
+const RN=600, rainPos=new Float32Array(RN*6), rainGeo=new THREE.BufferGeometry();
+for(let i=0;i<RN;i++){const a=rand(0,TAU),r=Math.sqrt(Math.random())*22,y=rand(0,22),x=Math.cos(a)*r,z=Math.sin(a)*r; rainPos.set([x,y,z,x+.05,y+.6,z],i*6);}
 rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
 const rainMat=new THREE.LineBasicMaterial({color:0xc2d8ec,transparent:true,opacity:0});
 const rainMesh=new THREE.LineSegments(rainGeo,rainMat); rainMesh.visible=false; scene.add(rainMesh);
@@ -446,8 +446,8 @@ function clockLabel(){
 
 /* Weather visuals */
 // Shared particle field for snow, leaves, petals, golden motes and falling stars.
-const WX=420, wxPos=new Float32Array(WX*3), wxVel=[], wxGeo=new THREE.BufferGeometry();
-for(let i=0;i<WX;i++){wxVel.push({o:rand(0,10),s:rand(.6,1.4)}); wxPos[i*3]=rand(-17,17); wxPos[i*3+1]=rand(0,22); wxPos[i*3+2]=rand(-17,17);}
+const WX=620, wxPos=new Float32Array(WX*3), wxVel=[], wxGeo=new THREE.BufferGeometry();
+for(let i=0;i<WX;i++){wxVel.push({o:rand(0,10),s:rand(.6,1.4)}); wxPos[i*3]=rand(-22,22); wxPos[i*3+1]=rand(0,22); wxPos[i*3+2]=rand(-22,22);}
 wxGeo.setAttribute('position',new THREE.BufferAttribute(wxPos,3));
 const wxMat=new THREE.PointsMaterial({color:0xffffff,size:2,sizeAttenuation:false,transparent:true,opacity:0,depthWrite:false});
 const wxPts=new THREE.Points(wxGeo,wxMat); wxPts.visible=false; scene.add(wxPts);
@@ -477,7 +477,7 @@ for(let i=0;i<12;i++){
   const g=new THREE.Group(), col=pick([0xffd166,0xf7a1c4,0x9bdcff,0xffffff,0xc3a6ff,0xff9f68]), wings=[];
   [-1,1].forEach(k=>{const W=new THREE.Group(); B(W,.16,.02,.14,col,k*.08,0,0,true); W.userData.k=k; g.add(W); wings.push(W);});
   B(g,.03,.03,.12,0x2a2020,0,0,0);
-  g.userData={wings,a:rand(0,TAU),r:rand(3,11),y:rand(.5,2.4),sp:rand(.25,.5)*(Math.random()<.5?-1:1),o:rand(0,10)};
+  g.userData={wings,a:rand(0,TAU),r:rand(3,15),y:rand(.5,2.4),sp:rand(.25,.5)*(Math.random()<.5?-1:1),o:rand(0,10)};
   g.visible=false; scene.add(g); butterflies.push(g);
 }
 // Meteors: stretched glowing boxes. Tap near the head of one to catch it.
@@ -523,7 +523,7 @@ function updateWeatherFx(dt,t){
     wxMat.color.setHex(cfg.c); wxMat.size=cfg.s; wxMat.opacity=a*(id==='starfall'?1:.85);
     for(let i=0;i<WX;i++){const v=wxVel[i], j=i*3;
       wxPos[j]+=(cfg.vx*v.s+Math.sin(t*1.3+v.o)*cfg.sway)*dt; wxPos[j+1]+=cfg.vy*v.s*dt; wxPos[j+2]+=Math.cos(t*1.1+v.o)*cfg.sway*dt;
-      if(wxPos[j+1]<0) wxPos[j+1]+=22; if(wxPos[j+1]>22) wxPos[j+1]-=22; if(wxPos[j]>17) wxPos[j]-=34; if(wxPos[j]<-17) wxPos[j]+=34;}
+      if(wxPos[j+1]<0) wxPos[j+1]+=22; if(wxPos[j+1]>22) wxPos[j+1]-=22; if(wxPos[j]>22) wxPos[j]-=44; if(wxPos[j]<-22) wxPos[j]+=44;}
     wxGeo.attributes.position.needsUpdate=true;
   }
   // rainbow, moon, aurora
@@ -1008,7 +1008,7 @@ const minR=sp=>treeInfo.r*1.45+.3+sp.size*.25;
 function groundPoint(sp){const a=rand(0,TAU), mn=minR(sp), r=sp.kind==='roots'?rand(mn,treeInfo.r*1.5+4):rand(mn+.5,CLEAR_R-.6); return new V(Math.cos(a)*r,0,Math.sin(a)*r);}
 function napPoint(sp,close){const a=rand(0,TAU), r=minR(sp)+(close?rand(0,.5):rand(.2,2.5)); return new V(Math.cos(a)*r,0,Math.sin(a)*r);}
 function hidePoint(sp){const a=cam.theta+Math.PI+rand(-.5,.5), r=minR(sp)+.1; return new V(Math.sin(a)*r,0,Math.cos(a)*r);}
-function skyPoint(sp){const h=treeInfo.h, a=rand(0,TAU), r=sp.big?rand(8,13):rand(treeInfo.r+1.6,Math.min(11,3+h*.7)); return new V(Math.cos(a)*r,Math.max(1.2,rand(sp.yMin,sp.yMax)*h+.4),Math.sin(a)*r);}
+function skyPoint(sp){const h=treeInfo.h, a=rand(0,TAU), r=sp.big?rand(10,17):rand(treeInfo.r+1.6,Math.min(14,3+h*.85)); return new V(Math.cos(a)*r,Math.max(1.2,rand(sp.yMin,sp.yMax)*h+.4),Math.sin(a)*r);}
 function perchPoint(){return pick(treeInfo.perches).clone().add(new V(0,.04,0));}
 function near(p,d){const a=rand(0,TAU); return new V(p.x+Math.cos(a)*d,0,p.z+Math.sin(a)*d);}
 function decorSpot(d,spread,face){const a=rand(0,TAU),r=face?spread:spread*rand(.3,1); return {target:new V(d.pos.x+Math.cos(a)*r,0,d.pos.z+Math.sin(a)*r),faceTarget:face?d.pos.clone():null};}
@@ -1034,7 +1034,7 @@ function weighted(opts){let s=0; opts.forEach(o=>s+=o.w); let r=Math.random()*s;
 function chooseActivity(c){
   const sp=c.sp, W=PERS[c.pers].w, opts=[], night=state.night>.6;
   const add=(type,w,o)=>{w*=(W[type]||1); if(w>.001) opts.push(Object.assign({type,w},o));};
-  if(c.leaving){const p=c.mesh.position,a=Math.atan2(p.z,p.x); return {type:'leave',target:new V(Math.cos(a)*17,0,Math.sin(a)*17),dur:.1,label:'heading back to the forest'};}
+  if(c.leaving){const p=c.mesh.position,a=Math.atan2(p.z,p.x); return {type:'leave',target:new V(Math.cos(a)*22,0,Math.sin(a)*22),dur:.1,label:'heading back to the forest'};}
   if(sp.kind==='fly'){
     add('glide',3,{target:skyPoint(sp),dur:rand(.5,2),label:'gliding around the tree'});
     add('loop',sp.big?3:1.4,{loop:true,dur:sp.big?rand(14,24):rand(8,14),label:sp.big?'drifting around the canopy':'circling the canopy',emote:sp.big?'~':null});
@@ -1186,7 +1186,7 @@ function createCreature(id,o){
   const hb=new THREE.Mesh(boxGeo,hitMat); hb.scale.set(Math.max(sz.x,.9),Math.max(sz.y,.9),Math.max(sz.z,.9)); hb.position.copy(ctr); mesh.add(hb);
   c.height=bb.max.y+.2;
   if(o.x!=null){mesh.position.set(o.x,sp.kind==='fly'?skyPoint(sp).y:0,o.z);}
-  else if(sp.kind==='fly'){const a=rand(0,TAU); mesh.position.set(Math.cos(a)*15,treeInfo.h+3,Math.sin(a)*15);}
+  else if(sp.kind==='fly'){const a=rand(0,TAU); mesh.position.set(Math.cos(a)*20,treeInfo.h+3,Math.sin(a)*20);}
   else {const a=rand(0,TAU); mesh.position.set(Math.cos(a)*(CLEAR_R-.2),0,Math.sin(a)*(CLEAR_R-.2));}
   constrain(mesh.position,sp);
   scene.add(mesh);
@@ -1211,7 +1211,7 @@ function updateParts(dt){parts.forEach(q=>{if(q.life<=0) return; q.life-=dt; q.v
 /* ---------- Camera ---------- */
 const cam={tPhi:null,theta:.7,phi:1.12,dist:12,tDist:12,look:new V(0,1,0),tLook:new V(0,1,0)};
 function camDefaults(){const h=STAGES[state.stage].h; cam.tDist=8+h*1.55; cam.tLook.set(0,h*.42,0);}
-function camLimits(){if(follow) return [.9+follow.sp.size*1.2,10+follow.sp.size*4]; const h=STAGES[state.stage].h; return [4.5,22+h*1.6];}
+function camLimits(){if(follow) return [.9+follow.sp.size*1.2,10+follow.sp.size*4]; const h=STAGES[state.stage].h; return [4.5,30+h*1.6];}
 const camRay=new THREE.Raycaster(), camDir=new V();
 function updateCamera(dt){
   // Sky events tilt the view up to show the sky; dragging hands control back to the player.
