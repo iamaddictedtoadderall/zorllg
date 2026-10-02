@@ -7,7 +7,7 @@ Open `index.html` in a browser.
 
 - Tap the tree to gather essence
 - Invite creatures and decorate the grove
-- Tap a creature to pet it or give it a treat
+- Tap a creature to pet it, give it a treat, or see it up close
 - Drag to look around, scroll or pinch to zoom
 
 Progress saves in your browser.

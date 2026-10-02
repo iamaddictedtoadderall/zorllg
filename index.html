@@ -35,6 +35,7 @@ body{background:var(--night);color:var(--ink);font-family:var(--f-ui);overflow:h
 #c.placing{cursor:crosshair}
 #bubbles,#fx{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 button{font:inherit;color:inherit}
+[hidden]{display:none!important}
 button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 
 .panel{background:var(--panel);border:2px solid var(--edge);box-shadow:0 3px 0 var(--shade)}
@@ -176,6 +177,7 @@ button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
       <button id="cPet" class="btn">Pet</button>
       <button id="cTreat" class="btn gold">Treat</button>
       <button id="cFriend" class="btn lilac" hidden>Befriend</button>
+      <button id="cWatch" class="btn">Close up</button>
     </div>
   </aside>
 
@@ -227,7 +229,7 @@ const SPECIES={
   dragon:{name:'Tiny Dragon',shape:'quad',kind:'fly',cost:6500,stage:3,rate:45,size:0.8,speed:2.8,a:0x5fb08a,b:0xe8d7a0,c:0x2f6b55,ears:'horns',tail:'dragon',legH:0.18,wings:true,mystic:true,perch:true,yMin:.3,yMax:1.0},
   phoenix:{name:'Phoenix',shape:'bird',variant:'phoenix',kind:'fly',cost:18000,stage:4,rate:110,size:1.0,speed:3.2,a:0xff8a3d,b:0xffd36a,c:0xff4f3a,mystic:true,perch:true,yMin:.75,yMax:1.3},
   skywhale:{name:'Sky Whale',shape:'whale',kind:'fly',cost:32000,stage:4,rate:180,size:1.6,speed:1.2,a:0x6f7fc9,b:0xd7defa,c:0xc6b4ff,mystic:true,yMin:1.12,yMax:1.45,big:true},
-  starfox:{name:'Starlit Fox',shape:'quad',kind:'ground',cost:0,stage:1,rate:25,size:0.8,speed:2.0,a:0x34437f,b:0xd6e2ff,c:0x1f2850,ears:'pointy',tail:'star',legH:0.2,mystic:true,visitorOnly:true}
+  starfox:{name:'Starlit Fox',shape:'quad',kind:'ground',cost:0,stage:1,rate:25,size:0.8,speed:2.0,a:0x34437f,b:0xd6e2ff,c:0x1f2850,d:0x26336a,ears:'pointy',tail:'star',legH:0.2,mystic:true,visitorOnly:true}
 };
 Object.keys(SPECIES).forEach(k=>SPECIES[k].id=k);
 const SHOP=['rabbit','fox','mosssprite','mole','deer','mushfolk','squirrel','owl','badger','glowmoth','dragon','phoenix','skywhale'];
@@ -375,97 +377,287 @@ function buildTree(st){
 function minDecorR(type){return treeInfo.r*1.5+1.2+DECOR[type].fp;}
 
 /* ---------- Creatures: models ---------- */
+// Each species has its own builder. Parts: legs (pivot at hip), wings (k = side), head, tail,
+// plus eyes/ears/nose/orbit used by the small idle details (blinks, ear twitches).
+const EYE=0x1a1414, WHITE=0xffffff;
+const scaled=u=>(p,w,h,d,c,x,y,z,basic)=>B(p,w*u,h*u,d*u,c,x*u,y*u,z*u,basic);
+function grp(parent,u,x,y,z){const G=new THREE.Group(); G.position.set(x*u,y*u,z*u); parent.add(G); return G;}
 function buildCreature(sp){
   const root=new THREE.Group(), g=new THREE.Group(); root.add(g);
-  const s=sp.size, P={legs:[],wings:[],head:null,tail:null,g};
-  ({quad,bird,sprite,mush,moth,whale})[sp.shape](g,sp,s,P);
+  const P={legs:[],wings:[],head:null,tail:null,g,eyes:[],ears:[],nose:null,orbit:null};
+  MODELS[sp.id](g,sp,P);
   root.traverse(o=>{if(o.isMesh&&!(o.material&&o.material.transparent))o.castShadow=true;});
   root.userData.parts=P; return root;
 }
-function quad(g,sp,s,P){
-  const lh=sp.legH*s*2, bw=.5*s, bh=.4*s, bd=.85*s, by=lh+bh/2;
-  B(g,bw,bh,bd,sp.a,0,by,0);
-  B(g,bw*.82,bh*.3,bd*.72,sp.b,0,lh+bh*.12,.02*s);
-  const head=new THREE.Group(); head.position.set(0,by+bh*.45,bd*.5); g.add(head); P.head=head;
-  const hs=.42*s;
-  B(head,hs,hs,hs,sp.a,0,0,0);
-  B(head,hs*.5,hs*.38,hs*.4,sp.b,0,-hs*.18,hs*.62);
-  B(head,hs*.16,hs*.14,hs*.1,0x221a1a,0,-hs*.05,hs*.86);
-  [-1,1].forEach(k=>B(head,hs*.14,hs*.18,.02,0x161212,k*hs*.24,hs*.12,hs*.51));
-  if(sp.stripe) B(head,hs*.22,hs*1.02,hs*1.02,sp.b,0,.004,0);
+
+function rabbit(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, PINK=0xf2a9a9;
+  b(g,.54,.44,.48,A,0,.46,-.12); b(g,.44,.38,.36,A,0,.44,.2); b(g,.36,.04,.46,C,0,.69,-.12);
+  b(g,.36,.1,.56,Bc,0,.26,.04); b(g,.28,.24,.06,Bc,0,.42,.39); b(g,.16,.08,.06,Bc,0,.28,.41);
   [-1,1].forEach(k=>{
-    if(sp.ears==='long'){B(head,hs*.2,hs*.95,hs*.14,sp.a,k*hs*.22,hs*.9,-hs*.1); B(head,hs*.1,hs*.7,.02,0xf2a9a9,k*hs*.22,hs*.9,-hs*.02);}
-    else if(sp.ears==='pointy'){B(head,hs*.28,hs*.36,hs*.12,sp.a,k*hs*.3,hs*.62,-hs*.1); B(head,hs*.29,hs*.1,hs*.13,sp.c,k*hs*.3,hs*.78,-hs*.1);}
-    else if(sp.ears==='round'){B(head,hs*.22,hs*.2,hs*.1,sp.c,k*hs*.36,hs*.55,-hs*.15);}
-    else if(sp.ears==='antler'){B(head,hs*.08,hs*.7,hs*.08,sp.c,k*hs*.25,hs*.85,-hs*.15); B(head,hs*.35,hs*.08,hs*.08,sp.c,k*hs*.38,hs*1.0,-hs*.15); B(head,hs*.08,hs*.3,hs*.08,sp.c,k*hs*.52,hs*1.15,-hs*.15); B(head,hs*.25,hs*.15,hs*.08,sp.a,k*hs*.55,hs*.38,-hs*.1);}
-    else if(sp.ears==='horns'){const m=B(head,hs*.1,hs*.42,hs*.1,sp.b,k*hs*.25,hs*.62,-hs*.22); m.rotation.x=-.45;}
+    b(g,.04,.3,.32,C,k*.28,.4,-.14); b(g,.12,.14,.14,A,k*.17,.12,-.12); b(g,.13,.06,.3,Bc,k*.17,.03,-.04);
+    const L=grp(g,u,k*.12,.24,.24); b(L,.09,.24,.09,A,0,-.12,0); b(L,.11,.05,.12,Bc,0,-.215,.02); P.legs.push(L);
   });
-  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{const L=new THREE.Group(); L.position.set(lx*bw*.32,lh,lz*bd*.32); B(L,s*.13,lh+.02,s*.13,sp.c||sp.a,0,-lh/2,0); g.add(L); P.legs.push(L);});
-  const tz=-bd/2, T=new THREE.Group(); g.add(T);
-  if(sp.tail==='bushy'||sp.tail==='star'){T.position.set(0,by+bh*.1,tz); T.rotation.x=.7; B(T,s*.24,s*.24,s*.5,sp.a,0,0,-s*.25); B(T,s*.25,s*.25,s*.14,sp.tail==='star'?0xcfe6ff:sp.b,0,0,-s*.52,sp.tail==='star'); if(sp.tail==='star'){for(let i=0;i<5;i++)B(g,.05*s,.05*s,.05*s,0xe8f0ff,rand(-.2,.2)*s,by+rand(-.1,.25)*s,rand(-.4,.4)*s,true);} P.tail=T;}
-  else if(sp.tail==='puff'){B(g,s*.18,s*.18,s*.14,sp.b,0,by+bh*.15,tz-s*.06);}
-  else if(sp.tail==='stub'){B(g,s*.12,s*.1,s*.14,sp.c,0,by,tz-s*.06);}
-  else if(sp.tail==='squirrel'){T.position.set(0,by,tz); T.rotation.x=-.25; B(T,s*.34,s*.85,s*.3,sp.a,0,s*.4,-s*.22); B(T,s*.36,s*.25,s*.32,sp.b,0,s*.8,-s*.12); P.tail=T;}
-  else if(sp.tail==='dragon'){T.position.set(0,by,tz); B(T,s*.18,s*.16,s*.35,sp.a,0,0,-s*.17); B(T,s*.12,s*.11,s*.3,sp.a,0,-s*.02,-s*.45); B(T,s*.2,s*.05,s*.14,sp.c,0,-s*.03,-s*.65); P.tail=T;}
-  if(sp.wings){
-    for(let i=0;i<3;i++) B(g,s*.06,s*.1,s*.1,sp.b,0,by+bh/2+s*.04,(-.25+i*.22)*s);
-    [-1,1].forEach(k=>{const W=new THREE.Group(); W.position.set(k*bw*.5,by+bh*.4,0); B(W,s*.6,s*.04,s*.45,sp.c,k*s*.3,0,0); B(W,s*.3,s*.05,s*.06,sp.b,k*s*.15,s*.02,s*.2); W.userData.k=k; g.add(W); P.wings.push(W);});
+  b(g,.18,.18,.12,Bc,0,.5,-.4); b(g,.1,.1,.06,WHITE,.02,.53,-.47);
+  const H=grp(g,u,0,.66,.32); P.head=H;
+  b(H,.42,.36,.38,A,0,0,0); b(H,.48,.14,.26,Bc,0,-.1,.06); b(H,.2,.12,.08,Bc,0,-.08,.21);
+  P.nose=b(H,.07,.05,.04,0xe98a9c,0,-.03,.255); P.nose.userData.h=P.nose.scale.y;
+  b(H,.02,.05,.02,0x8a6a6a,0,-.11,.252);
+  [-1,1].forEach(k=>{
+    b(H,.07,.04,.02,0xf3a3a3,k*.17,-.07,.195);
+    const E=grp(H,u,k*.13,.04,.19); b(E,.08,.1,.03,EYE,0,0,0); b(E,.03,.03,.01,WHITE,-k*.015,.025,.017,true); P.eyes.push(E);
+    b(H,.16,.012,.012,0xfafafa,k*.2,-.06,.22,true).rotation.z=k*.12;
+    b(H,.16,.012,.012,0xfafafa,k*.2,-.1,.22,true).rotation.z=-k*.08;
+    const Ear=grp(H,u,k*.11,.17,-.04); Ear.rotation.z=-k*.1; if(k>0) Ear.rotation.x=-.3;
+    b(Ear,.12,.46,.08,A,0,.23,0); b(Ear,.06,.34,.02,PINK,0,.22,.041); b(Ear,.12,.06,.08,C,0,.43,0);
+    Ear.userData.rx=Ear.rotation.x; P.ears.push(Ear);
+  });
+}
+
+function fox(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, D=sp.d||0xc2602a, star=sp.tail==='star';
+  b(g,.4,.34,.72,A,0,.57,0); b(g,.3,.04,.56,D,0,.76,-.04); b(g,.3,.06,.5,Bc,0,.39,.08);
+  b(g,.3,.3,.1,Bc,0,.55,.37); b(g,.26,.26,.18,A,0,.74,.32);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{
+    const L=grp(g,u,lx*.13,.4,lz*.26); b(L,.11,.22,.11,A,0,-.11,0); b(L,.1,.18,.1,C,0,-.31,0); b(L,.12,.05,.14,C,0,-.385,.02); P.legs.push(L);
+  });
+  const H=grp(g,u,0,.88,.46); P.head=H;
+  b(H,.36,.3,.3,A,0,0,0); b(H,.48,.14,.2,Bc,0,-.1,.02); b(H,.18,.08,.2,A,0,-.03,.24);
+  b(H,.17,.06,.2,Bc,0,-.1,.24); b(H,.07,.06,.05,C,0,-.03,.355); b(H,.1,.03,.2,D,0,.025,.19);
+  [-1,1].forEach(k=>{
+    b(H,.08,.08,.12,Bc,k*.27,-.14,0);
+    const E=grp(H,u,k*.1,.03,.151); b(E,.08,.06,.02,star?0xcfe6ff:0xf5b942,0,0,0,true); b(E,.03,.06,.01,0x111111,0,0,.012); P.eyes.push(E);
+    b(H,.05,.02,.02,C,k*.165,.01,.152);
+    const Ear=grp(H,u,k*.12,.15,-.04); Ear.rotation.z=-k*.15;
+    b(Ear,.15,.2,.08,A,0,.1,0); b(Ear,.08,.12,.02,Bc,0,.08,.045); b(Ear,.09,.05,.08,C,0,.22,0);
+    Ear.userData.rx=0; P.ears.push(Ear);
+  });
+  const T=grp(g,u,0,.66,-.36); T.rotation.x=.25; P.tail=T;
+  b(T,.2,.2,.24,A,0,0,-.12); b(T,.28,.28,.26,A,0,-.01,-.36); b(T,.2,.04,.24,D,0,.145,-.36);
+  b(T,.26,.26,.16,Bc,0,-.02,-.56,star); b(T,.16,.16,.08,star?WHITE:Bc,0,-.02,-.68,star);
+  if(star){
+    [[.1,.75,.1],[-.12,.7,-.15],[.05,.76,-.25],[-.06,.62,.2],[.21,.6,-.05],[-.21,.55,.05]].forEach(([x,y,z])=>b(g,.04,.04,.04,0xe8f0ff,x,y,z,true));
+    b(H,.05,.05,.02,0xe8f0ff,0,.1,.151,true);
   }
 }
-function bird(g,sp,s,P){
-  const owl=sp.variant==='owl', lh=.12*s, bw=.5*s, bh=(owl?.6:.45)*s, bd=.45*s, by=lh+bh/2;
-  B(g,bw,bh,bd,sp.a,0,by,0);
-  B(g,bw*.7,bh*.6,.02,sp.b,0,by-bh*.1,bd/2+.01);
-  const head=new THREE.Group(); g.add(head); P.head=head;
-  if(owl){
-    head.position.set(0,by+bh*.5+.18*s,0);
-    B(head,.5*s,.36*s,.42*s,sp.a,0,0,0); B(head,.42*s,.28*s,.02,sp.b,0,0,.215*s);
-    [-1,1].forEach(k=>{B(head,.11*s,.11*s,.02,sp.c,k*.1*s,.02*s,.226*s,true); B(head,.05*s,.05*s,.02,0x111111,k*.1*s,.02*s,.236*s); B(head,.08*s,.14*s,.06*s,sp.a,k*.18*s,.22*s,0);});
-    B(head,.06*s,.08*s,.06*s,0xe0a040,0,-.06*s,.24*s);
-    B(g,.25*s,.08*s,.15*s,sp.a,0,by-bh*.35,-bd/2-.05*s);
-  } else {
-    head.position.set(0,by+bh*.5+.12*s,bd*.25);
-    B(head,.3*s,.26*s,.3*s,sp.a,0,0,0);
-    [-1,1].forEach(k=>B(head,.05*s,.05*s,.02,0x221111,k*.08*s,.03*s,.16*s));
-    B(head,.08*s,.06*s,.14*s,0xffe08a,0,-.02*s,.2*s);
-    B(head,.05*s,.25*s,.15*s,sp.b,0,.2*s,-.05*s,true);
-    const T=new THREE.Group(); T.position.set(0,by-bh*.1,-bd/2); T.rotation.x=-.25; g.add(T); P.tail=T;
-    [-1,0,1].forEach(i=>B(T,.07*s,.04*s,.9*s,i?sp.b:sp.c,i*.09*s,0,-.45*s,true));
-  }
-  [-1,1].forEach(k=>{const W=new THREE.Group(); W.position.set(k*bw/2,by+bh*.3,0); B(W,.06*s,bh*.8,bd*.85,owl?0x6e5236:sp.c,k*.03*s,-bh*.38,0,!owl); W.userData.k=k; g.add(W); P.wings.push(W);});
-  [-1,1].forEach(k=>B(g,.08*s,lh,.1*s,0xe0a040,k*.12*s,lh/2,.05*s));
+
+function deer(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, ANT=0xcbb08a, HOOF=0x2a201a;
+  b(g,.42,.4,.86,A,0,.8,0); b(g,.3,.04,.7,0x93603a,0,1.015,-.02); b(g,.32,.06,.6,Bc,0,.6,.04);
+  b(g,.3,.26,.04,Bc,0,.84,-.44); b(g,.12,.14,.06,A,0,.95,-.46); b(g,.1,.1,.03,WHITE,0,.92,-.49);
+  [[.12,.1],[-.1,-.05],[.08,-.22],[-.12,.22],[0,-.32],[.04,.28]].forEach(([x,z])=>b(g,.06,.02,.06,Bc,x,1.03,z));
+  [-1,1].forEach(k=>[[.9,.2],[.86,-.1],[.92,-.28]].forEach(([y,z])=>b(g,.02,.05,.05,Bc,k*.211,y,z)));
+  b(g,.2,.4,.22,A,0,1.08,.36); b(g,.14,.22,.03,Bc,0,1.02,.475);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{
+    const L=grp(g,u,lx*.13,.6,lz*.32); b(L,.1,.36,.12,A,0,-.18,0); b(L,.07,.2,.07,A,0,-.46,0); b(L,.08,.06,.09,HOOF,0,-.57,.01); P.legs.push(L);
+  });
+  const H=grp(g,u,0,1.32,.44); P.head=H;
+  b(H,.26,.24,.28,A,0,0,0); b(H,.18,.16,.22,A,0,-.04,.22); b(H,.1,.06,.04,EYE,0,-.02,.335); b(H,.14,.04,.18,Bc,0,-.13,.2);
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.135,.03,.05); b(E,.02,.07,.07,EYE,0,0,0); b(E,.01,.025,.025,WHITE,k*.006,.02,.015,true); P.eyes.push(E);
+    const Ear=grp(H,u,k*.15,.1,-.06); Ear.rotation.z=-k*1.0; b(Ear,.08,.2,.05,A,0,.1,0); b(Ear,.05,.13,.02,0xf2c9b8,0,.1,.03);
+    Ear.userData.rx=0; P.ears.push(Ear);
+    const An=grp(H,u,k*.07,.13,-.04); An.rotation.z=-k*.35; An.rotation.x=-.2;
+    b(An,.045,.3,.045,ANT,0,.15,0); b(An,.04,.12,.04,ANT,0,.24,.07).rotation.x=.6; b(An,.04,.1,.04,ANT,0,.12,.06).rotation.x=.8; b(An,.04,.1,.04,ANT,k*.04,.33,-.02).rotation.z=-k*.5;
+  });
 }
-function sprite(g,sp,s,P){
-  const core=new THREE.Mesh(ico(.22*s),M(sp.a,true)); core.position.y=.3*s; g.add(core);
-  const h=new THREE.Mesh(ico(.36*s),halo(sp.a,.22)); h.position.y=.3*s; g.add(h);
-  B(g,.05*s,.14*s,.05*s,sp.b,0,.55*s,0); B(g,.18*s,.04*s,.1*s,sp.b,.07*s,.62*s,0);
-  [-1,1].forEach(k=>B(g,.04*s,.07*s,.02,0x1f3a24,k*.07*s,.32*s,.205*s));
-  P.head=null;
+
+function mole(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, PINK=sp.b, CLAW=0xf6e7d8;
+  b(g,.56,.42,.7,A,0,.37,0); b(g,.4,.04,.5,0x62525e,0,.59,-.02); b(g,.46,.34,.12,A,0,.35,-.39);
+  b(g,.08,.02,.06,0x7a5a3a,.08,.6,.12); b(g,.06,.02,.04,0x7a5a3a,-.1,.6,-.1);
+  [-1,1].forEach(k=>{
+    const F=grp(g,u,k*.24,.16,.24); b(F,.08,.16,.08,A,0,-.08,0); b(F,.16,.04,.14,PINK,k*.04,-.15,.04); [-.04,0,.04].forEach(dx=>b(F,.03,.03,.05,CLAW,k*.04+dx,-.16,.12)); P.legs.push(F);
+    const R=grp(g,u,k*.18,.16,-.24); b(R,.1,.16,.1,A,0,-.08,0); b(R,.12,.04,.14,PINK,0,-.15,.02); P.legs.push(R);
+  });
+  P.legs=[P.legs[0],P.legs[2],P.legs[3],P.legs[1]];
+  b(g,.06,.06,.12,PINK,0,.3,-.48);
+  const H=grp(g,u,0,.4,.42); P.head=H;
+  b(H,.38,.3,.24,A,0,0,0); b(H,.16,.12,.18,0x5e4e59,0,-.04,.18);
+  P.nose=b(H,.12,.1,.06,PINK,0,-.03,.29); P.nose.userData.h=P.nose.scale.y;
+  [[.08,-.03],[-.08,-.03],[0,.04],[0,-.1]].forEach(([x,y])=>b(H,.04,.04,.03,PINK,x,y,.3));
+  [-1,1].forEach(k=>{const E=grp(H,u,k*.11,.05,.121); b(E,.04,.03,.02,EYE,0,0,0); P.eyes.push(E); b(H,.14,.01,.01,0xeeeeee,k*.15,-.05,.24,true).rotation.z=k*.15;});
 }
-function mush(g,sp,s,P){
-  const lh=.12*s;
-  [-1,1].forEach(k=>{const L=new THREE.Group(); L.position.set(k*.08*s,lh,0); B(L,.09*s,lh,.1*s,sp.b,0,-lh/2,0); g.add(L); P.legs.push(L);});
-  B(g,.3*s,.38*s,.28*s,sp.b,0,lh+.19*s,0);
-  [-1,1].forEach(k=>{B(g,.05*s,.07*s,.02,0x2a1f1a,k*.07*s,lh+.25*s,.145*s); B(g,.06*s,.03*s,.02,0xf2a1a1,k*.11*s,lh+.17*s,.145*s);});
-  const head=new THREE.Group(); head.position.set(0,lh+.42*s,0); g.add(head); P.head=head;
-  B(head,.7*s,.22*s,.7*s,sp.a,0,.05*s,0); B(head,.45*s,.12*s,.45*s,sp.a,0,.2*s,0);
-  [[.1,.265,.08],[-.12,.265,-.05],[.02,.265,-.15],[.27,.165,.1],[-.25,.165,.18],[.05,.165,.29],[-.2,.165,-.26]].forEach(([x,y,z])=>B(head,.09*s,.03*s,.09*s,0xfff8ec,x*s,y*s,z*s));
+
+function squirrel(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c;
+  b(g,.42,.36,.42,A,0,.38,-.1); b(g,.34,.32,.3,A,0,.42,.18); b(g,.24,.26,.06,Bc,0,.38,.33);
+  [-1,1].forEach(k=>{
+    const R=grp(g,u,k*.15,.2,-.12); b(R,.12,.2,.16,A,0,-.1,0); b(R,.11,.04,.2,C,0,-.18,.04); P.legs.push(R);
+    const F=grp(g,u,k*.1,.2,.24); b(F,.07,.2,.07,A,0,-.1,0); b(F,.08,.04,.08,C,0,-.18,.02); P.legs.push(F);
+  });
+  P.legs=[P.legs[0],P.legs[1],P.legs[3],P.legs[2]];
+  const H=grp(g,u,0,.66,.32); P.head=H;
+  b(H,.34,.3,.32,A,0,0,0); b(H,.38,.12,.2,Bc,0,-.08,.08); b(H,.14,.1,.08,Bc,0,-.06,.19);
+  P.nose=b(H,.05,.04,.03,EYE,0,-.02,.235); P.nose.userData.h=P.nose.scale.y;
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.1,.04,.161); b(E,.1,.11,.01,Bc,0,0,-.004); b(E,.07,.08,.02,EYE,0,0,.004); b(E,.025,.025,.01,WHITE,-k*.015,.02,.016,true); P.eyes.push(E);
+    const Ear=grp(H,u,k*.1,.15,-.06); b(Ear,.08,.14,.06,A,0,.07,0); b(Ear,.04,.08,.02,0xe8b49a,0,.06,.031); b(Ear,.06,.08,.05,C,0,.17,0);
+    Ear.userData.rx=0; P.ears.push(Ear);
+  });
+  const T=grp(g,u,0,.42,-.32); T.rotation.x=-.25; P.tail=T;
+  b(T,.2,.2,.2,A,0,.06,-.06); b(T,.3,.32,.28,A,0,.3,-.16); b(T,.322,.04,.29,C,0,.42,-.16);
+  b(T,.32,.32,.28,A,0,.6,-.14); b(T,.26,.2,.24,A,0,.82,-.02); b(T,.24,.06,.2,0xd08050,0,.94,.02);
 }
-function moth(g,sp,s,P){
-  B(g,.1*s,.1*s,.32*s,sp.a,0,0,0); B(g,.12*s,.12*s,.1*s,sp.a,0,.02*s,.2*s);
-  [-1,1].forEach(k=>{B(g,.03*s,.03*s,.02,0x223344,k*.04*s,.04*s,.25*s); B(g,.02*s,.14*s,.02*s,sp.a,k*.04*s,.11*s,.24*s);
-    const W=new THREE.Group(); W.position.set(k*.05*s,.03*s,0); B(W,.38*s,.02*s,.28*s,sp.b,k*.19*s,0,.05*s,true); B(W,.28*s,.02*s,.2*s,sp.b,k*.15*s,0,-.17*s,true); W.userData.k=k; g.add(W); P.wings.push(W);});
-  const h=new THREE.Mesh(ico(.3*s),halo(sp.b,.16)); g.add(h);
+
+function badger(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c;
+  b(g,.56,.36,.8,A,0,.42,0); b(g,.44,.04,.66,0x77736f,0,.62,-.02); b(g,.58,.06,.7,0x45423f,0,.27,0);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([lx,lz])=>{
+    const L=grp(g,u,lx*.2,.24,lz*.28); b(L,.12,.24,.14,C,0,-.12,0); b(L,.12,.03,.04,0xd9d2c4,0,-.225,.08); P.legs.push(L);
+  });
+  b(g,.12,.08,.16,0x77736f,0,.5,-.46);
+  const H=grp(g,u,0,.46,.44); P.head=H;
+  b(H,.34,.26,.26,Bc,0,0,0); b(H,.2,.16,.2,Bc,0,-.04,.2); b(H,.1,.07,.05,EYE,0,-.02,.315);
+  [-1,1].forEach(k=>{
+    b(H,.09,.264,.24,C,k*.1,.002,-.01); b(H,.07,.165,.16,C,k*.07,-.04,.19);
+    const E=grp(H,u,k*.1,.03,.131); b(E,.04,.04,.01,0x111111,0,0,0); b(E,.015,.015,.01,WHITE,-k*.008,.01,.006,true); P.eyes.push(E);
+    const Ear=grp(H,u,k*.17,.1,-.08); b(Ear,.08,.06,.04,C,0,0,0); b(Ear,.08,.02,.041,Bc,0,.035,0); Ear.userData.rx=0; P.ears.push(Ear);
+  });
 }
-function whale(g,sp,s,P){
-  B(g,1.1*s,.85*s,2.2*s,sp.a,0,0,0);
-  B(g,.95*s,.7*s,.5*s,sp.a,0,.02*s,1.25*s);
-  B(g,.9*s,.2*s,2*s,sp.b,0,-.42*s,.2*s);
-  [-1,1].forEach(k=>B(g,.02,.09*s,.09*s,0x1a1a2a,k*.56*s,.05*s,1.0*s));
-  for(let i=0;i<6;i++) B(g,.12*s,.04*s,.12*s,sp.c,rand(-.35,.35)*s,.44*s,rand(-.9,.9)*s,true);
-  const T=new THREE.Group(); T.position.set(0,0,-1.1*s); g.add(T); P.tail=T;
-  B(T,.4*s,.35*s,.8*s,sp.a,0,0,-.4*s); B(T,1.3*s,.08*s,.45*s,sp.a,0,0,-.85*s);
-  [-1,1].forEach(k=>{const W=new THREE.Group(); W.position.set(k*.55*s,-.2*s,.4*s); B(W,.6*s,.06*s,.3*s,sp.a,k*.3*s,0,0); W.userData.k=k; g.add(W); P.wings.push(W);});
+
+function owl(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, D=0x6e5236, L2=0xa58561, BEAK=0xe0a040;
+  b(g,.5,.6,.45,A,0,.42,0); b(g,.38,.44,.04,Bc,0,.38,.225);
+  [.54,.44,.34,.24].forEach((y,r)=>[-.1,0,.1].forEach(x=>{if(r%2&&x>0)return; b(g,.06,.025,.01,D,x+(r%2?.05:0),y,.246);}));
+  b(g,.26,.08,.16,D,0,.16,-.27); b(g,.18,.04,.08,L2,0,.12,-.33);
+  [-1,1].forEach(k=>{
+    b(g,.1,.1,.1,Bc,k*.12,.07,.12); [-.04,0,.04].forEach(dx=>b(g,.03,.04,.09,BEAK,k*.12+dx,.02,.2));
+    const W=grp(g,u,k*.27,.62,0); W.userData.k=k; P.wings.push(W);
+    b(W,.06,.46,.38,D,0,-.22,-.02); for(let i=0;i<3;i++) b(W,.065,.03,.32,L2,0,-.12-.12*i,-.02); b(W,.05,.08,.12,D,0,-.48,-.12);
+  });
+  const H=grp(g,u,0,.89,0); P.head=H;
+  b(H,.52,.36,.44,A,0,0,0); b(H,.46,.3,.02,D,0,-.01,.225); b(H,.42,.26,.02,0xf3e6cc,0,-.01,.235);
+  b(H,.07,.08,.06,BEAK,0,-.08,.26); b(H,.05,.04,.04,0xb07a28,0,-.13,.27);
+  [[-.12,.15],[.1,.17],[0,.13]].forEach(([x,z])=>b(H,.05,.02,.05,D,x,.185,z-.1));
+  [-1,1].forEach(k=>{
+    const E=grp(H,u,k*.1,.01,.25);
+    b(E,.14,.14,.02,0x3a2a1a,0,0,0); b(E,.11,.11,.02,C,0,0,.006,true); b(E,.055,.055,.02,0x111111,0,0,.012); b(E,.025,.025,.01,WHITE,-k*.02,.025,.02,true);
+    P.eyes.push(E);
+    b(H,.14,.03,.03,D,k*.11,.1,.245).rotation.z=-k*.25;
+    const T=grp(H,u,k*.2,.17,-.04); T.rotation.z=-k*.4; b(T,.08,.16,.08,A,0,.08,0); b(T,.06,.06,.06,D,0,.17,0);
+  });
+  P.swivel=true;
+}
+
+function phoenix(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, GOLD=0xffe08a;
+  b(g,.46,.42,.5,A,0,.35,0); b(g,.32,.28,.04,Bc,0,.36,.25);
+  [[-.08,.42],[.08,.42],[0,.34],[-.08,.26],[.08,.26]].forEach(([x,y])=>b(g,.06,.03,.01,0xfff2c4,x,y,.272,true));
+  [-1,1].forEach(k=>{
+    b(g,.06,.12,.06,0xe0a040,k*.1,.06,.05); [-.03,0,.03].forEach(dx=>b(g,.025,.025,.07,0xe0a040,k*.1+dx,.0125,.1));
+    const W=grp(g,u,k*.25,.48,0); W.userData.k=k; P.wings.push(W);
+    b(W,.06,.36,.42,C,k*.03,-.17,-.02,true); b(W,.07,.14,.36,A,k*.035,-.3,-.05,true); b(W,.075,.08,.28,Bc,k*.04,-.38,-.09,true);
+  });
+  const H=grp(g,u,0,.66,.14); P.head=H;
+  b(H,.3,.26,.3,A,0,0,0); b(H,.31,.06,.2,C,0,.03,.05);
+  b(H,.08,.07,.12,GOLD,0,-.03,.2); b(H,.06,.04,.04,0xe0a040,0,-.07,.25);
+  [-1,1].forEach(k=>{const E=grp(H,u,k*.08,.03,.151); b(E,.07,.07,.01,GOLD,0,0,-.004,true); b(E,.045,.05,.02,0x221111,0,0,.004); b(E,.02,.02,.01,WHITE,-k*.01,.015,.015,true); P.eyes.push(E);});
+  const Cr=grp(H,u,0,.12,-.04);
+  b(Cr,.05,.24,.1,Bc,0,.1,0,true).rotation.x=-.4;
+  [-1,1].forEach(k=>{const m=b(Cr,.04,.18,.08,C,k*.06,.07,-.03,true); m.rotation.x=-.55; m.rotation.z=-k*.3;});
+  const T=grp(g,u,0,.3,-.25); T.rotation.x=-.25; P.tail=T;
+  [-1,0,1].forEach(i=>{b(T,.07,.04,.9,i?A:C,i*.1,0,-.45,true); b(T,.08,.045,.08,Bc,i*.1,0,-.6,true); b(T,.12,.04,.14,Bc,i*.12,.03,-.94,true);});
+}
+
+function dragon(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, SPK=0xe8a24a, MEM=0x9ad6b4, MEM2=0x76bf98;
+  b(g,.46,.38,.62,A,0,.55,0); for(let i=0;i<4;i++) b(g,.3,.06,.1,Bc,0,.36,-.18+i*.13);
+  b(g,.32,.26,.08,Bc,0,.56,.32); b(g,.24,.24,.2,A,0,.74,.34);
+  [[.22,.08],[.08,.11],[-.08,.11],[-.22,.09]].forEach(([z,h])=>b(g,.06,h,.08,SPK,0,.74+h/2-.01,z));
+  [-1,1].forEach(k=>{
+    [[.6,.1],[.52,-.12],[.64,-.2],[.5,.18]].forEach(([y,z])=>b(g,.02,.06,.06,C,k*.235,y,z));
+    [-1,1].forEach(lz=>{const L=grp(g,u,k*.15,.36,lz*.2); b(L,.12,.3,.12,A,0,-.15,0); b(L,.14,.06,.16,C,0,-.33,.02); [-.04,0,.04].forEach(dx=>b(L,.025,.025,.04,Bc,dx,-.345,.11)); P.legs.push(L);});
+    const W=grp(g,u,k*.22,.7,.08); W.userData.k=k; W.userData.base=k*.45; W.rotation.z=W.userData.base; P.wings.push(W);
+    b(W,.42,.04,.04,C,k*.21,0,0); b(W,.03,.03,.34,C,k*.4,0,-.16); b(W,.03,.03,.28,C,k*.22,0,-.13);
+    b(W,.38,.02,.3,MEM,k*.2,-.006,-.17); b(W,.2,.02,.14,MEM,k*.31,-.006,-.38); b(W,.38,.024,.03,MEM2,k*.2,-.007,-.33);
+  });
+  P.legs=[P.legs[0],P.legs[1],P.legs[3],P.legs[2]];
+  const H=grp(g,u,0,.9,.48); P.head=H;
+  b(H,.36,.3,.32,A,0,0,0); b(H,.26,.14,.22,A,0,-.06,.25); b(H,.24,.05,.22,Bc,0,-.155,.22); b(H,.38,.05,.08,C,0,.1,.13);
+  [-1,1].forEach(k=>{
+    b(H,.04,.03,.02,C,k*.06,-.02,.365);
+    const E=grp(H,u,k*.12,.03,.161); b(E,.08,.08,.02,0xffd25a,0,0,0,true); b(E,.02,.07,.01,0x111111,0,0,.011); P.eyes.push(E);
+    b(H,.03,.12,.12,C,k*.19,-.02,-.04);
+    const Hn=grp(H,u,k*.12,.14,-.08); Hn.rotation.x=-.5; b(Hn,.07,.16,.07,Bc,0,.08,0); b(Hn,.05,.1,.05,Bc,0,.19,-.05);
+  });
+  const T=grp(g,u,0,.55,-.31); T.rotation.x=-.2; P.tail=T;
+  b(T,.2,.18,.22,A,0,0,-.11); b(T,.15,.13,.2,A,0,-.03,-.3); b(T,.1,.09,.18,A,0,-.05,-.47);
+  b(T,.04,.06,.05,SPK,0,.11,-.12); b(T,.04,.05,.05,SPK,0,.06,-.3);
+  b(T,.16,.04,.16,SPK,0,-.05,-.62).rotation.y=Math.PI/4;
+}
+
+function mosssprite(g,sp,P){
+  const u=sp.size, b=scaled(u), LEAF=0x6cbf6a, DARK=0x4f9d55;
+  const core=new THREE.Mesh(ico(.22*u),M(sp.a,true)); core.position.y=.3*u; g.add(core);
+  const h=new THREE.Mesh(ico(.36*u),halo(sp.a,.22)); h.position.y=.3*u; g.add(h);
+  b(g,.04,.14,.04,DARK,0,.55,0); b(g,.16,.04,.08,LEAF,.07,.62,0).rotation.z=.4; b(g,.14,.04,.08,DARK,-.06,.6,.02).rotation.z=-.4;
+  [-1,1].forEach(k=>{
+    const E=grp(g,u,k*.07,.32,.205); b(E,.04,.07,.02,0x1f3a24,0,0,0); b(E,.015,.02,.01,WHITE,-k*.008,.02,.011,true); P.eyes.push(E);
+    b(g,.05,.025,.02,0xf2b5c8,k*.12,.27,.2,true);
+    b(g,.1,.03,.06,DARK,k*.25,.26,0).rotation.z=-k*.5;
+  });
+  b(g,.04,.02,.02,0x1f3a24,0,.25,.21);
+  const O=grp(g,u,0,.3,0); P.orbit=O;
+  for(let i=0;i<4;i++){const a=i/4*TAU; b(O,.04,.04,.04,0xe9ff8a,Math.cos(a)*.38,(i%2?.06:-.06),Math.sin(a)*.38,true);}
+}
+
+function mushfolk(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b;
+  [-1,1].forEach(k=>{const L=grp(g,u,k*.08,.12,0); b(L,.09,.12,.1,Bc,0,-.06,0); b(L,.1,.04,.14,0xd9ceb4,0,-.11,.02); P.legs.push(L);});
+  b(g,.3,.38,.28,Bc,0,.31,0);
+  [-1,1].forEach(k=>{
+    const Ar=grp(g,u,k*.17,.42,0); Ar.rotation.z=k*.3; b(Ar,.06,.16,.06,Bc,0,-.08,0);
+    const E=grp(g,u,k*.07,.37,.145); b(E,.05,.07,.02,EYE,0,0,0); b(E,.02,.02,.01,WHITE,-k*.01,.02,.011,true); P.eyes.push(E);
+    b(g,.06,.03,.02,0xf2a1a1,k*.11,.31,.145);
+  });
+  b(g,.04,.02,.02,0x8a4a3a,0,.3,.145);
+  const H=grp(g,u,0,.54,0); P.head=H;
+  b(H,.6,.04,.6,0xe8d9b8,0,-.02,0); b(H,.72,.2,.72,A,0,.08,0); b(H,.5,.12,.5,A,0,.24,0); b(H,.28,.06,.28,A,0,.32,0);
+  [[.1,.305,.08],[-.12,.305,-.05],[.02,.355,-.06],[.27,.185,.1],[-.25,.185,.18],[.05,.185,.29],[-.2,.185,-.26],[.22,.185,-.2]].forEach(([x,y,z])=>b(H,.09,.03,.09,0xfff8ec,x,y,z));
+  b(H,.02,.08,.02,0x4f8f45,0,.39,0); b(H,.08,.02,.04,0x6cbf6a,.04,.43,0);
+}
+
+function glowmoth(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b;
+  b(g,.12,.12,.14,A,0,0,.06); b(g,.1,.1,.12,A,0,-.01,-.08); b(g,.08,.08,.1,0xcfdcf5,0,-.02,-.18); b(g,.16,.06,.06,WHITE,0,.04,.12);
+  b(g,.12,.1,.08,A,0,.02,.18);
+  [-1,1].forEach(k=>{
+    const E=grp(g,u,k*.05,.02,.2); b(E,.04,.05,.04,0x223344,0,0,0); b(E,.015,.015,.01,WHITE,0,.012,.02,true); P.eyes.push(E);
+    const An=grp(g,u,k*.04,.06,.2); An.rotation.z=-k*.35; An.rotation.x=.35; b(An,.02,.16,.02,A,0,.08,0); b(An,.06,.02,.02,Bc,0,.1,0); b(An,.05,.02,.02,Bc,0,.14,0);
+    const W=grp(g,u,k*.06,.03,0); W.userData.k=k; P.wings.push(W);
+    b(W,.4,.02,.28,Bc,k*.2,0,.06,true); b(W,.28,.02,.2,Bc,k*.15,0,-.16,true); b(W,.4,.021,.03,0x7cc4f0,k*.2,0,.2,true);
+    b(W,.08,.022,.08,0xe8f6ff,k*.24,0,.08,true); b(W,.04,.024,.04,0x5aa8e0,k*.24,0,.08,true); b(W,.05,.022,.05,0xe8f6ff,k*.16,0,-.17,true);
+  });
+  g.add(new THREE.Mesh(ico(.3*u),halo(Bc,.16)));
+}
+
+function skywhale(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c;
+  b(g,1.1,.85,2.2,A,0,0,0); b(g,.95,.7,.5,A,0,.02,1.25); b(g,.9,.2,2,Bc,0,-.42,.2);
+  [-.3,-.1,.1,.3].forEach(x=>b(g,.02,.205,1.8,0xb9c3ec,x,-.42,.2));
+  b(g,.952,.03,.4,0x4f5ea8,0,-.2,1.3);
+  [-1,1].forEach(k=>{
+    const E=grp(g,u,k*.56,.05,1.0); b(E,.02,.1,.1,0x1a1a2a,0,0,0); b(E,.01,.04,.04,WHITE,k*.006,.03,.02,true); P.eyes.push(E);
+    b(g,.02,.08,.14,0xb7a6f2,k*.555,-.1,1.15);
+    const W=grp(g,u,k*.55,-.2,.4); W.userData.k=k; b(W,.6,.06,.3,A,k*.3,0,0); b(W,.6,.065,.06,Bc,k*.3,0,-.13); P.wings.push(W);
+  });
+  for(let i=0;i<8;i++) b(g,.12,.04,.12,C,rand(-.35,.35),.44,rand(-.9,1.2),true);
+  for(let i=0;i<4;i++) b(g,.06,.06,.06,WHITE,rand(-.3,.3),.48,rand(-.8,1),true);
+  const T=grp(g,u,0,0,-1.1); P.tail=T;
+  b(T,.4,.35,.8,A,0,0,-.4); b(T,1.3,.08,.45,A,0,0,-.85); [-1,1].forEach(k=>b(T,.2,.085,.2,C,k*.55,0,-.95,true));
+}
+
+const MODELS={rabbit,fox,starfox:fox,deer,mole,squirrel,badger,owl,phoenix,dragon,mosssprite,mushfolk,glowmoth,skywhale};
+
+// Small idle details: blinks (eyes shut while napping), ear twitches, nose wiggles, owl head turns.
+function detailAnim(c,t){
+  const P=c.mesh.userData.parts, napping=c.mode==='do'&&c.act&&c.act.type==='nap';
+  const blink=napping||((t+c.seed)%3.6)<.13; P.eyes.forEach(E=>E.scale.y=blink?.15:1);
+  P.ears.forEach((E,i)=>{const ph=(t*.9+c.seed+i*.15)%4; E.rotation.x=E.userData.rx+(ph<.35&&!napping?Math.sin(ph/.35*Math.PI)*-.35:0);});
+  if(P.nose) P.nose.scale.y=P.nose.userData.h*(1+Math.max(0,Math.sin(t*14))*.35*(((t+c.seed)%2.5)<.8&&!napping?1:0));
+  if(P.swivel&&P.head){const busy=c.mode==='do'&&c.act&&['eat','drink','stargaze','nap'].includes(c.act.type); const ph=(t*.5+c.seed)%6; P.head.rotation.y=!busy&&ph<1?Math.sin(ph*Math.PI)*.9:0;}
+  if(P.orbit) P.orbit.rotation.y=t*1.4+c.seed;
 }
 
 /* ---------- Decor models ---------- */
@@ -635,12 +827,13 @@ function updateCreature(c,dt,t){
     const resting=c.mode==='do'&&(c.act.type==='perch'||c.act.type==='nap');
     const rate=sp.shape==='moth'?24:sp.shape==='whale'?1.6:sp.wings?9:sp.variant==='phoenix'?8:12;
     const amp=sp.shape==='whale'?.3:.7;
-    P.wings.forEach(W=>{W.rotation.z=resting?lerp(W.rotation.z,0,dt*6):W.userData.k*Math.sin(t*rate+c.seed)*amp;});
+    P.wings.forEach(W=>{const base=W.userData.base||0; W.rotation.z=resting?lerp(W.rotation.z,base,dt*6):base+W.userData.k*Math.sin(t*rate+c.seed)*amp;});
   }
   // height + bounds
   if(fly){ if(!(c.mode==='do'&&(c.act.type==='perch'||c.act.type==='nap'))&&c.act.type!=='loop') g.position.y=Math.sin(t*2.2+c.seed)*.12; constrain(p,sp); }
   else if(climb){ if(p.y<.3) p.y=Math.max(0,p.y); constrain(p,sp,c.leaving); }
   else { p.y=sp.kind==='float'?.35+Math.sin(t*2+c.seed)*.1:0; constrain(p,sp,c.leaving); }
+  detailAnim(c,t);
 }
 
 let usedNames=new Set();
@@ -678,11 +871,14 @@ function updateParts(dt){parts.forEach(q=>{if(q.life<=0) return; q.life-=dt; q.v
 /* ---------- Camera ---------- */
 const cam={theta:.7,phi:1.12,dist:12,tDist:12,look:new V(0,1,0),tLook:new V(0,1,0)};
 function camDefaults(){const h=STAGES[state.stage].h; cam.tDist=8+h*1.55; cam.tLook.set(0,h*.42,0);}
-function camLimits(){const h=STAGES[state.stage].h; return [4.5,22+h*1.6];}
+function camLimits(){if(follow) return [.9+follow.sp.size*1.2,10+follow.sp.size*4]; const h=STAGES[state.stage].h; return [4.5,22+h*1.6];}
+const camRay=new THREE.Raycaster(), camDir=new V();
 function updateCamera(dt){
-  cam.dist=lerp(cam.dist,cam.tDist,1-Math.pow(.002,dt)); cam.look.lerp(cam.tLook,1-Math.pow(.02,dt));
+  cam.dist=lerp(cam.dist,cam.tDist,1-Math.pow(.002,dt)); cam.look.lerp(cam.tLook,1-Math.pow(follow?.0005:.02,dt));
   const sp=Math.sin(cam.phi);
   camera.position.set(cam.look.x+cam.dist*sp*Math.sin(cam.theta),cam.look.y+cam.dist*Math.cos(cam.phi),cam.look.z+cam.dist*sp*Math.cos(cam.theta));
+  // In close up, pull the camera in front of any trunk or leaves between it and the creature.
+  if(follow&&treeGroup){camDir.subVectors(camera.position,cam.look); const d=camDir.length(); camDir.divideScalar(d); camRay.set(cam.look,camDir); camRay.far=d; const hit=camRay.intersectObject(treeGroup,true)[0]; if(hit) camera.position.copy(cam.look).addScaledVector(camDir,Math.max(.5,hit.distance-.25));}
   camera.lookAt(cam.look);
   scene.fog.near=cam.dist+8; scene.fog.far=cam.dist+55;
 }
@@ -801,11 +997,21 @@ function tapTree(pt,x,y){
 const ring=new THREE.Mesh(new THREE.RingGeometry(.45,.6,16),new THREE.MeshBasicMaterial({color:0xf5cc6e,side:THREE.DoubleSide,transparent:true,opacity:.9}));
 ring.rotation.x=-Math.PI/2; ring.visible=false; scene.add(ring);
 function select(c,doFollow){
-  selected=c; follow=doFollow?c:null; ring.visible=true; ring.scale.setScalar(Math.max(1,c.sp.size*1.3));
+  selected=c; ring.visible=true; if(doFollow||follow) watch(c,!!doFollow); ring.scale.setScalar(Math.max(1,c.sp.size*1.3));
   $('#card').hidden=false; if(innerWidth<=640) closePanel();
   if(c.mode==='do'&&c.act.type==='nap') bubble(c,'!?'); else if(c.bubbleT<=0) bubble(c,c.visitor?'✦?':pick(['!','?','hi!']));
   renderCard(); tone(880,.2,.04);
 }
+let watchTipShown=false;
+// Close up: the camera follows one creature at short range. Drag still orbits, scroll or pinch zooms.
+function watch(c,reset){
+  const was=follow; follow=c;
+  if(reset||!was){cam.tDist=1.6+c.sp.size*2.4; cam.theta=Math.atan2(c.mesh.position.x,c.mesh.position.z);}
+  cam.tDist=clamp(cam.tDist,...camLimits()); if(cam.phi<.95) cam.phi=.95;
+  if(!watchTipShown){watchTipShown=true; toast('Drag to look around. Scroll or pinch to zoom.');}
+  renderCard();
+}
+function unwatch(){if(!follow) return; follow=null; camDefaults(); renderCard();}
 function deselect(){const wasF=follow; selected=null; follow=null; ring.visible=false; $('#card').hidden=true; if(wasF) camDefaults();}
 function moodWord(h){return h>=80?'Overjoyed':h>=60?'Happy':h>=40?'Content':h>=20?'A bit lonely':'Gloomy';}
 function renderCard(){
@@ -819,6 +1025,7 @@ function renderCard(){
   const tc=treatCost(c);
   $('#cPet').hidden=c.visitor; $('#cTreat').hidden=c.visitor; $('#cFriend').hidden=!c.visitor;
   $('#cPet').disabled=c.petCD>0; $('#cPet').textContent=c.petCD>0?'Pet ♥':'Pet';
+  $('#cWatch').textContent=follow===c?'Back out':'Close up';
   $('#cTreat').textContent=`Treat · ${fmt(tc)} ✦`; $('#cTreat').disabled=state.essence<tc;
 }
 const treatCost=c=>Math.max(10,Math.round(c.sp.rate*30));
@@ -882,6 +1089,7 @@ $('#cClose').addEventListener('click',deselect);
 $('#cPet').addEventListener('click',pet);
 $('#cTreat').addEventListener('click',treat);
 $('#cFriend').addEventListener('click',befriend);
+$('#cWatch').addEventListener('click',()=>{if(!selected) return; follow===selected?unwatch():watch(selected,true);});
 $('#placeCancel').addEventListener('click',cancelPlacing);
 $('#snd').addEventListener('click',()=>{state.sound=!state.sound; $('#snd').textContent=state.sound?'♪ On':'♪ Off'; ensureAudio(); save();});
 
@@ -1000,8 +1208,8 @@ function frame(now){
   if(treeGroup){treeBounce=Math.max(0,treeBounce-dt*3); const k=Math.sin((1-treeBounce)*Math.PI*3)*treeBounce*.05; treeGroup.scale.set(1-k*.5,1+k,1-k*.5); treeGroup.rotation.z=Math.sin(t*.6)*.006;}
   updateParts(dt); updateFireflies(t);
   if(selected){ring.position.set(selected.mesh.position.x,selected.sp.kind==='fly'?selected.mesh.position.y-.3:.03,selected.mesh.position.z); ring.rotation.z+=dt;}
-  if(follow){cam.tLook.set(follow.mesh.position.x,follow.mesh.position.y+.5,follow.mesh.position.z); cam.tDist=Math.max(camLimits()[0]+1,Math.min(cam.tDist,7+follow.sp.size*3));}
-  if(!dragging&&!follow&&!reduceMotion&&now-lastInteract>9000) cam.theta+=dt*.025;
+  if(follow){const fp=follow.mesh.position; cam.tLook.set(fp.x,fp.y+follow.height*.45+follow.mesh.userData.parts.g.position.y,fp.z);}
+  if(!dragging&&!reduceMotion&&now-lastInteract>(follow?6000:9000)) cam.theta+=dt*(follow?.1:.025);
   updateCamera(dt); renderer.render(scene,camera); updateBubbles(dt);
   hudT-=dt;
   if(hudT<=0){hudT=.25;
