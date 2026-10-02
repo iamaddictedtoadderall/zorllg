@@ -271,6 +271,8 @@ const SPECIES={
   duck:{name:'Duck',shape:'quad',kind:'ground',cost:90,stage:0,rate:1.2,size:.55,speed:1.3,a:0x9a8a72,b:0xe8e2d4,c:0x2f7a4a,hopAmp:.06,home:'pond',needs:'pond',layer:'Water'},
   snail:{name:'Glow Snail',shape:'quad',kind:'ground',cost:420,stage:1,rate:4.5,size:.6,speed:.3,a:0xe8dcc0,b:0x7fe0d8,c:0xb48cff,mystic:true},
   skyray:{name:'Sky Ray',shape:'ray',kind:'fly',cost:12000,stage:3,rate:75,size:1.3,speed:2,a:0x3a4a8a,b:0xe8ecff,c:0x9fb2ff,mystic:true,yMin:.3,yMax:1,wingRate:2.4,wingAmp:.35},
+  crab:{name:'Crab',shape:'quad',kind:'ground',cost:150,stage:0,rate:1.6,size:.5,speed:1.4,a:0xe0503a,b:0xf6c8a8,c:0x8a2a1a,layer:'Seabed'},
+  seaturtle:{name:'Sea Turtle',shape:'turtle',kind:'fly',cost:2400,stage:2,rate:19,size:1,speed:1.4,a:0x7a6a3a,b:0xe8dcb0,c:0x5a4a2a,yMin:.08,yMax:.6,wingRate:2,wingAmp:.4,layer:'Open water'},
   rainbowfawn:{name:'Rainbow Fawn',shape:'quad',kind:'ground',cost:0,stage:0,rate:40,size:.8,speed:1.6,a:0xf6efe6,b:0xffffff,d:0xf0d8e8,rainbow:true,noAntlers:true,mystic:true,visitorOnly:true,loves:'rainbows and sunshine',hint:'Appears with a rainbow'},
   auroramoth:{name:'Aurora Moth',shape:'moth',kind:'fly',cost:15000,stage:3,rate:35,size:.9,speed:1.6,a:0xeafff6,b:0x8affc8,c:0xb48cff,d:0x6fe0ff,mystic:true,visitorOnly:true,yMin:.2,yMax:.8,loves:'the northern lights',hint:'Appears during an aurora'}
 };
@@ -365,19 +367,23 @@ const AREAS={
   hollow:{name:'Mushroom Hollow',desc:'A dim, glowing hollow beneath giant mushrooms.',cost:20000,stage:3,sky:0x8a7fb8,ground:0x2e2a40,clear:0x4f6a48,tufts:[0x3f5a3c,0x6a8a5a],
     rocks:[0x5a5468,0x6a6478,0x4a4458],leaves:[0x8a5ad8,0x4fb3a8,0x6a4ab8,0x3f9a90],trunk:0x5a4058,glowDots:true,dim:.7,wx:{fog:2,fireflies:4,wind:.3,snow:.3,golden:.3,butterflies:.3},
     shop:['mushfolk','snail','mole','hedgehog','badger','wisp','mosssprite','glowmoth','owl','kitsune','tortoise'],native:'snail'},
+  reef:{name:'Sunken Reef',desc:'A sunlit coral reef far beneath the waves.',cost:40000,stage:3,sky:0x2f8fb0,ground:0xa89a78,clear:0xc8b890,dim:.85,tufts:[0x4fa86a,0x7ac88a],
+    rocks:[0x8a8a9a,0x9a9aaa,0x7a7a8a],leaves:[0xff7a8a,0xffa06a,0xc88aff,0xff8ac8,0xffd36a],trunk:0xe0c0a8,glowDots:true,under:true,
+    wx:{rain:0,snow:0,wind:0,fog:.6,butterflies:0,blossom:0,aurora:0,meteors:0,golden:1.4,fireflies:2,starfall:.5,bluemoon:1.2},
+    shop:['crab','seaturtle','otter','snail','jellyfish','skyray','skywhale'],native:'seaturtle'},
   isle:{name:'Floating Isle',desc:'A tiny island adrift above the clouds.',cost:60000,stage:4,sky:0xa6d4ff,ground:null,clear:0x86c86a,tufts:[0x6fb85a,0xa8dc7a],
     rocks:[0x9a96a8,0xb0acc0,0x8a8698],leaves:[0xf2b6d2,0xe89ac0,0xf8d0e2,0xd88ab8],trunk:0x7a5a6a,wx:{wind:2,aurora:2.5,meteors:2,starfall:2,fog:.3,rain:.6,snow:.5},
     shop:['cloudsheep','skyray','hummingbird','owl','auroramoth','dragon','phoenix','jellyfish','skywhale'],native:'skyray'}
 };
-const AREA_ORDER=['grove','peak','lake','hollow','isle'];
-let curArea='grove', areaGroup=null, areaSpots=[];
+const AREA_ORDER=['grove','peak','lake','hollow','reef','isle'];
+let curArea='grove', areaGroup=null, areaSpots=[], areaAnim=[];
 const A=()=>AREAS[curArea];
 const areaShop=()=>A().shop||SHOP;
 // Lakeside has open water just past the shore, used by frogs, otters and ducks.
 function areaWater(){if(!A().water) return null; const a=rand(0,TAU), r=rand(19.4,21); return {pos:new V(Math.cos(a)*r,0,Math.sin(a)*r),rot:a,lake:true};}
 function buildArea(id){
   if(areaGroup) scene.remove(areaGroup);
-  const D=AREAS[id], W=new THREE.Group(); areaGroup=W; areaSpots=[]; scene.add(W);
+  const D=AREAS[id], W=new THREE.Group(); areaGroup=W; areaSpots=[]; areaAnim=[]; scene.add(W);
   GROUND.setHex(D.ground||0x3d6a3b); CLEAR.setHex(D.clear); C_DAY.setHex(D.sky); groundMat.color.copy(GROUND); clearMat.color.copy(CLEAR);
   if(D.ground!=null){const ground=new THREE.Mesh(new THREE.CircleGeometry(250,40),groundMat); ground.rotation.x=-Math.PI/2; ground.position.y=D.water?-.12:-.03; ground.receiveShadow=true; W.add(ground);}
   const clearing=new THREE.Mesh(new THREE.CylinderGeometry(18.2,18.7,0.3,40),clearMat); clearing.position.y=-0.15; clearing.receiveShadow=true; W.add(clearing);
@@ -424,6 +430,40 @@ const AREA_BUILD={
       const cr=rand(1.6,3), cap=new THREE.Mesh(new THREE.CylinderGeometry(cr*.55,cr,1.1,8),PH(pick(caps))); cap.position.y=h+.4; g.add(cap);
       for(let k=0;k<5;k++){const b=rand(0,TAU),rr=rand(.3,cr*.8); B(g,.25,.12,.25,0xe8fff8,Math.cos(b)*rr,h+.97,Math.sin(b)*rr,true);}}
     for(let i=0;i<26;i++){const a=rand(0,TAU), r=rand(13,18), h=rand(.2,.5), x=Math.cos(a)*r, z=Math.sin(a)*r; B(W,.08,h,.08,0xe8dcc4,x,h/2,z); B(W,.3,.1,.3,pick([0x58d6c4,0xb48cff,0x7fe0ff]),x,h+.04,z,true);}
+  },
+  reef(W){
+    const corals=[0xff7a8a,0xffa06a,0xc88aff,0xffd36a,0x5fd8c8,0xff8ac8];
+    for(let i=0;i<95;i++){const a=rand(0,TAU), r=rand(21,48), s=rand(.8,2), g=new THREE.Group(), col=pick(corals), kind=i%4; g.position.set(Math.cos(a)*r,0,Math.sin(a)*r); g.scale.setScalar(s); g.rotation.y=rand(0,TAU); W.add(g);
+      if(kind===0){B(g,.3,1.4,.3,col,0,.7,0); for(let k=0;k<4;k++){const h=rand(.6,1.2); const m=B(g,.22,h,.22,col,rand(-.4,.4),rand(.6,1.3)+h/2,rand(-.4,.4)); m.rotation.z=rand(-.6,.6); B(g,.26,.12,.26,shade(col,1.15),m.position.x,m.position.y+h/2,m.position.z,true);}}
+      else if(kind===1){const m=new THREE.Mesh(ico(.9),PH(col)); m.scale.y=.6; m.position.y=.4; g.add(m); for(let k=0;k<5;k++) B(g,.9,.05,.05,shade(col,.75),0,.62,-.4+k*.2);}
+      else if(kind===2){B(g,.1,.8,.1,shade(col,.7),0,.4,0); B(g,1.6,1.4,.06,col,0,1.4,0); B(g,1.2,.2,.07,shade(col,1.15),0,2.05,0);}
+      else for(let k=0;k<5;k++){const h=rand(.6,1.6); const t=new THREE.Mesh(new THREE.CylinderGeometry(.16,.2,h,6),PH(col)); t.position.set(rand(-.4,.4),h/2,rand(-.4,.4)); g.add(t); B(g,.22,.06,.22,0xfff2e0,t.position.x,h,t.position.z,true);}}
+    // Kelp sways in the current.
+    const kelp=[];
+    for(let i=0;i<45;i++){const a=rand(0,TAU), r=rand(19.5,44), x=Math.cos(a)*r, z=Math.sin(a)*r;
+      for(let j=0;j<3;j++){const g=new THREE.Group(); g.position.set(x+rand(-.8,.8),0,z+rand(-.8,.8)); W.add(g); const h=rand(4,9), n=Math.floor(h/.7);
+        for(let k=0;k<n;k++){B(g,.22,.72,.06,k%2?0x3f8a4a:0x5aa85a,0,k*.7+.35,0).rotation.y=k*.4; if(k%2) B(g,.4,.08,.05,0x6ab86a,.18,k*.7+.3,0);}
+        g.userData.o=rand(0,6); kelp.push(g);}}
+    for(let i=0;i<14;i++){const a=rand(0,TAU), r=rand(13,18), x=Math.cos(a)*r, z=Math.sin(a)*r, col=pick(corals); B(W,.18,rand(.4,.9),.18,col,x,.3,z); B(W,.3,.1,.3,shade(col,1.15),x+.2,.1,z+.15,true);}
+    // Sunbeams slanting down from the surface.
+    const rays=[];
+    for(let i=0;i<9;i++){const m=new THREE.Mesh(new THREE.PlaneGeometry(rand(2,4.5),34),new THREE.MeshBasicMaterial({color:0xcff6ff,transparent:true,opacity:.07,depthWrite:false,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,fog:false}));
+      const a=rand(0,TAU), r=rand(3,16); m.position.set(Math.cos(a)*r,15,Math.sin(a)*r); m.rotation.set(0,rand(0,TAU),.35); m.userData.o=rand(0,6); W.add(m); rays.push(m);}
+    // Bubbles rising from the seabed.
+    const NB=240, bp=new Float32Array(NB*3), bs=[]; for(let i=0;i<NB;i++){const a=rand(0,TAU), r=Math.sqrt(Math.random())*24; bp.set([Math.cos(a)*r,rand(0,22),Math.sin(a)*r],i*3); bs.push(rand(.6,1.6));}
+    const bg=new THREE.BufferGeometry(); bg.setAttribute('position',new THREE.BufferAttribute(bp,3));
+    const bubbles=new THREE.Points(bg,new THREE.PointsMaterial({color:0xe8fbff,size:2,sizeAttenuation:false,transparent:true,opacity:.7,depthWrite:false})); W.add(bubbles);
+    // Little fish schools circling past the coral.
+    const schools=[];
+    for(let i=0;i<6;i++){const g=new THREE.Group(), col=pick([0xffa03a,0x6ab8ff,0xffe066,0xff7aa8]); W.add(g);
+      for(let k=0;k<7;k++){const f=new THREE.Group(); f.position.set(rand(-1,1),rand(-.6,.6),rand(-1.2,1.2)); B(f,.12,.16,.3,col,0,0,0); B(f,.04,.14,.1,shade(col,.8),0,0,-.2); g.add(f);}
+      g.userData={r:rand(24,36),y:rand(2,7),a:rand(0,TAU),sp:rand(.08,.16)*(i%2?1:-1)}; schools.push(g);}
+    areaAnim.push((t,dt)=>{
+      kelp.forEach(g=>{g.rotation.z=Math.sin(t*.8+g.userData.o)*.12; g.rotation.x=Math.cos(t*.6+g.userData.o)*.08;});
+      rays.forEach(m=>{m.material.opacity=(.04+.04*Math.sin(t*.5+m.userData.o))*(.3+.7*state.light);});
+      for(let i=0;i<NB;i++){let y=bp[i*3+1]+bs[i]*dt*1.6; if(y>22) y=0; bp[i*3+1]=y; bp[i*3]+=Math.sin(t*2+i)*dt*.15;} bg.attributes.position.needsUpdate=true;
+      schools.forEach(g=>{const u=g.userData; u.a+=u.sp*dt; g.position.set(Math.cos(u.a)*u.r,u.y+Math.sin(t*.5+u.r)*.5,Math.sin(u.a)*u.r); g.rotation.y=-u.a+(u.sp>0?Math.PI:0);});
+    });
   },
   isle(W){
     const under=new THREE.Mesh(new THREE.ConeGeometry(18.7,16,14),PH(0x7a7268)); under.rotation.x=Math.PI; under.position.y=-8.3; W.add(under);
@@ -1149,8 +1189,32 @@ function skyray(g,sp,P){
   [[0,.1],[.1,-.15],[-.08,-.25]].forEach(([x,z])=>b(g,.04,.02,.04,C,x,.065,z,true));
   const T=grp(g,u,0,0,-.35); b(T,.04,.04,.8,A,0,0,-.4); b(T,.06,.03,.06,C,0,0,-.82,true);
 }
+function crab(g,sp,P){
+  // Built facing +z, then turned a quarter so walking forward looks like scuttling sideways.
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, R=grp(g,u,0,0,0); R.rotation.y=Math.PI/2;
+  b(R,.6,.18,.42,A,0,.24,0); b(R,.5,.08,.34,C,0,.36,-.02); b(R,.5,.06,.36,Bc,0,.13,0);
+  [-1,1].forEach(k=>{
+    for(let i=0;i<3;i++){const L=grp(R,u,k*.28,.22,-.14+i*.13); L.rotation.z=-k*.45; b(L,.28,.04,.05,C,k*.14,0,0); b(L,.04,.12,.04,C,k*.27,-.05,0); P.legs.push(L);}
+    b(R,.03,.16,.03,C,k*.1,.4,.16); const E=grp(R,u,k*.1,.5,.16); b(E,.06,.06,.06,WHITE,0,0,0); b(E,.03,.03,.02,EYE,0,0,.031); P.eyes.push(E);
+    const Cl=grp(R,u,k*.32,.28,.26); P.claws=P.claws||[]; P.claws.push(Cl); b(Cl,.08,.08,.18,A,0,0,-.04);
+    const top=grp(Cl,u,0,.04,.08); b(top,.14,.06,.2,A,0,0,.08); top.userData.k=1; const bot=grp(Cl,u,0,-.04,.08); b(bot,.12,.05,.16,shade(A,.85),0,0,.06); bot.userData.k=-1; Cl.userData.jaws=[top,bot];
+  });
+  b(R,.08,.02,.02,0x5a1a10,0,.24,.212);
+}
 
-const MODELS={goat,duck,snail,skyray,rabbit,fox,starfox:fox,deer,mole,squirrel,badger,owl,phoenix,dragon,mosssprite,mushfolk,glowmoth,skywhale,
+function seaturtle(g,sp,P){
+  const u=sp.size, b=scaled(u), A=sp.a, Bc=sp.b, C=sp.c, SK=0x8ab8a0;
+  b(g,.62,.16,.78,C,0,.02,0); b(g,.56,.18,.7,A,0,.15,0); b(g,.38,.1,.48,shade(A,1.15),0,.27,0);
+  [[0,0],[-.16,.18],[.16,.18],[-.16,-.18],[.16,-.18],[0,.26],[0,-.26]].forEach(([x,z])=>b(g,.13,.012,.13,shade(A,.75),x,.325,z));
+  b(g,.5,.05,.62,Bc,0,-.07,0);
+  [-1,1].forEach(k=>{const W=grp(g,u,k*.3,.04,.18); W.userData.k=k; P.wings.push(W); b(W,.46,.05,.18,SK,k*.22,0,.02).rotation.y=-k*.35; b(W,.2,.05,.12,shade(SK,.85),k*.42,0,-.06);
+    b(g,.18,.05,.12,SK,k*.3,.02,-.34).rotation.y=k*.5;});
+  const H=grp(g,u,0,.08,.5); P.head=H; b(H,.22,.18,.24,SK,0,0,0); b(H,.18,.06,.06,shade(SK,.7),0,-.05,.12);
+  [-1,1].forEach(k=>{const E=grp(H,u,k*.1,.04,.07); b(E,.02,.05,.05,EYE,0,0,0); b(E,.01,.018,.018,WHITE,k*.006,.012,.012,true); P.eyes.push(E); b(H,.15,.03,.15,shade(SK,.85),k*.06,.09,0);});
+  b(g,.08,.05,.14,SK,0,.02,-.44);
+}
+
+const MODELS={crab,seaturtle,goat,duck,snail,skyray,rabbit,fox,starfox:fox,deer,mole,squirrel,badger,owl,phoenix,dragon,mosssprite,mushfolk,glowmoth,skywhale,
   hedgehog,frog,raccoon,hummingbird,bearcub,otter,wisp,tortoise,kitsune:fox,cloudsheep,jellyfish,snowhare:rabbit,rainbowfawn:deer,auroramoth:glowmoth};
 
 // Small idle details: blinks (eyes shut while napping), ear twitches, nose wiggles, owl head turns.
@@ -1162,6 +1226,7 @@ function detailAnim(c,t){
   if(P.swivel&&P.head){const busy=c.mode==='do'&&c.act&&['eat','drink','stargaze','nap'].includes(c.act.type); const ph=(t*.5+c.seed)%6; P.head.rotation.y=!busy&&ph<1?Math.sin(ph*Math.PI)*.9:0;}
   if(P.orbit) P.orbit.rotation.y=t*1.4+c.seed;
   tintAnim(P,t,c.seed);
+  if(P.claws) P.claws.forEach((Cl,i)=>Cl.userData.jaws.forEach(J=>J.rotation.x=-J.userData.k*Math.max(0,Math.sin(t*3+c.seed+i*1.3))*.4));
   if(P.shell) P.shell.scale.setScalar(1+Math.sin(t*1.5+c.seed)*.04);
   if(P.ball){const curl=napping||(c.mode==='do'&&c.act&&c.act.type==='hide')||(c.curlUntil||0)>t; P.ball.visible=curl; P.body.visible=!curl;}
   if(P.tails&&P.tails.length){const n=1+Math.min(4,Math.floor(c.happy/20)); P.tails.forEach((T,i)=>{T.visible=i<n; T.rotation.y=(i-(n-1)/2)*.38+Math.sin(t*2.5+c.seed+i)*.12; T.rotation.x=.25+Math.abs(i-(n-1)/2)*.1;});}
@@ -1562,12 +1627,13 @@ function updateCamera(dt){
   if(follow&&treeGroup){camDir.subVectors(camera.position,cam.look); const d=camDir.length(); camDir.divideScalar(d); camRay.set(cam.look,camDir); camRay.far=d; const hit=camRay.intersectObject(treeGroup,true)[0]; if(hit) camera.position.copy(cam.look).addScaledVector(camDir,Math.max(.5,hit.distance-.25));}
   camera.lookAt(cam.look);
   const fg=Math.max(amtOf('fog'),amtOf('snow')*.35); scene.fog.near=lerp(cam.dist+8,cam.dist*.5,fg); scene.fog.far=lerp(cam.dist+55,cam.dist+16,fg);
+  if(A().under){scene.fog.near=Math.min(scene.fog.near,cam.dist*.6); scene.fog.far=Math.min(scene.fog.far,cam.dist+30);}
 }
 
 /* ---------- Sky + weather ---------- */
 const C_FOG=new THREE.Color(0xcfd8db),C_GOLD=new THREE.Color(0xffc56b),C_BLUEMOON=new THREE.Color(0x2a4a8a),C_AURORA=new THREE.Color(0x1f4a4a);
 const C_DAY=new THREE.Color(0x9ad3e6),C_DUSK=new THREE.Color(0xf0a882),C_NIGHT=new THREE.Color(0x182246),C_RAIN=new THREE.Color(0x7b8a95),sky=new THREE.Color();
-const SUN_DAY=new THREE.Color(0xfff1d6),SUN_LOW=new THREE.Color(0xffb27a),SUN_GOLD=new THREE.Color(0xffbe55),AMB=new THREE.Color(0x5f6fb8),AMB_MOON=new THREE.Color(0x8fb4ff);
+const SUN_DAY=new THREE.Color(0xfff1d6),SUN_LOW=new THREE.Color(0xffb27a),SUN_GOLD=new THREE.Color(0xffbe55),SUN_SEA=new THREE.Color(0x8fe0ff),AMB=new THREE.Color(0x5f6fb8),AMB_MOON=new THREE.Color(0x8fb4ff);
 function updateSky(){
   const dt=(state.time%DAY)/DAY, s=Math.sin(dt*TAU)+.2, light=clamp(s*2.2+.15,0,1);
   state.light=light; state.night=1-light; state.dayT=dt;
@@ -1578,10 +1644,10 @@ function updateSky(){
   const ang=dt*TAU;
   sun.position.set(Math.cos(ang)*22,Math.max(.15,Math.sin(ang)+.25)*26+4,10);
   sun.intensity=((.05+light*.85)*(1-(ra+sn+fg*.6)*.3)+gd*.25)*(A().dim||1);
-  sun.color.copy(SUN_LOW).lerp(SUN_DAY,clamp((light-.4)*2,0,1)).lerp(SUN_GOLD,gd);
+  sun.color.copy(SUN_LOW).lerp(SUN_DAY,clamp((light-.4)*2,0,1)).lerp(SUN_GOLD,gd); if(A().under) sun.color.lerp(SUN_SEA,.55);
   hemi.intensity=(.22+light*.45)*(A().dim||1); amb.intensity=.38*(1-light)+.05+bm*.2; amb.color.copy(AMB).lerp(AMB_MOON,bm);
   groundMat.color.copy(GROUND).lerp(SNOWG,sn*.4); clearMat.color.copy(CLEAR).lerp(SNOWG,sn*.6);
-  starMat.opacity=Math.pow(state.night,2)*(1-(ra+sn+fg)*.8); ffMat.opacity=Math.max(state.night*(1-(ra+sn)*.6),amtOf('fireflies'));
+  starMat.opacity=A().under?0:Math.pow(state.night,2)*(1-(ra+sn+fg)*.8); ffMat.opacity=Math.max(state.night*(1-(ra+sn)*.6),amtOf('fireflies'));
 }
 function updateFireflies(t){
   if(ffMat.opacity<.01) return;
@@ -1614,7 +1680,7 @@ function updateVisitor(dt){
 const storedOf=id=>Object.values(state.areas).reduce((n,a)=>n+a.creatures.filter(c=>c.s===id).length,0);
 const countOf=id=>creatures.filter(c=>c.sp.id===id&&!c.visitor).length+storedOf(id);
 const friendsTotal=()=>creatures.filter(c=>!c.visitor).length+Object.values(state.areas).reduce((n,a)=>n+a.creatures.length,0);
-const needsMet=sp=>!sp.needs||decorOf(sp.needs).length>0||(sp.needs==='pond'&&!!A().water);
+const needsMet=sp=>!sp.needs||decorOf(sp.needs).length>0||(sp.needs==='pond'&&!!(A().water||A().under));
 const spCost=id=>Math.round(SPECIES[id].cost*Math.pow(1.15,countOf(id)));
 const decorCost=t=>Math.round(DECOR[t].cost*Math.pow(1.12,decorOf(t).length));
 const cRate=c=>c.visitor?0:c.sp.rate*(.4+.8*c.happy/100)*TIERS[c.tint.tier].bonus*mod('rate')*(c.sp.mystic?mod('mystic'):1);
@@ -1799,7 +1865,7 @@ function unlockArea(id){
 
 /* ---------- Journal ---------- */
 // Records every species, coat and weather event the player has seen. Undiscovered ones show as ???.
-const JOURNAL_SP=[...SHOP,'goat','duck','snail','skyray','starfox','snowhare','rainbowfawn','auroramoth'], JOURNAL_PL=AREA_ORDER, JOURNAL_CO=Object.keys(TINTS).filter(k=>k!=='natural'), JOURNAL_EV=Object.keys(EVENTS);
+const JOURNAL_SP=[...SHOP,'goat','duck','snail','crab','seaturtle','skyray','starfox','snowhare','rainbowfawn','auroramoth'], JOURNAL_PL=AREA_ORDER, JOURNAL_CO=Object.keys(TINTS).filter(k=>k!=='natural'), JOURNAL_EV=Object.keys(EVENTS);
 const JOURNAL_NAMES={pl:id=>AREAS[id].name,sp:id=>SPECIES[id].name,co:id=>TINTS[id].name+' coat',ev:id=>EVENTS[id].name};
 function discover(kind,id,val){
   const J=state.journal[kind]; if(J[id]) return; J[id]=val||1;
@@ -1984,7 +2050,7 @@ function frame(now){
   if(noteT<=0) noteT=.6;
   treeInfo.twinkle.forEach((m,i)=>m.scale.setScalar(.7+.4*Math.abs(Math.sin(t*1.5+i))));
   if(treeGroup){treeBounce=Math.max(0,treeBounce-dt*3); const k=Math.sin((1-treeBounce)*Math.PI*3)*treeBounce*.05; treeGroup.scale.set(1-k*.5,1+k,1-k*.5); treeGroup.rotation.z=Math.sin(t*.6)*.006+Math.sin(t*1.7)*.02*amtOf('wind');}
-  updateParts(dt); updateFireflies(t);
+  updateParts(dt); updateFireflies(t); areaAnim.forEach(f=>f(t,dt));
   if(selected){ring.position.set(selected.mesh.position.x,selected.sp.kind==='fly'?selected.mesh.position.y-.3:.03,selected.mesh.position.z); ring.rotation.z+=dt;}
   if(follow){const fp=follow.mesh.position; cam.tLook.set(fp.x,fp.y+follow.height*.45+follow.mesh.userData.parts.g.position.y,fp.z);}
   if(!dragging&&!reduceMotion&&now-lastInteract>(follow?6000:9000)) cam.theta+=dt*(follow?.1:.025);
