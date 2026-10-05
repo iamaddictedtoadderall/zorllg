@@ -537,17 +537,18 @@ function pushTurn(role, content) {
 async function ask(userContent, { quiet = false } = {}) {
   pushTurn('user', userContent);
   if (!brain) { if (!quiet) say('(The ship does not answer. It is not connected.)', { who: '', cls: 'note' }); turns.pop(); return false; }
-  busy = true; showThinking(true);
+  busy = true; if (!quiet) showThinking(true);   // the ship only visibly 'thinks' when spoken to
   let reply;
   try { reply = await brain(turns); }
   catch (e) { reply = null; console.warn('ship error', e); handleBrainError(e, quiet); }
   showThinking(false); busy = false;
-  if (!reply) { turns.pop(); sub.className = ''; return false; }
+  if (!reply) { turns.pop(); if (!quiet) sub.className = ''; return false; }
   const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none'), quarters: String(reply.quarters ?? 'none'), pod: String(reply.pod ?? 'none') };
   pushTurn('assistant', JSON.stringify(out));
   applyActions(out);
-  if (out.say) await say(out.say); else sub.className = '';
-  return !!out.say;
+  if (!out.say && !quiet) out.say = '…';            // spoken to but silent: make the silence deliberate
+  if (out.say) await say(out.say); else if (!thinking) sub.className = '';
+  return !!out.say && out.say !== '…';
 }
 function handleBrainError(e, quiet) {
   const code = e && e.code;
