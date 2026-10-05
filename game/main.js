@@ -345,7 +345,8 @@ function buildQuarters() {
   for (const dx of [-.35, .3]) add(new THREE.Mesh(new THREE.CylinderGeometry(.045, .04, .1, 8), std(0xa8a49a))).position.set(QX + dx, .86, tz + .1);
   blocks.push(rect(QX - 1.05, QX + 1.05, tz - .8, tz + .8));
   box(1.1, .012, 1.1, std(0x8a9496, { metalness: .8, roughness: .25 }), QX + .4, .007, QZ0 - 2.2, 'q_plate');
-  addLamp(QX, QH - .2, qmid, { w: 1, d: .5, dist: 8, power: .7 });
+  addLamp(QX, QH - .2, qmid, { w: 1, d: .5, dist: 10, power: 1.5 });
+  addLamp(QX - 2.2, QH - .2, QZ0 - 1.4, { w: .6, d: .3, dist: 6, power: .8 });
   eye(QX + 3.5, QH - .3, QZ1 + .4);
 }
 
@@ -539,7 +540,7 @@ function inspect(id) {
   if (first) plog.log('read', { id, seen: canSeeRowan() });
   if (first && it) {
     if (canSeeRowan()) stage = Math.max(stage, doc.stage || 0);
-    shipEvent(`[EVENT] ${it.seenBrief || doc.brief}`);
+    shipEvent(`[EVENT] ${it.seenBrief || doc.brief}`, !!it.journal);
   }
 }
 $('actBtn').addEventListener('click', () => {
@@ -548,7 +549,7 @@ $('actBtn').addEventListener('click', () => {
   used.add(id); closeRead(); plog.log('act', { id, action: it.action });
   if (it.action === 'eat') { thaw.ate++; thaw.weak = Math.max(0, thaw.weak - .45); sfx.eat(); toast('YOU EAT. WARMTH SPREADS SLOWLY'); }
   if (it.action === 'take') { carried.add(id); sfx.tick(true); toast('TAKEN · IN YOUR JOURNAL UNDER CARRIED'); }
-  if (it.actBrief) shipEvent(`[EVENT] ${it.actBrief}`);
+  if (it.actBrief) shipEvent(`[EVENT] ${it.actBrief}`, true);
 });
 function closeRead() { $('read').hidden = true; reading = null; if (playing()) lock(); }
 
@@ -614,7 +615,7 @@ function where() {
 function context() {
   const seen = [...read.seen].filter(id => STORY.items[id]).map(id => STORY.items[id].title);
   return `[STAGE ${stage}] Rowan has been awake ${minutesAwake()} min, is ${where()}, looking at ${looking ? itemDoc(looking).title : 'the corridor'}. ` +
-    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Quarters door: ${qdoor.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}. ` +
+    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Quarters door: ${qdoor.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Quarters heater: ${heaterOn ? 'on' : 'off'}. Climate: ${climate}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}. ` +
     `Rowan has shown you: ${presented.size ? [...presented].map(i => STORY.items[i].title).join('; ') : 'nothing yet'}.` +
     (thaw.weak > .05 ? ` Rowan is still weak from the thaw (strength about ${Math.round((1 - thaw.weak) * 100)}%).` : '');
 }
@@ -624,17 +625,30 @@ function pushTurn(role, content) {
   while (turns.length > 30) turns.splice(0, 2);   // drop oldest exchange, keep user-first
 }
 
+const FIELDS = { lights: ['normal', 'bright', 'dim', 'dark', 'guide'], door: ['open', 'close'], quarters: ['open', 'close'], pod: ['ready'],
+  heater: ['on', 'off'], climate: ['warm', 'normal'], sound: ['chime', 'alarm', 'music'] };
+const normalise = r => Object.fromEntries([['say', String(r.say ?? '').trim()], ...Object.keys(FIELDS).map(f => [f, String(r[f] ?? 'none')])]);
+
 async function ask(userContent, { quiet = false } = {}) {
   pushTurn('user', userContent);
   if (!brain) { if (!quiet) say('(The ship does not answer. It is not connected.)', { who: '', cls: 'note' }); turns.pop(); return false; }
   busy = true; if (!quiet) showThinking(true);
   const askedAt = performance.now();   // the ship only visibly 'thinks' when spoken to
   let reply;
-  try { reply = await brain(turns); }
+  try {
+    reply = await brain(turns);
+    if (!quiet && reply && !String(reply.say ?? '').trim()) {
+      // spoken to but silent: ask once more before accepting the silence
+      const last = turns[turns.length - 1], original = last.content;
+      last.content = original + '\n(Rowan spoke to you directly and is waiting. Answer aloud this time, even briefly.)';
+      try { const again = await brain(turns); if (again && String(again.say ?? '').trim()) reply = again; }
+      finally { last.content = original; }
+    }
+  }
   catch (e) { reply = null; console.warn('ship error', e); handleBrainError(e, quiet); }
   showThinking(false); busy = false;
   if (!reply) { turns.pop(); if (!quiet) sub.className = ''; return false; }
-  const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none'), quarters: String(reply.quarters ?? 'none'), pod: String(reply.pod ?? 'none') };
+  const out = normalise(reply);
   pushTurn('assistant', JSON.stringify(out));
   plog.log('ship', { ...out, quiet, ms: Math.round(performance.now() - askedAt) });
   applyActions(out);
@@ -670,10 +684,13 @@ function playerSays(text, showId) {
   say((shown ? `[shows ${STORY.items[showId].title}] ` : '') + (text || ''), { who: 'YOU', cls: 'you', hold: 900 });
   queue.push({ content: `${context()}\n${shown}[ROWAN SAYS] ${text ? `"${text}"` : '(nothing; Rowan just holds it up to your camera and waits)'}` }); pump();
 }
-function shipEvent(text) {
-  plog.log('event', { text: text.replace(/^\[EVENT\] /, '').slice(0, 200) });
+function shipEvent(text, important = false) {
+  plog.log('event', { text: text.replace(/^\[EVENT\] /, '').slice(0, 200), important });
   if (!brain) return;
-  queue.push({ content: `${context()}\n${text}\nYou may react briefly, or stay silent with an empty "say".`, quiet: true }); pump();
+  const cue = important
+    ? 'This is a moment you would notice and respond to: say something short and in character (one or two sentences).'
+    : 'You may react briefly, or stay silent with an empty "say".';
+  queue.push({ content: `${context()}\n${text}\n${cue}`, quiet: true }); pump();
 }
 
 function moveDoor(dr, want) {
@@ -682,10 +699,16 @@ function moveDoor(dr, want) {
   dr.userData.open = open; dr.userData.moveAt = performance.now() + 450;
   sfx.clunk(); setTimeout(() => sfx.servo(1.8, !!open), 350);
 }
-function applyActions({ lights, door: d, quarters, pod }) {
+let heaterOn = true, climate = 'normal';
+function applyActions({ lights, door: d, quarters, pod, heater: h, climate: c, sound }) {
   if (pod === 'ready' && !podReady) { podReady = true; sfx.tick(true); looking = null; }
-  if (['normal', 'dim', 'dark', 'guide'].includes(lights)) setLights(lights);
+  if (FIELDS.lights.includes(lights)) setLights(lights);
   moveDoor(door, d); moveDoor(qdoor, quarters);
+  if (h === 'on' || h === 'off') { heaterOn = h === 'on'; heater.material.emissiveIntensity = heaterOn ? .9 : .05; sfx.tick(); }
+  if (c === 'warm' || c === 'normal') { if (c !== climate) sfx.servo(2.5, c === 'warm'); climate = c; }
+  if (sound === 'chime') sfx.chime();
+  if (sound === 'alarm') { sfx.startAlarm(); setTimeout(() => sfx.fadeOut('alarm', .3), 2600); }
+  if (sound === 'music') sfx.playMusic();
 }
 function setLights(mode, stagger = false) {
   lightsMode = mode;
@@ -703,14 +726,8 @@ async function apiBrain(key) {
   const { default: Anthropic } = await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.131.0/+esm');
   const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
   const schema = {
-    type: 'object', additionalProperties: false, required: ['say', 'lights', 'door', 'quarters', 'pod'],
-    properties: {
-      say: { type: 'string' },
-      lights: { type: 'string', enum: ['none', 'normal', 'dim', 'dark', 'guide'] },
-      door: { type: 'string', enum: ['none', 'open', 'close'] },
-      quarters: { type: 'string', enum: ['none', 'open', 'close'] },
-      pod: { type: 'string', enum: ['none', 'ready'] },
-    },
+    type: 'object', additionalProperties: false, required: ['say', ...Object.keys(FIELDS)],
+    properties: { say: { type: 'string' }, ...Object.fromEntries(Object.entries(FIELDS).map(([f, v]) => [f, { type: 'string', enum: ['none', ...v] }])) },
   };
   return async turns => {
     const res = await client.beta.messages.create({
@@ -722,7 +739,7 @@ async function apiBrain(key) {
       output_config: { effort: settings.mind === 'deep' ? 'medium' : 'low', format: { type: 'json_schema', schema } },
       messages: turns,
     });
-    if (res.stop_reason === 'refusal') return { say: '', lights: 'none', door: 'none', quarters: 'none', pod: 'none' };
+    if (res.stop_reason === 'refusal') return normalise({});
     const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
     return JSON.parse(text);
   };
@@ -898,7 +915,7 @@ function finishCutscene() {
 }
 async function wake() {
   pushTurn('user', STORY.wakeEvent);
-  pushTurn('assistant', JSON.stringify({ say: STORY.intro.join(' '), lights: 'normal', door: 'none', quarters: 'none', pod: 'none' }));
+  pushTurn('assistant', JSON.stringify(normalise({ say: STORY.intro.join(' '), lights: 'normal' })));
   await new Promise(r => setTimeout(r, 1400));
   await say(STORY.intro[0], { hold: 1200 });
   await say(STORY.intro[1], { hold: 1600 });
@@ -986,8 +1003,8 @@ function breathe(now) {
   scene.add(sp); puffs.push(sp); sfx.breath(thaw.weak);
 }
 function updateThaw(now, dt, moving) {
-  const nearHeat = area === 'quarters' && heater.position.distanceTo(camera.position) < 2.2;
-  const rate = nearHeat ? 1 / 45 : thaw.ate ? 1 / 300 : 1 / 600;
+  const nearHeat = heaterOn && area === 'quarters' && heater.position.distanceTo(camera.position) < 2.2;
+  const rate = nearHeat ? 1 / 45 : (thaw.ate ? 1 / 300 : 1 / 600) * (climate === 'warm' ? 2.5 : 1);
   thaw.weak = Math.max(0, thaw.weak - dt * rate);
   if (nearHeat && !thaw.warmNoted) { thaw.warmNoted = true; toast('WARMTH'); }
   // stumbles while walking
@@ -995,7 +1012,7 @@ function updateThaw(now, dt, moving) {
   if (moving && thaw.weak > .35 && now > thaw.nextStumble && thaw.stumbleT < 0) {
     thaw.stumbleT = 0; thaw.nextStumble = now + (16000 + Math.random() * 20000) / thaw.weak;
     sfx.step(true); sfx.breath(1);
-    if (!thaw.stumbled) { thaw.stumbled = true; shipEvent('[EVENT] Rowan\'s legs just gave way for a moment; they caught themselves. They are still weak from the thaw.'); }
+    if (!thaw.stumbled) { thaw.stumbled = true; shipEvent('[EVENT] Rowan\'s legs just gave way for a moment; they caught themselves. They are still weak from the thaw.', true); }
   }
   // breath clouds while cold
   if (thaw.weak > .12 && now > thaw.nextBreath) { thaw.nextBreath = now + 3200 + Math.random() * 1800; breathe(now); }
@@ -1015,7 +1032,7 @@ function worldEvents(now, dt) {
   const a = areaOf(player.pos.x, player.pos.z);
   if (a !== area) {
     area = a; sfx.setRoom(a === 'connector' ? 'spine' : a); plog.log('area', { a });
-    if (!visited.has(a)) { visited.add(a); if (a !== 'connector') shipEvent(`[EVENT] Rowan has just entered ${a === 'spine' ? 'the Spine' : 'the Shift 9 crew quarters'} for the first time.`); }
+    if (!visited.has(a)) { visited.add(a); if (a !== 'connector') shipEvent(`[EVENT] Rowan has just entered ${a === 'spine' ? 'the Spine' : 'the Shift 9 crew quarters'} for the first time.`, true); }
   }
   const once = (key, cond, text) => { if (!notes.has(key) && cond) { notes.add(key); shipEvent(text); } };
   once('bulkhead', area === 'bay' && player.pos.z < BZ + 3 && !door.userData.open, '[EVENT] Rowan is standing at the sealed bulkhead, looking at it.');
@@ -1025,7 +1042,7 @@ function worldEvents(now, dt) {
   // the end of what's built so far
   if (!notes.has('buildEnd') && area === 'spine' && player.pos.x > SX1 - 4) {
     notes.add('buildEnd'); plog.log('build_end');
-    shipEvent('[EVENT] Rowan has reached the Archive core door.');
+    shipEvent('[EVENT] Rowan has reached the Archive core door.', true);
     setTimeout(() => { if (state === 'play') { state = 'paused'; $('hud').hidden = true; show('end'); unlock(); $('keepExploring').focus(); } }, 4500);
   }
 
@@ -1044,7 +1061,7 @@ function worldEvents(now, dt) {
     e.stare = on ? e.stare + dt : Math.max(0, e.stare - dt * 2);
     if (e.stare > 2.4 && now > e.cool) {
       e.cool = now + 150000; e.stare = 0;
-      shipEvent('[EVENT] Rowan is standing still, staring straight into one of your cameras.');
+      shipEvent('[EVENT] Rowan is standing still, staring straight into one of your cameras.', true);
     }
   }
 
@@ -1115,7 +1132,7 @@ function frame(now) {
 
 function updateBay(now, t, dt) {
   const reduced = settings.fx === 'reduced';
-  const target = { off: 0, normal: 1, dim: .3, dark: 0, guide: .45 }[lightsMode];
+  const target = { off: 0, normal: 1, bright: 1.7, dim: .3, dark: 0, guide: .45 }[lightsMode];
   for (const l of lamps) {
     const want = now > l.onAt ? target : 0;
     l.level += (want - l.level) * Math.min(1, dt * (want > l.level ? 9 : 3));

@@ -246,3 +246,32 @@ export function eat() {
     n.connect(hp); hp.connect(g); g.connect(master); n.start(t);
   }
 }
+
+// Something from the ship's cultural archive: a slow piece for piano-like tones over a held chord, about 45 s.
+export function playMusic() {
+  if (!ac || layers.music) return;
+  bed('music', out => {
+    const delay = ac.createDelay(2), fb = ac.createGain(), wet = ac.createGain();
+    delay.delayTime.value = .48; fb.gain.value = .35; wet.gain.value = .35;
+    delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(out);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; lp.connect(out);
+    const pad = [98, 146.83, 196, 233.08].map(f => {
+      const o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+      const g = ac.createGain(); g.gain.value = .02; o.connect(g); g.connect(lp); o.start(); return o;
+    });
+    // a simple melody in G minor, one note every ~0.9 s
+    const tune = [392, 466.16, 587.33, 523.25, 466.16, 440, 392, 349.23, 392, 440, 466.16, 392, 293.66, 349.23, 392, 0,
+                  587.33, 523.25, 466.16, 523.25, 440, 392, 349.23, 293.66, 311.13, 349.23, 392, 440, 392, 0, 392, 0];
+    const t0 = ac.currentTime + .5;
+    tune.forEach((f, i) => {
+      if (!f) return;
+      const t = t0 + i * .9 + (i % 4 === 3 ? .15 : 0), o = ac.createOscillator(), o2 = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = f; o2.type = 'sine'; o2.frequency.value = f * 2.002;
+      const g2 = ac.createGain(); g2.gain.value = .25; o2.connect(g2); g2.connect(g);
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.06, t + .01); g.gain.exponentialRampToValueAtTime(.0005, t + 2.4);
+      o.connect(g); g.connect(out); g.connect(delay); o.start(t); o.stop(t + 2.5); o2.start(t); o2.stop(t + 2.5);
+    });
+    return pad;
+  }, 2);
+  setTimeout(() => fadeOut('music', 5), 40000);
+}

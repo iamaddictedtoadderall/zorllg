@@ -22,7 +22,8 @@ The person working on this repo intends to play the game blind.
 
 - Inspectable things use neutral ids in code (`q_term1`, `spine_east`, …); their labels and text live in the sealed file.
 - Sealed item fields: `label`, `title`, `text`, `stage` (raised when read in view of a camera), optional `presentStage` (raised only when shown to the ship), `brief` (what the ship learns when shown), `seenBrief` (what it learns from just watching), `journal`, `action` (`eat`/`take`) with `actionLabel` and `actBrief`.
-- The ship's JSON reply fields are `say`, `lights`, `door` (Bay C bulkhead), `quarters`, `pod`. Adding a control means updating the sealed rules, `applyActions`, and the API schema in `apiBrain`.
+- The ship's JSON reply fields are `say` plus the controls in `FIELDS` (main.js): `lights` (normal/bright/dim/dark/guide), `door` (Bay C bulkhead), `quarters`, `pod`, `heater`, `climate`, `sound` (chime/alarm/music). Adding a control means adding it to `FIELDS`, handling it in `applyActions`, and listing it in the sealed rules (the API schema is generated from `FIELDS`).
+- `shipEvent(text, important)`: important moments ask the ship to say something short; others let it stay silent. If the player speaks and the ship returns nothing, `ask()` retries once with a nudge.
 
 ## Running
 
