@@ -15,6 +15,7 @@ Open `http://localhost:8000/game/`. Outside Claude the ship needs a Claude API k
 - WASD to walk, mouse to look
 - E to inspect
 - T to talk to the ship
+- Esc to pause
 - Touch: drag to look, hold to walk, tap to inspect
 
-Build 0.1 contains the first area only.
+Build 0.2: title screen, settings, opening, and the first area.

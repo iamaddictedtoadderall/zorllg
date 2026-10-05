@@ -45,17 +45,38 @@ button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-
 #read h2{margin:0 0 14px;font-size:13px;font-weight:500;letter-spacing:.14em;color:var(--amber)}
 #read pre{margin:0;font:inherit;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
 #read p{margin:18px 0 0;font-size:11px;color:var(--ink-dim);letter-spacing:.1em}
-#start,#end{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:16px;background:var(--void);text-align:center;z-index:3}
-#start[hidden],#end[hidden]{display:none}
-#start h1,#end h1{margin:0;font-weight:400;font-size:clamp(20px,4vw,28px);letter-spacing:.32em}
-#start p,#end p{margin:0;max-width:46ch;font-size:13px;line-height:1.6;color:var(--ink-dim)}
-#wake{margin-top:14px;padding:10px 22px;background:none;border:1px solid var(--amber);color:var(--amber);letter-spacing:.24em;cursor:pointer}
-#keybox{display:flex;flex-direction:column;gap:6px;width:min(420px,100%);margin-top:6px}
-#keybox[hidden]{display:none}
-#keybox label{font-size:12px;color:var(--ink-dim)}
-#keybox input{padding:8px 10px;background:transparent;border:1px solid var(--rule);color:var(--ink);font:inherit;font-size:13px}
-#status{font-size:12px;color:var(--ink-dim);min-height:1.4em}
-@media (prefers-reduced-motion: reduce){#sub{transition:none}}
+/* screens: title, settings, pause, end */
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:flex-end;gap:18px;padding:16px max(16px,6vw) calc(9vh + env(safe-area-inset-bottom, 0px));z-index:3}
+.screen.dim{background:linear-gradient(90deg,rgba(2,5,6,.86),rgba(2,5,6,.55) 55%,rgba(2,5,6,.2))}
+.screen h1{margin:0;font-weight:400;font-size:clamp(26px,5.4vw,58px);letter-spacing:.34em;line-height:1.1;text-wrap:balance}
+.screen h2{margin:0;font-weight:500;font-size:13px;letter-spacing:.22em;color:var(--amber)}
+.screen p{margin:0;max-width:52ch;font-size:13px;line-height:1.6;color:var(--ink-dim)}
+.menu{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.menu button{background:none;border:0;padding:7px 0;font-size:clamp(14px,1.8vw,17px);letter-spacing:.28em;color:var(--ink-dim);cursor:pointer;transition:color .2s,padding .2s}
+.menu button:hover,.menu button:focus-visible{color:var(--ink);padding-left:10px;outline:0}
+.menu button:hover::before,.menu button:focus-visible::before{content:"› ";color:var(--amber)}
+.foot{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:11px;letter-spacing:.08em;color:var(--ink-dim)}
+#title .tag{font-size:12px;letter-spacing:.3em;color:var(--ink-dim)}
+#title h1{animation:rise 3s ease-out both}
+@keyframes rise{from{opacity:0;letter-spacing:.5em}to{opacity:1;letter-spacing:.34em}}
+/* settings */
+#settings form{display:grid;grid-template-columns:max-content minmax(0,320px);gap:14px 22px;align-items:center;font-size:13px}
+#settings label{color:var(--ink-dim);letter-spacing:.08em}
+#settings input[type=range]{width:100%;accent-color:var(--amber)}
+#settings select,#settings input[type=password]{width:100%;box-sizing:border-box;padding:6px 8px;background:rgba(6,12,13,.9);border:1px solid var(--rule);color:var(--ink);font:inherit;font-size:13px}
+#settings input[type=checkbox]{accent-color:var(--amber);width:16px;height:16px;justify-self:start}
+@media (max-width:520px){#settings form{grid-template-columns:minmax(0,1fr)}#settings label{margin-top:6px}}
+/* cutscene */
+#cine{position:fixed;inset:0;pointer-events:none;z-index:2}
+#frost{position:absolute;inset:-20px;background:radial-gradient(ellipse at 50% 55%,rgba(170,225,228,.18),rgba(120,190,196,.55) 70%,rgba(70,120,126,.8));backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);opacity:0}
+#card{position:absolute;left:50%;bottom:22vh;transform:translateX(-50%);width:min(34ch,calc(100vw - 32px));text-align:center;font-size:clamp(16px,2.3vw,23px);line-height:1.6;letter-spacing:.03em;opacity:0;transition:opacity 1.2s}
+#card.small{font-size:12px;letter-spacing:.34em;color:var(--ink-dim)}
+#card.on{opacity:1}
+#podhud{position:absolute;left:max(16px,4vw);top:calc(14vh + env(safe-area-inset-top, 0px));display:flex;flex-direction:column;gap:6px;font-size:clamp(11px,1.4vw,13px);letter-spacing:.12em;color:var(--amber);text-shadow:0 0 8px rgba(232,180,90,.35)}
+#skip{position:fixed;right:16px;bottom:calc(12px + env(safe-area-inset-bottom, 0px));z-index:3;background:none;border:0;padding:8px;font-size:11px;letter-spacing:.2em;color:var(--ink-dim);cursor:pointer}
+#lookhint{position:absolute;left:50%;top:calc(50% + 44px);transform:translateX(-50%);font-size:11px;letter-spacing:.2em;color:var(--ink-dim)}
+body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24px)}
+@media (prefers-reduced-motion: reduce){#sub,#card,.menu button{transition:none}#title h1{animation:none}}
 </style>
 </head>
 <body>
@@ -64,24 +85,51 @@ button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-
   <div id="prompt" hidden></div>
   <div id="sub"></div>
   <div id="talk" hidden><span>&gt;</span><input id="talkIn" maxlength="240" autocomplete="off" spellcheck="false" aria-label="Say something to the ship"></div>
+  <div id="lookhint" hidden>CLICK TO LOOK AROUND</div>
   <div id="hint"><button id="useBtn" type="button" hidden>[E] INSPECT</button><button id="talkBtn" type="button">[T] TALK</button></div>
 </div>
 <div id="read" hidden><article><h2 id="readTitle"></h2><pre id="readText"></pre><p>[E] / [ESC] CLOSE</p></article></div>
-<div id="start">
-  <h1>LONG PATIENCE</h1>
-  <p>WASD to walk, mouse to look, E to inspect, T to talk to the ship. On touch: drag to look, hold to walk, tap to inspect.</p>
-  <p>Headphones recommended.</p>
-  <div id="keybox" hidden>
-    <label for="apiKey">The ship needs a Claude API key when the game runs outside Claude. It is kept in this browser only.</label>
-    <input id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
-  </div>
-  <div id="status">Connecting…</div>
-  <button id="wake" type="button">WAKE</button>
-</div>
-<div id="end" hidden>
-  <h1>END OF BUILD 0.1</h1>
+<div id="cine" hidden><div id="frost"></div><div id="podhud"></div><div id="card"></div></div>
+<button id="skip" type="button" hidden>HOLD SPACE TO SKIP</button>
+
+<section id="title" class="screen dim">
+  <div class="tag">A WALKING SIMULATION</div>
+  <h1>LONG<br>PATIENCE</h1>
+  <nav class="menu" aria-label="Main menu">
+    <button id="begin" type="button">BEGIN</button>
+    <button id="openSettings" type="button">SETTINGS</button>
+  </nav>
+  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.2</span><span>HEADPHONES RECOMMENDED</span></div>
+</section>
+
+<section id="settings" class="screen dim" hidden>
+  <h2>SETTINGS</h2>
+  <form id="settingsForm" onsubmit="return false">
+    <label for="setVolume">VOLUME</label><input id="setVolume" type="range" min="0" max="100" step="1">
+    <label for="setSens">LOOK SENSITIVITY</label><input id="setSens" type="range" min="40" max="200" step="5">
+    <label for="setInvert">INVERT LOOK</label><input id="setInvert" type="checkbox">
+    <label for="setSubs">SUBTITLE SIZE</label><select id="setSubs"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select>
+    <label for="setFx">SCREEN EFFECTS</label><select id="setFx"><option value="full">Full (grain, flicker)</option><option value="reduced">Reduced (no flicker)</option></select>
+    <label for="apiKey" class="keyrow" hidden>CLAUDE API KEY</label><input id="apiKey" class="keyrow" type="password" autocomplete="off" placeholder="sk-ant-… (kept in this browser only)" hidden>
+  </form>
+  <p>WASD walk · mouse look · E inspect · T talk · Esc pause. Touch: drag to look, hold to walk, tap to inspect.</p>
+  <nav class="menu"><button id="closeSettings" type="button">BACK</button></nav>
+</section>
+
+<section id="pause" class="screen dim" hidden>
+  <h2>PAUSED</h2>
+  <nav class="menu" aria-label="Pause menu">
+    <button id="resume" type="button">RESUME</button>
+    <button id="pauseSettings" type="button">SETTINGS</button>
+    <button id="quit" type="button">QUIT TO TITLE</button>
+  </nav>
+</section>
+
+<section id="end" class="screen dim" hidden>
+  <h2>END OF BUILD 0.2</h2>
   <p>The Spine isn't built yet. Thank you for playing this far.</p>
-</div>
+  <nav class="menu"><button id="endQuit" type="button">BACK TO TITLE</button></nav>
+</section>
 
 <script type="importmap">
 {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js"}}

@@ -12,14 +12,14 @@ The person working on this repo intends to play the game blind.
 
 ## Layout
 
-- `game/index.html` – page, HUD, styles. `game/main.js` – world, input, subtitles, the ship's brain. `game/sealed.js` – sealed story.
+- `game/index.html` – page, HUD, menus, styles. `game/main.js` – game states (title → cutscene → play ⇄ paused → ended), Bay C world, input, settings, opening cutscene timeline, subtitles, the ship's brain. `game/exterior.js` – the ark seen from outside (title backdrop, opening shots). `game/audio.js` – all synthesised sound. `game/sealed.js` – sealed story (includes cutscene text).
 - `mockups/` – the original look tests (style 1, "fog & grain", was chosen).
 - The ship's brain: inside a claude.ai artifact it uses the page's `sample` capability; anywhere else it asks for an API key and calls the Messages API from the browser.
 
 ## Running
 
-`python3 -m http.server` from the repo root, then open `http://localhost:8000/game/`. Module scripts don't load from `file://`. Add `?debug` to expose `window.__lp` for scripted tests.
+`python3 -m http.server` from the repo root, then open `http://localhost:8000/game/`. Module scripts don't load from `file://`. Add `?debug` to expose `window.__lp` for scripted tests (state, `skipCutscene()`, settable `cineT`). When screenshotting the cutscene, hide `#card` and `#podhud` so sealed text isn't captured.
 
 ## Publishing as an artifact
 
-Strip the document wrapper (`<!doctype>`, `<html>`, `<head>`, `<body>`, the two metas) from `game/index.html` into a scratch copy, and publish it with `files: {"main.js": "game/main.js", "sealed.js": "game/sealed.js"}` and `capabilities: {sample: {}}`.
+Strip the document wrapper (`<!doctype>`, `<html>`, `<head>`, `<body>`, the two metas) from `game/index.html` into a scratch copy, and publish it with `files: {"main.js": "game/main.js", "sealed.js": "game/sealed.js", "audio.js": "game/audio.js", "exterior.js": "game/exterior.js"}` and `capabilities: {sample: {}}`.
