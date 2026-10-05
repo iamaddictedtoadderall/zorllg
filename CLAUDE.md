@@ -9,6 +9,7 @@ The person working on this repo intends to play the game blind.
 - Story content (the ship's hidden instructions, item texts, names) lives sealed in `game/sealed.js`. Edit it with `python3 tools/seal.py unseal` → edit `story/.unsealed.json` (gitignored) → `python3 tools/seal.py seal`.
 - Never quote, summarise or hint at sealed content in chat, commit messages, PR text, code comments or file names. Don't print it in command output either. Talk about systems, feel, art and tech only.
 - If a question can't be answered without spoilers, say so and ask before answering.
+- The full story outline (remaining places, beats, endings, what's built vs. to build) is sealed under the `outline` key. Unseal and follow it when building new areas; keep its `status` fields up to date.
 
 ## Layout
 
