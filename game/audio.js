@@ -225,3 +225,24 @@ export function chime() {
     o.connect(g); g.connect(master); o.start(t); o.stop(t + 1.5);
   });
 }
+
+// A shaky exhale; louder and rougher when weaker.
+export function breath(weak = 1) {
+  if (!ac) return;
+  const t = ac.currentTime, dur = .9 + weak * .5, n = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  n.buffer = noiseBuffer(dur + .1, false);
+  bp.type = 'bandpass'; bp.frequency.setValueAtTime(900, t); bp.frequency.linearRampToValueAtTime(500, t + dur); bp.Q.value = .9;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.025 + .03 * weak, t + .15); g.gain.exponentialRampToValueAtTime(.0005, t + dur);
+  n.connect(bp); bp.connect(g); g.connect(master); n.start(t); n.stop(t + dur + .1);
+}
+// Foil tearing, then chewing.
+export function eat() {
+  if (!ac) return;
+  for (let i = 0; i < 9; i++) {
+    const t = ac.currentTime + (i < 3 ? i * .05 : .5 + (i - 3) * .32), n = ac.createBufferSource(), hp = ac.createBiquadFilter(), g = ac.createGain();
+    n.buffer = noiseBuffer(.08, false);
+    hp.type = i < 3 ? 'highpass' : 'bandpass'; hp.frequency.value = i < 3 ? 3500 : 700;
+    g.gain.setValueAtTime(i < 3 ? .08 : .04, t); g.gain.exponentialRampToValueAtTime(.001, t + .07);
+    n.connect(hp); hp.connect(g); g.connect(master); n.start(t);
+  }
+}

@@ -14,8 +14,9 @@ Open `http://localhost:8000/game/`. Outside Claude the ship needs a Claude API k
 
 - WASD to walk, mouse to look
 - E to inspect
-- T to talk to the ship
+- T to talk to the ship; while talking, Tab (or SHOW) holds something from your journal up to its camera
+- J to open your journal
 - Esc to pause
 - Touch: drag to look, hold to walk, tap to inspect
 
-Build 0.3: title screen, settings, opening, Bay C, the Spine and the crew quarters.
+Build 0.4: adds the journal, showing evidence to the ship, and weakness after the thaw.

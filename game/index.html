@@ -34,8 +34,9 @@ button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-
 #sub.you b{color:var(--ink-dim)}
 #sub.note{color:var(--ink-dim);font-style:italic}
 #talk{position:absolute;left:50%;bottom:calc(5vh + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);width:min(560px,calc(100vw - 32px));pointer-events:auto}
-#talk:not([hidden]){display:flex}
+#talk{display:flex}
 #talk span{padding:9px 8px 9px 14px;background:var(--veil);color:var(--amber);font-size:calc(var(--sub) * .85)}
+#showBtn{background:var(--veil);border:0;padding:0 14px;font-size:calc(var(--sub) * .62);letter-spacing:.12em;color:var(--amber);cursor:pointer}
 #talk input{flex:1;min-width:0;border:0;outline:0;padding:9px 14px 9px 0;background:var(--veil);color:var(--ink);font:inherit;font-size:calc(var(--sub) * .85)}
 #hint{position:absolute;right:16px;bottom:calc(12px + env(safe-area-inset-bottom, 0px));display:flex;gap:4px;pointer-events:auto}
 #hint button{background:none;border:0;padding:8px;font-size:calc(var(--sub) * .68);color:var(--ink-dim);letter-spacing:.08em;cursor:pointer}
@@ -47,7 +48,38 @@ button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-
 #sleepRow{margin-top:18px;gap:4px}
 #sleepRow button{color:var(--amber)}
 #sleepWarn{font-size:11px;letter-spacing:.08em;color:var(--ink-dim)}
-body.cinematic #cross,body.cinematic #prompt,body.cinematic #hint,body.cinematic #lookhint,body.cinematic #talk{display:none!important}
+/* journal */
+#journal{position:fixed;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(2,5,6,.62)}
+#journal[hidden]{display:none}
+#journal .book{display:grid;grid-template-columns:minmax(0,15rem) minmax(0,1fr);gap:0;width:min(860px,100%);max-height:min(560px,calc(100vh - 32px));background:rgba(6,12,13,.94);border:1px solid var(--rule)}
+#journal header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:14px 20px;border-bottom:1px solid var(--rule)}
+#journal h2{margin:0;font-size:13px;font-weight:500;letter-spacing:.16em;color:var(--amber)}
+#journal header span{font-size:11px;letter-spacing:.1em;color:var(--ink-dim)}
+#jlist{margin:0;padding:8px 0;list-style:none;overflow-y:auto;border-right:1px solid var(--rule)}
+#jlist button{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 20px;font-size:12px;line-height:1.4;letter-spacing:.06em;color:var(--ink-dim);cursor:pointer}
+#jlist button[aria-current=true],#jlist button:hover{color:var(--ink);background:rgba(216,230,228,.05)}
+#jlist .shown::after{content:" · SHOWN";color:var(--amber);font-size:10px}
+#jlist .sect{padding:12px 20px 4px;font-size:10px;letter-spacing:.18em;color:var(--amber)}
+#jview{padding:18px 22px;overflow-y:auto;min-width:0}
+#jview h3{margin:0 0 12px;font-size:12px;font-weight:500;letter-spacing:.12em}
+#jview pre{margin:0;font:inherit;font-size:13.5px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+#jview .empty{color:var(--ink-dim);font-size:13px;line-height:1.6}
+@media (max-width:620px){#journal .book{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,9rem) minmax(0,1fr)}#jlist{border-right:0;border-bottom:1px solid var(--rule)}}
+/* presenting evidence while talking */
+#talkWrap{position:absolute;left:50%;bottom:calc(5vh + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);width:min(560px,calc(100vw - 32px));display:flex;flex-direction:column;gap:4px;pointer-events:auto}
+#talkWrap #talk{position:static;transform:none;width:auto}
+#showing{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 14px;background:var(--veil);font-size:calc(var(--sub) * .62);letter-spacing:.08em;color:var(--amber)}
+#showing button{margin-left:auto;background:none;border:0;padding:2px 6px;color:var(--ink-dim);cursor:pointer}
+#talkHelp{font-size:10.5px;letter-spacing:.1em;color:var(--ink-dim);padding:2px 2px 0}
+#pick{display:flex;flex-direction:column;max-height:30vh;overflow-y:auto;background:rgba(6,12,13,.94);border:1px solid var(--rule)}
+#pick button{text-align:left;background:none;border:0;padding:7px 14px;font-size:12px;letter-spacing:.06em;color:var(--ink-dim);cursor:pointer}
+#pick button:hover,#pick button:focus-visible{color:var(--ink);outline:0;background:rgba(216,230,228,.05)}
+#actRow{margin-top:18px;gap:4px}
+#actRow button{color:var(--amber)}
+#toast{position:absolute;left:50%;top:calc(16px + env(safe-area-inset-top, 0px));transform:translateX(-50%);padding:7px 14px;background:var(--veil);font-size:11px;letter-spacing:.14em;color:var(--amber);opacity:0;transition:opacity .4s;white-space:nowrap}
+#toast.on{opacity:1}
+#chill{position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse at 50% 50%,transparent 45%,rgba(170,215,230,.16) 80%,rgba(190,230,240,.32));opacity:0}
+body.cinematic #cross,body.cinematic #prompt,body.cinematic #hint,body.cinematic #lookhint,body.cinematic #talkWrap,body.cinematic #toast{display:none!important}
 #read p{margin:18px 0 0;font-size:11px;color:var(--ink-dim);letter-spacing:.1em}
 /* screens: title, settings, pause, end */
 .screen{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:flex-end;gap:18px;padding:16px max(16px,6vw) calc(9vh + env(safe-area-inset-bottom, 0px));z-index:3}
@@ -88,13 +120,26 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
   <div id="cross"></div>
   <div id="prompt" hidden></div>
   <div id="sub"></div>
-  <div id="talk" hidden><span>&gt;</span><input id="talkIn" maxlength="240" autocomplete="off" spellcheck="false" aria-label="Say something to the ship"></div>
+  <div id="talkWrap" hidden>
+    <div id="pick" hidden></div>
+    <div id="showing" hidden><span id="showingText"></span><button id="unshow" type="button" aria-label="Stop showing">✕</button></div>
+    <div id="talk"><span>&gt;</span><input id="talkIn" maxlength="240" autocomplete="off" spellcheck="false" aria-label="Say something to the ship"><button id="showBtn" type="button">SHOW</button></div>
+    <div id="talkHelp">ENTER SAY · TAB SHOW SOMETHING FROM YOUR JOURNAL · ESC CANCEL</div>
+  </div>
+  <div id="toast"></div>
   <div id="lookhint" hidden>CLICK TO LOOK AROUND</div>
-  <div id="hint"><button id="useBtn" type="button" hidden>[E] INSPECT</button><button id="talkBtn" type="button">[T] TALK</button></div>
+  <div id="hint"><button id="useBtn" type="button" hidden>[E] INSPECT</button><button id="journalBtn" type="button">[J] JOURNAL</button><button id="talkBtn" type="button">[T] TALK</button></div>
 </div>
 <div id="read" hidden><article><h2 id="readTitle"></h2><pre id="readText"></pre>
+  <div id="actRow" class="menu" hidden><button id="actBtn" type="button"></button></div>
   <div id="sleepRow" class="menu" hidden><button id="sleepBtn" type="button">LIE DOWN AND SLEEP</button><span id="sleepWarn">This ends your playthrough.</span></div>
   <p>[E] / [ESC] CLOSE</p></article></div>
+<div id="journal" hidden><div class="book" role="dialog" aria-label="Journal">
+  <header><h2>JOURNAL</h2><span>[J] / [ESC] CLOSE</span></header>
+  <ul id="jlist"></ul>
+  <div id="jview"><p class="empty">Things you read that matter are kept here. While talking to the ship, press Tab to show one to it.</p></div>
+</div></div>
+<div id="chill"></div>
 <div id="cine" hidden><div id="frost"></div><div id="podhud"></div><div id="card"></div></div>
 <button id="skip" type="button" hidden>HOLD SPACE TO SKIP</button>
 
@@ -105,7 +150,7 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
     <button id="begin" type="button">BEGIN</button>
     <button id="openSettings" type="button">SETTINGS</button>
   </nav>
-  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.3</span><span>HEADPHONES RECOMMENDED</span></div>
+  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.4</span><span>HEADPHONES RECOMMENDED</span></div>
 </section>
 
 <section id="settings" class="screen dim" hidden>
@@ -119,7 +164,7 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
     <label for="setFx">SCREEN EFFECTS</label><select id="setFx"><option value="full">Full (grain, flicker)</option><option value="reduced">Reduced (no flicker)</option></select>
     <label for="apiKey" class="keyrow" hidden>CLAUDE API KEY</label><input id="apiKey" class="keyrow" type="password" autocomplete="off" placeholder="sk-ant-… (kept in this browser only)" hidden>
   </form>
-  <p>WASD walk · mouse look · E inspect · T talk · Esc pause. Touch: drag to look, hold to walk, tap to inspect.</p>
+  <p>WASD walk · mouse look · E inspect · T talk (Tab to show something) · J journal · Esc pause. Touch: drag to look, hold to walk, tap to inspect.</p>
   <nav class="menu"><button id="closeSettings" type="button">BACK</button></nav>
 </section>
 

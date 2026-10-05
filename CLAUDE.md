@@ -21,11 +21,12 @@ The person working on this repo intends to play the game blind.
 ## Conventions
 
 - Inspectable things use neutral ids in code (`q_term1`, `spine_east`, …); their labels and text live in the sealed file.
+- Sealed item fields: `label`, `title`, `text`, `stage` (raised when read in view of a camera), optional `presentStage` (raised only when shown to the ship), `brief` (what the ship learns when shown), `seenBrief` (what it learns from just watching), `journal`, `action` (`eat`/`take`) with `actionLabel` and `actBrief`.
 - The ship's JSON reply fields are `say`, `lights`, `door` (Bay C bulkhead), `quarters`, `pod`. Adding a control means updating the sealed rules, `applyActions`, and the API schema in `apiBrain`.
 
 ## Running
 
-`python3 -m http.server` from the repo root, then open `http://localhost:8000/game/`. Module scripts don't load from `file://`. Add `?debug` to expose `window.__lp` for scripted tests (state, `skipCutscene()`, settable `cineT`). When screenshotting, inject CSS hiding `#card, #podhud, #read pre, #endingTitle` so sealed text isn't captured.
+`python3 -m http.server` from the repo root, then open `http://localhost:8000/game/`. Module scripts don't load from `file://`. Add `?debug` to expose `window.__lp` for scripted tests (state, `skipCutscene()`, settable `cineT`). When screenshotting, inject CSS hiding `#card, #podhud, #read pre, #endingTitle, #jview pre, #jlist button, #showingText, #pick button` so sealed text isn't captured.
 
 ## Publishing as an artifact
 

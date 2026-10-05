@@ -1,4 +1,4 @@
-// Long Patience — build 0.3: title, opening, Bay C, the Spine, crew quarters.
+// Long Patience — build 0.4: title, opening, Bay C, the Spine, crew quarters; journal, evidence, thaw.
 // The ship's brain is Claude. Inside a Claude artifact viewer it uses the page's `sample`
 // capability (the viewer's own Claude account); anywhere else it asks for an API key
 // and calls the Messages API from the browser. Story content is sealed in sealed.js.
@@ -95,6 +95,7 @@ const floorM = std(S.floor, { map: grateTex, metalness: .4 });
 const LEN = 31, HALF = 3, H = 3.2, BZ = -LEN + 2;   // BZ: bulkhead plane
 const pickables = [];                                 // meshes the player can inspect
 const lamps = [], strips = [], backs = [], eyes = [], doorList = [];
+let heater = null;
 let flickerLamp = null, door = null, qdoor = null, podGlass = null, podLight = null, podReady = false;
 
 // Walkable floor as rectangles; doorways are only walkable while their door is open.
@@ -221,6 +222,9 @@ function build() {
 
   eye(0, 2.75, BZ + .35);
   eye(-HALF + .45, H - .45, -12.4);
+  // emergency cabinet on the wall near the bulkhead
+  box(.22, .7, .55, std(0x7a3a30, { metalness: .4 }), -HALF + .12, 1.25, BZ + 2.4, 'c_cabinet');
+  box(.03, .1, .4, glowM(0xf0f0e0, .6), -HALF + .24, 1.52, BZ + 2.4, 'c_cabinet');
 
   buildSpine();
   buildQuarters();
@@ -242,7 +246,7 @@ function eye(x, y, z) {
   lens.position.z = .13; housing.add(lens); g.add(housing); scene.add(g);
   housing.userData.item = 'eye'; lens.userData.item = 'eye'; pickables.push(housing, lens);
   box(.06, .25, .06, metalM, x, y + .2, z);
-  const e = { housing, lens, pos: new THREE.Vector3(x, y, z), stare: 0, cool: 0 };
+  const e = { housing, lens, pos: new THREE.Vector3(x, y, z), stare: 0, cool: 0, area: areaOf(x, z) };
   eyes.push(e);
   return e;
 }
@@ -328,7 +332,9 @@ function buildQuarters() {
   bunk(QX - 3.45, QZ0 - 1.9, 1); bunk(QX - 3.45, QZ0 - 5.1, 2);
   bunk(QX + 3.45, QZ0 - 1.9, 3); bunk(QX + 3.45, QZ0 - 5.1, 4);
   // lockers, table, the floor plate
-  for (let i = 0; i < 4; i++) box(.7, 2, .5, std(0x4c5658, { metalness: .5 }), QX - 1.4 + i * .8 - 1, 1, QZ1 + .3, i === 3 ? 'q_locker' : null);
+  const lockerIds = ['q_cupboard', 'q_cloth', null, 'q_locker'];
+  for (let i = 0; i < 4; i++) box(.7, 2, .5, std(0x4c5658, { metalness: .5 }), QX - 1.4 + i * .8 - 1, 1, QZ1 + .3, lockerIds[i]);
+  heater = box(.9, .35, .06, glowM(0xff6a20, .9), QX + 2.4, .32, QZ1 + .08, 'q_heater');
   box(.4, .3, .05, glowM(S.glow, .7), QX, 1.4, QZ1 + .57, 'q_locker');
   const tz = qmid - .4;
   box(1.4, .06, .9, metalM, QX, .78, tz); box(.08, .75, .08, metalM, QX, .38, tz);
@@ -373,7 +379,7 @@ let state = 'title';          // title | cutscene | play | paused | ended
 let locked = false, dragging = false, reading = null, quietUnlock = false;
 const playing = () => state === 'play';
 const $ = id => document.getElementById(id);
-const talk = $('talk'), talkIn = $('talkIn'), promptEl = $('prompt'), useBtn = $('useBtn');
+const talk = $('talkWrap'), talkIn = $('talkIn'), promptEl = $('prompt'), useBtn = $('useBtn');
 
 function lock() { try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 function unlock() { if (document.pointerLockElement) { quietUnlock = true; document.exitPointerLock(); } }
@@ -402,13 +408,19 @@ addEventListener('keydown', e => {
   if (!playing()) return;
   if (document.activeElement === talkIn) {
     if (e.key === 'Escape') closeTalk();
-    if (e.key === 'Enter') { const q = talkIn.value.trim(); closeTalk(); if (q) playerSays(q); }
+    if (e.key === 'Tab') { e.preventDefault(); cycleShowing(e.shiftKey ? -1 : 1); }
+    if (e.key === 'Enter') {
+      const q = talkIn.value.trim(), shown = showingId; closeTalk();
+      if (q || shown) playerSays(q, shown);
+    }
     return;
   }
+  if (!$('journal').hidden) { if (e.code === 'KeyJ' || e.key === 'Escape') closeJournal(); return; }
   if (reading) { if (e.code === 'KeyE' || e.key === 'Escape') closeRead(); return; }
   if (e.code === 'Escape') { pause(); return; }
   keys[e.code] = true;
   if (e.code === 'KeyT') { e.preventDefault(); openTalk(); }
+  if (e.code === 'KeyJ') { e.preventDefault(); openJournal(); }
   if (e.code === 'KeyE' && looking) inspect(looking);
 });
 addEventListener('keyup', e => keys[e.code] = false);
@@ -438,8 +450,67 @@ renderer.domElement.addEventListener('touchend', () => {
   touch = null; clearTimeout(holdTimer); keys.KeyW = false;
 });
 
-function openTalk() { talk.hidden = false; talkIn.value = ''; unlock(); setTimeout(() => talkIn.focus(), 0); }
-function closeTalk() { talk.hidden = true; talkIn.blur(); if (playing()) lock(); }
+function openTalk() { talk.hidden = false; talkIn.value = ''; setShowing(null); $('pick').hidden = true; unlock(); setTimeout(() => talkIn.focus(), 0); }
+function closeTalk() { talk.hidden = true; $('pick').hidden = true; talkIn.blur(); if (playing()) lock(); }
+
+// ---------- journal & presenting evidence ----------
+const journal = [], presented = new Set(), carried = new Set(), used = new Set();
+let showingId = null, journalSel = null;
+function toast(text) {
+  const el = $('toast'); el.textContent = text; el.classList.add('on');
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 2600);
+}
+function setShowing(id) {
+  showingId = id;
+  $('showing').hidden = !id;
+  if (id) $('showingText').textContent = 'SHOWING · ' + STORY.items[id].title;
+}
+function cycleShowing(dir) {
+  if (!journal.length) { toast('NOTHING IN YOUR JOURNAL YET'); return; }
+  const i = showingId ? journal.indexOf(showingId) : -1;
+  const n = i + dir;
+  setShowing(n < 0 || n >= journal.length ? null : journal[n]);
+}
+$('unshow').addEventListener('click', () => { setShowing(null); talkIn.focus(); });
+$('showBtn').addEventListener('click', () => {
+  const pick = $('pick');
+  if (!pick.hidden) { pick.hidden = true; talkIn.focus(); return; }
+  pick.innerHTML = '';
+  if (!journal.length) { toast('NOTHING IN YOUR JOURNAL YET'); return; }
+  for (const id of journal) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = STORY.items[id].title;
+    b.onclick = () => { setShowing(id); pick.hidden = true; talkIn.focus(); };
+    pick.append(b);
+  }
+  pick.hidden = false;
+});
+function openJournal() {
+  if (!playing() || reading) return;
+  unlock(); renderJournal(); $('journal').hidden = false;
+}
+function closeJournal() { $('journal').hidden = true; if (playing()) lock(); }
+$('journal').addEventListener('click', e => { if (e.target === $('journal')) closeJournal(); });
+$('journalBtn').addEventListener('click', e => { e.stopPropagation(); if (playing()) openJournal(); });
+function renderJournal() {
+  const list = $('jlist'); list.innerHTML = '';
+  const section = (label, ids) => {
+    if (!ids.length) return;
+    const h = document.createElement('li'); h.className = 'sect'; h.textContent = label; list.append(h);
+    for (const id of ids) {
+      const li = document.createElement('li'), b = document.createElement('button');
+      b.type = 'button'; b.textContent = STORY.items[id].title; if (presented.has(id)) b.className = 'shown';
+      b.setAttribute('aria-current', String(id === journalSel));
+      b.onclick = () => { journalSel = id; renderJournal(); };
+      li.append(b); list.append(li);
+    }
+  };
+  section('READ', journal);
+  section('CARRIED', [...carried]);
+  const v = $('jview');
+  if (journalSel) v.innerHTML = `<h3>${esc(STORY.items[journalSel].title)}</h3><pre>${esc(itemDoc(journalSel).text)}</pre>`;
+}
+// Cameras that could see Rowan right now (refined into view cones later).
+const canSeeRowan = () => eyes.some(e => e.area === areaOf(player.pos.x, player.pos.z) && e.pos.distanceTo(camera.position) < 22);
 
 // ---------- inspecting ----------
 const read = { seen: new Set() };
@@ -455,13 +526,25 @@ function inspect(id) {
   reading = id; unlock();
   $('readTitle').textContent = doc.title; $('readText').textContent = doc.text; $('read').hidden = false;
   $('sleepRow').hidden = id !== PLAYER_POD;
+  const it = STORY.items[id];
+  $('actRow').hidden = !(it && it.action && !used.has(id));
+  if (!$('actRow').hidden) $('actBtn').textContent = it.actionLabel;
   sfx.blip('·');
+  if (it && it.journal && !journal.includes(id)) { journal.push(id); journalSel = id; toast('ADDED TO JOURNAL · [J]'); }
   const first = !read.seen.has(id); read.seen.add(id);
-  if (first && STORY.items[id]) {
-    stage = Math.max(stage, doc.stage || 0);
-    shipEvent(`[EVENT] ${doc.brief}`);
+  if (first && it) {
+    if (canSeeRowan()) stage = Math.max(stage, doc.stage || 0);
+    shipEvent(`[EVENT] ${it.seenBrief || doc.brief}`);
   }
 }
+$('actBtn').addEventListener('click', () => {
+  const id = reading, it = STORY.items[id];
+  if (!it || used.has(id)) return;
+  used.add(id); closeRead();
+  if (it.action === 'eat') { thaw.ate++; thaw.weak = Math.max(0, thaw.weak - .45); sfx.eat(); toast('YOU EAT. WARMTH SPREADS SLOWLY'); }
+  if (it.action === 'take') { carried.add(id); sfx.tick(true); toast('TAKEN · IN YOUR JOURNAL UNDER CARRIED'); }
+  if (it.actBrief) shipEvent(`[EVENT] ${it.actBrief}`);
+});
 function closeRead() { $('read').hidden = true; reading = null; if (playing()) lock(); }
 
 // ---------- subtitles ----------
@@ -526,7 +609,9 @@ function where() {
 function context() {
   const seen = [...read.seen].filter(id => STORY.items[id]).map(id => STORY.items[id].title);
   return `[STAGE ${stage}] Rowan has been awake ${minutesAwake()} min, is ${where()}, looking at ${looking ? itemDoc(looking).title : 'the corridor'}. ` +
-    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Quarters door: ${qdoor.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}.`;
+    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Quarters door: ${qdoor.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}. ` +
+    `Rowan has shown you: ${presented.size ? [...presented].map(i => STORY.items[i].title).join('; ') : 'nothing yet'}.` +
+    (thaw.weak > .05 ? ` Rowan is still weak from the thaw (strength about ${Math.round((1 - thaw.weak) * 100)}%).` : '');
 }
 
 function pushTurn(role, content) {
@@ -562,9 +647,19 @@ async function pump() {
   await ask(job.content, job);
   pump();
 }
-function playerSays(text) {
-  say(text, { who: 'YOU', cls: 'you', hold: 900 });
-  queue.push({ content: `${context()}\n[ROWAN SAYS] "${text}"` }); pump();
+function playerSays(text, showId) {
+  let shown = '';
+  if (showId) {
+    const it = STORY.items[showId];
+    if (!canSeeRowan()) { say("(There's no camera here to show it to.)", { who: '', cls: 'note', hold: 1800 }); if (!text) return; }
+    else {
+      presented.add(showId);
+      stage = Math.max(stage, it.presentStage ?? it.stage ?? 0);
+      shown = `[ROWAN SHOWS YOU] ${it.title}. ${it.brief}\n`;
+    }
+  }
+  say((shown ? `[shows ${STORY.items[showId].title}] ` : '') + (text || ''), { who: 'YOU', cls: 'you', hold: 900 });
+  queue.push({ content: `${context()}\n${shown}[ROWAN SAYS] ${text ? `"${text}"` : '(nothing; Rowan just holds it up to your camera and waits)'}` }); pump();
 }
 function shipEvent(text) {
   if (!brain) return;
@@ -851,6 +946,47 @@ function runEnding(dt, t) {
   return s < 9.5 ? .2 * g : clamp01(.2 + (s - 9.5) / 2);
 }
 
+// ---------- weakness after the thaw ----------
+const thaw = { weak: 1, ate: 0, nextStumble: 0, stumbleT: -1, nextBreath: 0, stumbled: false, warmNoted: false };
+const breathTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  r.addColorStop(0, 'rgba(230,240,240,.9)'); r.addColorStop(1, 'rgba(230,240,240,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const puffs = [];
+function breathe(now) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: breathTex, transparent: true, opacity: .22, depthWrite: false }));
+  camera.getWorldDirection(fwdV);
+  sp.position.copy(camera.position).addScaledVector(fwdV, .32); sp.position.y -= .12;
+  sp.scale.setScalar(.08); sp.userData = { born: now, v: fwdV.clone().multiplyScalar(.12) };
+  scene.add(sp); puffs.push(sp); sfx.breath(thaw.weak);
+}
+function updateThaw(now, dt, moving) {
+  const nearHeat = area === 'quarters' && heater.position.distanceTo(camera.position) < 2.2;
+  const rate = nearHeat ? 1 / 45 : thaw.ate ? 1 / 300 : 1 / 600;
+  thaw.weak = Math.max(0, thaw.weak - dt * rate);
+  if (nearHeat && !thaw.warmNoted) { thaw.warmNoted = true; toast('WARMTH'); }
+  // stumbles while walking
+  if (!thaw.nextStumble) thaw.nextStumble = now + 20000;
+  if (moving && thaw.weak > .35 && now > thaw.nextStumble && thaw.stumbleT < 0) {
+    thaw.stumbleT = 0; thaw.nextStumble = now + (16000 + Math.random() * 20000) / thaw.weak;
+    sfx.step(true); sfx.breath(1);
+    if (!thaw.stumbled) { thaw.stumbled = true; shipEvent('[EVENT] Rowan\'s legs just gave way for a moment; they caught themselves. They are still weak from the thaw.'); }
+  }
+  // breath clouds while cold
+  if (thaw.weak > .12 && now > thaw.nextBreath) { thaw.nextBreath = now + 3200 + Math.random() * 1800; breathe(now); }
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    const p = puffs[i], age = (now - p.userData.born) / 1000;
+    p.position.addScaledVector(p.userData.v, dt); p.position.y += dt * .05;
+    p.scale.setScalar(.08 + age * .35); p.material.opacity = Math.max(0, .22 * (1 - age / 1.8));
+    if (age > 1.8) { scene.remove(p); p.material.dispose(); puffs.splice(i, 1); }
+  }
+  $('chill').style.opacity = (thaw.weak * .9).toFixed(3);
+  post.uniforms.tint.value.set(S.tint[0] * (1 - .07 * thaw.weak), S.tint[1] * (1 - .02 * thaw.weak), S.tint[2] * (1 + .08 * thaw.weak));
+}
+
 // ---------- things the ship notices ----------
 const fwdV = new THREE.Vector3(), toEye = new THREE.Vector3();
 function worldEvents(now, dt) {
@@ -909,11 +1045,11 @@ function frame(now) {
   if (state === 'title' || (state === 'settings')) { view = 'ext'; ext.orbit(t); wantDark = 0; }
   else if (state === 'cutscene') { const c = runCutscene(dt); view = c.scene; wantDark = c.dark; dark = wantDark; }
   else if (state === 'sleeping') { wantDark = runEnding(dt, t); dark = wantDark; }
-  else if (state === 'play' && !reading) {
+  else if (state === 'play' && !reading && $('journal').hidden) {
     const fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     const side = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
     if (fwd || side) {
-      const sp = 1.35 * dt, s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+      const sp = (thaw.stumbleT >= 0 ? .15 : 1.35 * (1 - .45 * thaw.weak)) * dt, s = Math.sin(player.yaw), c = Math.cos(player.yaw);
       const px = player.pos.x, pz = player.pos.z;
       const nx = px + (-s * fwd + c * side) * sp, nz = pz + (-c * fwd - s * side) * sp;
       if (canStand(nx, nz)) player.pos.set(nx, 0, nz);
@@ -922,11 +1058,19 @@ function frame(now) {
       stepDist += Math.hypot(player.pos.x - px, player.pos.z - pz);
       if (stepDist > .72) { stepDist = 0; stepAlt = !stepAlt; sfx.step(stepAlt, area === 'quarters'); }
     }
-    player.bob = (fwd || side) ? Math.sin(t * 7) * .025 : Math.sin(t * 1.3) * .006;
+    player.bob = (fwd || side) ? Math.sin(t * (7 - 2 * thaw.weak)) * (.025 + .02 * thaw.weak) : Math.sin(t * 1.3) * (.006 + .01 * thaw.weak);
+    updateThaw(now, dt, !!(fwd || side));
   }
   if (state === 'play' || state === 'paused' || (state === 'ended' && !$('end').hidden)) {
-    camera.position.set(player.pos.x, 1.62 + (player.bob || 0), player.pos.z);
-    camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+    let dip = 0, tilt = 0;
+    if (thaw.stumbleT >= 0) {
+      thaw.stumbleT += dt; const k = Math.min(1, thaw.stumbleT / .7);
+      dip = Math.sin(k * Math.PI) * .22; tilt = Math.sin(k * Math.PI) * .09;
+      if (thaw.stumbleT > .7) thaw.stumbleT = -1;
+    }
+    camera.position.set(player.pos.x, 1.62 + (player.bob || 0) - dip, player.pos.z);
+    camera.rotation.set(player.pitch - dip * .6, player.yaw, tilt, 'YXZ');
+    if (dip) wantDark = Math.max(wantDark, dip * 1.1);
   }
   if (state === 'title') view = 'ext';
   if (state === 'ended' && !$('ending').hidden) wantDark = 1;
@@ -1000,5 +1144,5 @@ $('hud').hidden = true; show('title'); $('begin').focus();
 requestAnimationFrame(frame);
 
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending, get area() { return area; }, notes, eyes };
+  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending, get area() { return area; }, notes, eyes, thaw, journal, presented, get showing() { return showingId; } };
 }

@@ -47,7 +47,7 @@ For the first few minutes after waking you're weak: slower walking, stumbles and
 
 ## Build order
 
-1. Journal, presenting evidence and thaw weakness, added to the areas that already exist.
+1. ✅ Journal, presenting evidence and thaw weakness, added to the areas that already exist (build 0.4).
 2. Camera view cones and blind spots, junction boxes, drones, and the next area.
 3. The two areas after that.
 4. The final areas and the remaining endings.
