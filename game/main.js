@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { SEALED } from './sealed.js';
 import * as sfx from './audio.js';
 import { buildExterior } from './exterior.js';
+import * as plog from './log.js';
 
 const STORY = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(SEALED), c => c.charCodeAt(0))));
 
@@ -535,6 +536,7 @@ function inspect(id) {
   sfx.blip('·');
   if (it && it.journal && !journal.includes(id)) { journal.push(id); journalSel = id; toast('ADDED TO JOURNAL · [J]'); }
   const first = !read.seen.has(id); read.seen.add(id);
+  if (first) plog.log('read', { id, seen: canSeeRowan() });
   if (first && it) {
     if (canSeeRowan()) stage = Math.max(stage, doc.stage || 0);
     shipEvent(`[EVENT] ${it.seenBrief || doc.brief}`);
@@ -543,7 +545,7 @@ function inspect(id) {
 $('actBtn').addEventListener('click', () => {
   const id = reading, it = STORY.items[id];
   if (!it || used.has(id)) return;
-  used.add(id); closeRead();
+  used.add(id); closeRead(); plog.log('act', { id, action: it.action });
   if (it.action === 'eat') { thaw.ate++; thaw.weak = Math.max(0, thaw.weak - .45); sfx.eat(); toast('YOU EAT. WARMTH SPREADS SLOWLY'); }
   if (it.action === 'take') { carried.add(id); sfx.tick(true); toast('TAKEN · IN YOUR JOURNAL UNDER CARRIED'); }
   if (it.actBrief) shipEvent(`[EVENT] ${it.actBrief}`);
@@ -625,7 +627,8 @@ function pushTurn(role, content) {
 async function ask(userContent, { quiet = false } = {}) {
   pushTurn('user', userContent);
   if (!brain) { if (!quiet) say('(The ship does not answer. It is not connected.)', { who: '', cls: 'note' }); turns.pop(); return false; }
-  busy = true; if (!quiet) showThinking(true);   // the ship only visibly 'thinks' when spoken to
+  busy = true; if (!quiet) showThinking(true);
+  const askedAt = performance.now();   // the ship only visibly 'thinks' when spoken to
   let reply;
   try { reply = await brain(turns); }
   catch (e) { reply = null; console.warn('ship error', e); handleBrainError(e, quiet); }
@@ -633,6 +636,7 @@ async function ask(userContent, { quiet = false } = {}) {
   if (!reply) { turns.pop(); if (!quiet) sub.className = ''; return false; }
   const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none'), quarters: String(reply.quarters ?? 'none'), pod: String(reply.pod ?? 'none') };
   pushTurn('assistant', JSON.stringify(out));
+  plog.log('ship', { ...out, quiet, ms: Math.round(performance.now() - askedAt) });
   applyActions(out);
   if (!out.say && !quiet) out.say = '…';            // spoken to but silent: make the silence deliberate
   if (out.say) await say(out.say); else if (!thinking) sub.className = '';
@@ -640,6 +644,7 @@ async function ask(userContent, { quiet = false } = {}) {
 }
 function handleBrainError(e, quiet) {
   const code = e && e.code;
+  plog.log('error', { code: code || 'exception', message: String((e && e.message) || e).slice(0, 300), quiet });
   if (code === 'not_granted' || code === 'sampling_disabled') { brain = null; say('(You declined to let the ship think. It will stay silent.)', { who: '', cls: 'note' }); }
   else if (code === 'rate_limited') say('(The ship is quiet for now. Try again in a little while.)', { who: '', cls: 'note' });
   else if (!quiet) say('(Static on the speakers. Try again.)', { who: '', cls: 'note' });
@@ -661,10 +666,12 @@ function playerSays(text, showId) {
       shown = `[ROWAN SHOWS YOU] ${it.title}. ${it.brief}\n`;
     }
   }
+  plog.log('you', { text, shown: shown ? showId : undefined, stage });
   say((shown ? `[shows ${STORY.items[showId].title}] ` : '') + (text || ''), { who: 'YOU', cls: 'you', hold: 900 });
   queue.push({ content: `${context()}\n${shown}[ROWAN SAYS] ${text ? `"${text}"` : '(nothing; Rowan just holds it up to your camera and waits)'}` }); pump();
 }
 function shipEvent(text) {
+  plog.log('event', { text: text.replace(/^\[EVENT\] /, '').slice(0, 200) });
   if (!brain) return;
   queue.push({ content: `${context()}\n${text}\nYou may react briefly, or stay silent with an empty "say".`, quiet: true }); pump();
 }
@@ -726,7 +733,13 @@ let mode = 'pending';
 (async () => {
   let sample = null;
   if (window.claude && typeof window.claude.use === 'function') sample = await window.claude.use('sample').catch(() => null);
-  if (sample) { mode = 'sample'; brain = await sampleBrain(sample); status.textContent = 'THE SHIP THINKS WITH YOUR CLAUDE ACCOUNT'; return; }
+  if (sample) {
+    mode = 'sample'; brain = await sampleBrain(sample); status.textContent = 'THE SHIP THINKS WITH YOUR CLAUDE ACCOUNT';
+    const store = await window.claude.use('db').catch(() => null);
+    if (store) plog.init(store, { build: '0.4', mind: settings.mind, fx: settings.fx },
+      () => ({ state, stage, area, strength: Math.round((1 - thaw.weak) * 100), journal: journal.length, shown: presented.size }));
+    return;
+  }
   mode = 'key';
   document.querySelectorAll('.keyrow').forEach(el => el.hidden = false);
   keyIn.value = settings.key || '';
@@ -763,6 +776,7 @@ $('settingsForm').addEventListener('input', () => {
   settings.volume = $('setVolume').value / 100; settings.sens = $('setSens').value / 100;
   settings.invert = $('setInvert').checked; settings.subs = $('setSubs').value; settings.fx = $('setFx').value; settings.mind = $('setMind').value;
   applySettings(); saveSettings();
+  plog.log('settings', { mind: settings.mind, fx: settings.fx, subs: settings.subs });
 });
 keyIn.addEventListener('change', async () => {
   settings.key = keyIn.value.trim(); saveSettings();
@@ -788,6 +802,7 @@ addEventListener('pointerdown', firstTouch, true); addEventListener('keydown', f
 
 function pause() {
   if (state !== 'play') return;
+  plog.log('pause'); plog.flush();
   state = 'paused'; for (const k in keys) keys[k] = false;
   if (!talk.hidden) { talk.hidden = true; talkIn.blur(); }
   $('hud').hidden = true; show('pause'); unlock(); $('resume').focus();
@@ -808,6 +823,7 @@ const SHOTS = [
 const POD_START = 25.6, SEAL = 36, OUT = 37.6, END = 40.8;
 
 function beginGame() {
+  plog.log('begin');
   state = 'cutscene'; show(null); $('hud').hidden = true;
   $('cine').hidden = false; $('skip').hidden = false;
   $('skip').textContent = matchMedia('(hover: none)').matches ? 'TAP TO SKIP ›' : '[SPACE] SKIP ›';
@@ -820,7 +836,7 @@ function beginGame() {
 $('begin').onclick = beginGame;
 $('skip').onclick = () => skipCutscene();
 
-function skipCutscene() { if (state === 'cutscene') cine.t = Math.max(cine.t, END); }
+function skipCutscene() { if (state === 'cutscene') { if (cine.t < END) plog.log('skip_opening', { at: Math.round(cine.t) }); cine.t = Math.max(cine.t, END); } }
 
 const ease = k => k * k * (3 - 2 * k);
 const clamp01 = k => Math.max(0, Math.min(1, k));
@@ -870,6 +886,7 @@ function runCutscene(dt) {
   return { scene: 'bay', dark };
 }
 function finishCutscene() {
+  plog.log('play');
   state = 'play';
   $('cine').hidden = true; $('skip').hidden = true; $('hud').hidden = false; $('card').className = '';
   sfx.fadeOut('void', 1); sfx.fadeOut('heart', 2); sfx.fadeOut('alarm', .3); sfx.startBay();
@@ -893,6 +910,7 @@ async function wake() {
 const ending = { t: 0, from: null, fromRot: null, sealAt: null, hud: 0, card: -1, stage: 0, spoken: false };
 function startSleep() {
   if (state !== 'play') return;
+  plog.log('sleep', { stage });
   closeRead(); unlock();
   state = 'sleeping'; document.body.classList.add('cinematic'); for (const k in keys) keys[k] = false;
   Object.assign(ending, { t: 0, from: camera.position.clone(), fromYaw: player.yaw, fromPitch: player.pitch, sealAt: null, hud: 0, card: -1, stage, spoken: false, sealed: false, faded: false });
@@ -943,6 +961,7 @@ function runEnding(dt, t) {
     if (ci >= cards.length) {
       $('cine').hidden = true; $('endingTitle').textContent = E.title[String(Math.min(3, e.stage))];
       show('ending'); $('hud').hidden = true; state = 'ended'; $('endingQuit').focus();
+      plog.log('ending', { stage: e.stage }); plog.flush();
     }
   }
   if (ci >= 0 && ci < cards.length && (s - 12) % 6 > 4.6) card.className = '';
@@ -995,7 +1014,7 @@ const fwdV = new THREE.Vector3(), toEye = new THREE.Vector3();
 function worldEvents(now, dt) {
   const a = areaOf(player.pos.x, player.pos.z);
   if (a !== area) {
-    area = a; sfx.setRoom(a === 'connector' ? 'spine' : a);
+    area = a; sfx.setRoom(a === 'connector' ? 'spine' : a); plog.log('area', { a });
     if (!visited.has(a)) { visited.add(a); if (a !== 'connector') shipEvent(`[EVENT] Rowan has just entered ${a === 'spine' ? 'the Spine' : 'the Shift 9 crew quarters'} for the first time.`); }
   }
   const once = (key, cond, text) => { if (!notes.has(key) && cond) { notes.add(key); shipEvent(text); } };
@@ -1005,7 +1024,7 @@ function worldEvents(now, dt) {
 
   // the end of what's built so far
   if (!notes.has('buildEnd') && area === 'spine' && player.pos.x > SX1 - 4) {
-    notes.add('buildEnd');
+    notes.add('buildEnd'); plog.log('build_end');
     shipEvent('[EVENT] Rowan has reached the Archive core door.');
     setTimeout(() => { if (state === 'play') { state = 'paused'; $('hud').hidden = true; show('end'); unlock(); $('keepExploring').focus(); } }, 4500);
   }
@@ -1037,6 +1056,7 @@ function worldEvents(now, dt) {
 // ---------- frame ----------
 const ray = new THREE.Raycaster();
 let looking = null, last = performance.now(), dark = 1;
+let loggedStage = 0;
 let stepDist = 0, stepAlt = false, area = 'bay', nextCreak = 0, idleAfter = 150000, idleCount = 0;
 const visited = new Set(['bay']), notes = new Set();
 
@@ -1083,6 +1103,7 @@ function frame(now) {
 
   $('lookhint').hidden = !(playing() && !locked && matchMedia('(hover: hover)').matches && talk.hidden && !reading);
   if (state === 'play') worldEvents(now, dt);
+  if (stage !== loggedStage) { loggedStage = stage; plog.log('stage', { stage }); }
 
   if (state !== 'cutscene') dark += (wantDark - dark) * Math.min(1, dt * 1.5);
   post.uniforms.dark.value = dark; post.uniforms.time.value = t;
@@ -1139,6 +1160,8 @@ function updateBay(now, t, dt) {
 }
 
 // ---------- start ----------
+addEventListener('error', e => plog.log('jserror', { message: String(e.message).slice(0, 300), at: `${e.filename || ''}:${e.lineno || ''}` }));
+addEventListener('unhandledrejection', e => plog.log('jserror', { message: String((e.reason && e.reason.message) || e.reason).slice(0, 300) }));
 function resizeAll() { resize(); ext.camera.aspect = innerWidth / innerHeight; ext.camera.updateProjectionMatrix(); }
 addEventListener('resize', resizeAll);
 build(); resizeAll(); applySettings();

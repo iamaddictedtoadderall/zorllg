@@ -13,7 +13,7 @@ The person working on this repo intends to play the game blind.
 
 ## Layout
 
-- `game/index.html` – page, HUD, menus, styles. `game/main.js` – game states (title → cutscene → play ⇄ paused → sleeping/ended), the world (Bay C, connector, Spine, crew quarters; walkable rectangles + door gates for collision), input, settings, opening and sleep sequences, subtitles, things the ship notices (`worldEvents`: area entry, staring at cameras, long silences), the ship's brain. `game/exterior.js` – the ark seen from outside (title backdrop, opening shots). `game/audio.js` – all synthesised sound. `game/sealed.js` – sealed story (includes cutscene text).
+- `game/index.html` – page, HUD, menus, styles. `game/main.js` – game states (title → cutscene → play ⇄ paused → sleeping/ended), the world (Bay C, connector, Spine, crew quarters; walkable rectangles + door gates for collision), input, settings, opening and sleep sequences, subtitles, things the ship notices (`worldEvents`: area entry, staring at cameras, long silences), the ship's brain. `game/exterior.js` – the ark seen from outside (title backdrop, opening shots). `game/audio.js` – all synthesised sound. `game/sealed.js` – sealed story (includes cutscene text). `game/log.js` – playtest log.
 - `DESIGN.md` – spoiler-free systems design (talking, evidence, blind spots, ship systems, drones, environments, thaw) and build order. Where each system meets the story is in the sealed outline under `outline.mechanics`.
 - `mockups/` – the original look tests (style 1, "fog & grain", was chosen).
 - The ship's brain: inside a claude.ai artifact it uses the page's `sample` capability; anywhere else it asks for an API key and calls the Messages API from the browser.
@@ -30,4 +30,9 @@ The person working on this repo intends to play the game blind.
 
 ## Publishing as an artifact
 
-Strip the document wrapper (`<!doctype>`, `<html>`, `<head>`, `<body>`, the two metas) from `game/index.html` into a scratch copy, and publish it with `files: {"main.js": "game/main.js", "sealed.js": "game/sealed.js", "audio.js": "game/audio.js", "exterior.js": "game/exterior.js"}` and `capabilities: {sample: {}}`.
+Strip the document wrapper (`<!doctype>`, `<html>`, `<head>`, `<body>`, the two metas) from `game/index.html` into a scratch copy, and publish it with `files: {"main.js": "game/main.js", "sealed.js": "game/sealed.js", "audio.js": "game/audio.js", "exterior.js": "game/exterior.js", "log.js": "game/log.js"}`. Capabilities are `{sample: {}, db: {rules: [{path: "playtests", read: "owner", write: "owner"}]}}` (omit `capabilities` on a redeploy to keep them).
+
+## Playtest logs
+
+Inside the claude.ai artifact (https://claude.ai/artifact/LSLyhXncAq5KvfULngrREd), each play session writes an owner-only log to the artifact's store: `playtests/<session>` (summary: build, settings, state, stage, area, strength, counts, timestamps) and `playtests/<session>/chunks/<nnnn>` (`events`: `t` seconds since start, `k` kind — start, begin, skip_opening, play, you, ship, event, read, act, area, stage, settings, pause, sleep, ending, build_end, error, jserror). Read them with the ArtifactData tool (`list` on `playtests`, then on `playtests/<session>/chunks`). The logs contain sealed story text (item briefs, the ship's lines): use them to diagnose, and when reporting to the user describe behaviour without quoting or summarising story content.
+
