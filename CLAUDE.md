@@ -18,7 +18,7 @@ The person working on this repo intends to play the game blind.
 
 ## Running
 
-`python3 -m http.server` from the repo root, then open `http://localhost:8000/game/`. Module scripts don't load from `file://`. Add `?debug` to expose `window.__lp` for scripted tests (state, `skipCutscene()`, settable `cineT`). When screenshotting the cutscene, hide `#card` and `#podhud` so sealed text isn't captured.
+`python3 -m http.server` from the repo root, then open `http://localhost:8000/game/`. Module scripts don't load from `file://`. Add `?debug` to expose `window.__lp` for scripted tests (state, `skipCutscene()`, settable `cineT`). When screenshotting, inject CSS hiding `#card, #podhud, #read pre, #endingTitle` so sealed text isn't captured.
 
 ## Publishing as an artifact
 

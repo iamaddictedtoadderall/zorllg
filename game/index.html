@@ -44,6 +44,10 @@ button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-
 #read article{max-width:min(520px,100%);box-sizing:border-box;padding:22px 26px;background:rgba(6,12,13,.92);border:1px solid var(--rule)}
 #read h2{margin:0 0 14px;font-size:13px;font-weight:500;letter-spacing:.14em;color:var(--amber)}
 #read pre{margin:0;font:inherit;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+#sleepRow{margin-top:18px;gap:4px}
+#sleepRow button{color:var(--amber)}
+#sleepWarn{font-size:11px;letter-spacing:.08em;color:var(--ink-dim)}
+body.cinematic #cross,body.cinematic #prompt,body.cinematic #hint,body.cinematic #lookhint,body.cinematic #talk{display:none!important}
 #read p{margin:18px 0 0;font-size:11px;color:var(--ink-dim);letter-spacing:.1em}
 /* screens: title, settings, pause, end */
 .screen{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:flex-end;gap:18px;padding:16px max(16px,6vw) calc(9vh + env(safe-area-inset-bottom, 0px));z-index:3}
@@ -88,7 +92,9 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
   <div id="lookhint" hidden>CLICK TO LOOK AROUND</div>
   <div id="hint"><button id="useBtn" type="button" hidden>[E] INSPECT</button><button id="talkBtn" type="button">[T] TALK</button></div>
 </div>
-<div id="read" hidden><article><h2 id="readTitle"></h2><pre id="readText"></pre><p>[E] / [ESC] CLOSE</p></article></div>
+<div id="read" hidden><article><h2 id="readTitle"></h2><pre id="readText"></pre>
+  <div id="sleepRow" class="menu" hidden><button id="sleepBtn" type="button">LIE DOWN AND SLEEP</button><span id="sleepWarn">This ends your playthrough.</span></div>
+  <p>[E] / [ESC] CLOSE</p></article></div>
 <div id="cine" hidden><div id="frost"></div><div id="podhud"></div><div id="card"></div></div>
 <button id="skip" type="button" hidden>HOLD SPACE TO SKIP</button>
 
@@ -123,6 +129,11 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
     <button id="pauseSettings" type="button">SETTINGS</button>
     <button id="quit" type="button">QUIT TO TITLE</button>
   </nav>
+</section>
+
+<section id="ending" class="screen dim" hidden>
+  <h2 id="endingTitle"></h2>
+  <nav class="menu"><button id="endingQuit" type="button">BACK TO TITLE</button></nav>
 </section>
 
 <section id="end" class="screen dim" hidden>

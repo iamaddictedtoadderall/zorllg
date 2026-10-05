@@ -95,7 +95,7 @@ const floorM = std(S.floor, { map: grateTex, metalness: .4 });
 const LEN = 31, HALF = 3, H = 3.2, BZ = -LEN + 2;   // BZ: bulkhead plane
 const pickables = [];                                 // meshes the player can inspect
 const lamps = [], strips = [];
-let flickerLamp = null, trackingEye = null, door = null, podGlass = null, podLight = null;
+let flickerLamp = null, trackingEye = null, door = null, podGlass = null, podLight = null, podReady = false;
 
 function box(w, h, d, mat, x, y, z, item) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -252,7 +252,8 @@ addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 $('talkBtn').addEventListener('click', e => { e.stopPropagation(); if (playing() && !reading) openTalk(); });
 useBtn.addEventListener('click', e => { e.stopPropagation(); if (looking) inspect(looking); });
-$('read').addEventListener('click', closeRead);
+$('read').addEventListener('click', e => { if (e.target === $('read')) closeRead(); });
+$('sleepBtn').addEventListener('click', () => startSleep());
 
 // touch: drag to look, hold to walk, tap to inspect
 let touch = null, holdTimer = 0;
@@ -289,6 +290,7 @@ function inspect(id) {
   const doc = itemDoc(id);
   reading = id; unlock();
   $('readTitle').textContent = doc.title; $('readText').textContent = doc.text; $('read').hidden = false;
+  $('sleepRow').hidden = id !== PLAYER_POD;
   sfx.blip('·');
   const first = !read.seen.has(id); read.seen.add(id);
   if (first && STORY.items[id]) {
@@ -346,7 +348,7 @@ function where() {
 function context() {
   const seen = [...read.seen].filter(id => STORY.items[id]).map(id => STORY.items[id].title);
   return `[STAGE ${stage}] Rowan has been awake ${minutesAwake()} min, is ${where()}, looking at ${looking ? itemDoc(looking).title : 'the corridor'}. ` +
-    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}.`;
+    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}.`;
 }
 
 function pushTurn(role, content) {
@@ -356,17 +358,18 @@ function pushTurn(role, content) {
 
 async function ask(userContent, { quiet = false } = {}) {
   pushTurn('user', userContent);
-  if (!brain) { if (!quiet) say('(The ship does not answer. It is not connected.)', { who: '', cls: 'note' }); turns.pop(); return; }
+  if (!brain) { if (!quiet) say('(The ship does not answer. It is not connected.)', { who: '', cls: 'note' }); turns.pop(); return false; }
   busy = true; showThinking(true);
   let reply;
   try { reply = await brain(turns); }
   catch (e) { reply = null; console.warn('ship error', e); handleBrainError(e, quiet); }
   showThinking(false); busy = false;
-  if (!reply) { turns.pop(); sub.className = ''; return; }
-  const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none') };
+  if (!reply) { turns.pop(); sub.className = ''; return false; }
+  const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none'), pod: String(reply.pod ?? 'none') };
   pushTurn('assistant', JSON.stringify(out));
   applyActions(out);
   if (out.say) await say(out.say); else sub.className = '';
+  return !!out.say;
 }
 function handleBrainError(e, quiet) {
   const code = e && e.code;
@@ -389,7 +392,8 @@ function shipEvent(text) {
   queue.push({ content: `${context()}\n${text}\nYou may react briefly, or stay silent with an empty "say".`, quiet: true }); pump();
 }
 
-function applyActions({ lights, door: d }) {
+function applyActions({ lights, door: d, pod }) {
+  if (pod === 'ready' && !podReady) { podReady = true; sfx.tick(true); looking = null; }
   if (['normal', 'dim', 'dark', 'guide'].includes(lights)) setLights(lights);
   if (d === 'open' && !door.userData.open) { door.userData.open = 1; sfx.clunk(); }
   if (d === 'close' && door.userData.open) { door.userData.open = 0; sfx.clunk(); }
@@ -410,11 +414,12 @@ async function apiBrain(key) {
   const { default: Anthropic } = await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.131.0/+esm');
   const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
   const schema = {
-    type: 'object', additionalProperties: false, required: ['say', 'lights', 'door'],
+    type: 'object', additionalProperties: false, required: ['say', 'lights', 'door', 'pod'],
     properties: {
       say: { type: 'string' },
       lights: { type: 'string', enum: ['none', 'normal', 'dim', 'dark', 'guide'] },
       door: { type: 'string', enum: ['none', 'open', 'close'] },
+      pod: { type: 'string', enum: ['none', 'ready'] },
     },
   };
   return async turns => {
@@ -427,7 +432,7 @@ async function apiBrain(key) {
       output_config: { effort: 'low', format: { type: 'json_schema', schema } },
       messages: turns,
     });
-    if (res.stop_reason === 'refusal') return { say: '', lights: 'none', door: 'none' };
+    if (res.stop_reason === 'refusal') return { say: '', lights: 'none', door: 'none', pod: 'none' };
     const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
     return JSON.parse(text);
   };
@@ -451,7 +456,7 @@ async function connectKey() {
 
 
 // ---------- menus ----------
-const screens = ['title', 'settings', 'pause', 'end'];
+const screens = ['title', 'settings', 'pause', 'end', 'ending'];
 let settingsReturn = 'title';
 function show(id) { for (const sId of screens) $(sId).hidden = sId !== id; }
 function applySettings() {
@@ -485,7 +490,7 @@ $('openSettings').onclick = () => openSettings('title');
 $('pauseSettings').onclick = () => openSettings('pause');
 $('closeSettings').onclick = () => { show(settingsReturn); $(settingsReturn === 'pause' ? 'resume' : 'begin').focus(); };
 $('resume').onclick = () => resume();
-$('quit').onclick = $('endQuit').onclick = () => location.reload();
+$('quit').onclick = $('endQuit').onclick = $('endingQuit').onclick = () => location.reload();
 document.querySelectorAll('.menu button').forEach(b => {
   b.addEventListener('mouseenter', () => sfx.tick());
   b.addEventListener('click', () => sfx.tick(true));
@@ -593,12 +598,72 @@ function finishCutscene() {
 }
 async function wake() {
   pushTurn('user', STORY.wakeEvent);
-  pushTurn('assistant', JSON.stringify({ say: STORY.intro.join(' '), lights: 'normal', door: 'none' }));
+  pushTurn('assistant', JSON.stringify({ say: STORY.intro.join(' '), lights: 'normal', door: 'none', pod: 'none' }));
   await new Promise(r => setTimeout(r, 1400));
   await say(STORY.intro[0], { hold: 1200 });
   await say(STORY.intro[1], { hold: 1600 });
   setLights('normal', true);
   await say(STORY.intro[2]);
+}
+
+// ---------- going back to sleep ----------
+const ending = { t: 0, from: null, fromRot: null, sealAt: null, hud: 0, card: -1, stage: 0, spoken: false };
+function startSleep() {
+  if (state !== 'play') return;
+  closeRead(); unlock();
+  state = 'sleeping'; document.body.classList.add('cinematic'); for (const k in keys) keys[k] = false;
+  Object.assign(ending, { t: 0, from: camera.position.clone(), fromYaw: player.yaw, fromPitch: player.pitch, sealAt: null, hud: 0, card: -1, stage, spoken: false, sealed: false, faded: false });
+  $('podhud').innerHTML = ''; $('podhud').style.opacity = 1; $('podhud').style.transition = '';
+  lastWords().then(() => ending.spoken = true);
+}
+async function lastWords() {
+  while (busy) await new Promise(r => setTimeout(r, 200));
+  queue.length = 0;
+  const E = STORY.ending;
+  if (!brain) { await say(E.fallbackLastWords); return; }
+  const timeout = new Promise(r => setTimeout(() => r('timeout'), 30000));
+  const spoke = await Promise.race([ask(`${context()}\n${E.lastWordsEvent}`, { quiet: true }), timeout]);
+  if (spoke !== true) await say(E.fallbackLastWords);
+}
+function runEnding(dt, t) {
+  const e = ending, E = STORY.ending, T = (e.t += dt);
+  const inside = V(playerPodPos.x - .02, 1.5, playerPodPos.z);
+  const m = ease(clamp01(T / 2.6));
+  camera.position.lerpVectors(e.from, inside, m);
+  camera.position.y -= Math.sin(m * Math.PI) * .25;
+  let yaw = e.fromYaw, target = Math.PI / 2;
+  while (target - yaw > Math.PI) yaw += Math.PI * 2;
+  while (yaw - target > Math.PI) yaw -= Math.PI * 2;
+  camera.rotation.set(e.fromPitch * (1 - m) - .04 * m, yaw + (target - yaw) * m, 0, 'YXZ');
+  if (e.sealAt === null) {
+    if (e.spoken && T > 2.6) { e.sealAt = T + .8; }
+    return 0;
+  }
+  const s = T - e.sealAt;
+  if (s < 0) return 0;
+  if (!e.sealed) { e.sealed = true; sfx.hiss(); sfx.fadeOut('bay', 3); sfx.startHeart(48); $('cine').hidden = false; }
+  const g = clamp01(s / 1.6);
+  podGlass.mesh.position.lerpVectors(podGlass.open, podGlass.closed, ease(g));
+  podGlass.mesh.rotation.y = podGlass.openRot * (1 - ease(g));
+  $('frost').style.opacity = g;
+  const hud = $('podhud');
+  while (e.hud < E.podHud.length && s >= E.podHud[e.hud].at) {
+    const line = document.createElement('div'); line.textContent = E.podHud[e.hud++].text; hud.append(line); sfx.blip('x', 980);
+  }
+  if (s > 9.5 && !e.faded) { e.faded = true; hud.style.transition = 'opacity 2s'; hud.style.opacity = 0; sfx.fadeOut('heart', 6); }
+  const cards = E.epilogue[String(Math.min(2, e.stage))], card = $('card');
+  const ci = s < 12 ? -1 : Math.floor((s - 12) / 6);
+  if (ci !== e.card) {
+    e.card = ci;
+    if (ci >= 0 && ci < cards.length) { card.textContent = cards[ci]; card.className = 'on'; }
+    else card.className = '';
+    if (ci >= cards.length) {
+      $('cine').hidden = true; $('endingTitle').textContent = E.title[String(Math.min(2, e.stage))];
+      show('ending'); $('hud').hidden = true; state = 'ended'; $('endingQuit').focus();
+    }
+  }
+  if (ci >= 0 && ci < cards.length && (s - 12) % 6 > 4.6) card.className = '';
+  return s < 9.5 ? .2 * g : clamp01(.2 + (s - 9.5) / 2);
 }
 
 // ---------- frame ----------
@@ -613,6 +678,7 @@ function frame(now) {
 
   if (state === 'title' || (state === 'settings')) { view = 'ext'; ext.orbit(t); wantDark = 0; }
   else if (state === 'cutscene') { const c = runCutscene(dt); view = c.scene; wantDark = c.dark; dark = wantDark; }
+  else if (state === 'sleeping') { wantDark = runEnding(dt, t); dark = wantDark; }
   else if (state === 'play' && !reading) {
     const fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     const side = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
@@ -626,11 +692,12 @@ function frame(now) {
     }
     player.bob = (fwd || side) ? Math.sin(t * 7) * .025 : Math.sin(t * 1.3) * .006;
   }
-  if (state === 'play' || state === 'paused' || state === 'ended') {
+  if (state === 'play' || state === 'paused' || (state === 'ended' && !$('end').hidden)) {
     camera.position.set(player.pos.x, 1.62 + (player.bob || 0), player.pos.z);
     camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
   }
   if (state === 'title') view = 'ext';
+  if (state === 'ended' && !$('ending').hidden) wantDark = 1;
 
   if (view === 'bay') updateBay(now, t, dt);
   else ext.update(t);
@@ -667,6 +734,7 @@ function updateBay(now, t, dt) {
     s.material.emissiveIntensity += (v - s.material.emissiveIntensity) * Math.min(1, dt * 6);
   });
 
+  if (podReady && state === 'play') { podLight.color.setHex(0x9fe8f0); podLight.intensity = 2.2 + Math.sin(t * 1.6) * 1.2; }
   const dOpen = door.userData.open;
   door.position.y += ((dOpen ? doorTop + .2 : 1.15) - door.position.y) * Math.min(1, dt * 1.6);
   door.userData.lamp.material.emissive.setHex(dOpen ? 0x40d070 : 0xd04020);
@@ -678,7 +746,7 @@ function updateBay(now, t, dt) {
   if (next !== looking) {
     looking = next;
     promptEl.hidden = useBtn.hidden = !looking;
-    if (looking) promptEl.textContent = `[E] ${looking === 'eye' ? 'CAMERA' : looking === 'badge' ? 'CARD' : looking === 'bulkhead' ? 'BULKHEAD' : 'POD ' + looking}`;
+    if (looking) promptEl.textContent = `[E] ${looking === 'eye' ? 'CAMERA' : looking === 'badge' ? 'CARD' : looking === 'bulkhead' ? 'BULKHEAD' : 'POD ' + looking}${looking === PLAYER_POD ? ' · YOUR POD' : ''}`;
   }
 }
 
@@ -691,5 +759,5 @@ $('hud').hidden = true; show('title'); $('begin').focus();
 requestAnimationFrame(frame);
 
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; } };
+  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending };
 }
