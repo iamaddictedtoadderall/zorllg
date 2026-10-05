@@ -14,6 +14,7 @@ The person working on this repo intends to play the game blind.
 ## Layout
 
 - `game/index.html` – page, HUD, menus, styles. `game/main.js` – game states (title → cutscene → play ⇄ paused → sleeping/ended), the world (Bay C, connector, Spine, crew quarters; walkable rectangles + door gates for collision), input, settings, opening and sleep sequences, subtitles, things the ship notices (`worldEvents`: area entry, staring at cameras, long silences), the ship's brain. `game/exterior.js` – the ark seen from outside (title backdrop, opening shots). `game/audio.js` – all synthesised sound. `game/sealed.js` – sealed story (includes cutscene text).
+- `DESIGN.md` – spoiler-free systems design (talking, evidence, blind spots, ship systems, drones, environments, thaw) and build order. Where each system meets the story is in the sealed outline under `outline.mechanics`.
 - `mockups/` – the original look tests (style 1, "fog & grain", was chosen).
 - The ship's brain: inside a claude.ai artifact it uses the page's `sample` capability; anywhere else it asks for an API key and calls the Messages API from the browser.
 
