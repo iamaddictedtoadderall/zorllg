@@ -223,8 +223,11 @@ function build() {
   eye(0, 2.75, BZ + .35);
   eye(-HALF + .45, H - .45, -12.4);
   // emergency cabinet on the wall near the bulkhead
-  box(.22, .7, .55, std(0x7a3a30, { metalness: .4 }), -HALF + .12, 1.25, BZ + 2.4, 'c_cabinet');
-  box(.03, .1, .4, glowM(0xf0f0e0, .6), -HALF + .24, 1.52, BZ + 2.4, 'c_cabinet');
+  // (between the last wall rib and the bulkhead, clear of the pods)
+  box(.22, .7, .55, std(0x7a3a30, { metalness: .4 }), -HALF + .12, 1.25, BZ + .72, 'c_cabinet');
+  box(.03, .07, .4, glowM(0xf0f0e0, .6), -HALF + .24, 1.55, BZ + .72, 'c_cabinet');
+  box(.03, .26, .07, glowM(0xe8402e, 1.4), -HALF + .24, 1.2, BZ + .72, 'c_cabinet');   // red cross
+  box(.03, .07, .26, glowM(0xe8402e, 1.4), -HALF + .24, 1.2, BZ + .72, 'c_cabinet');
 
   buildSpine();
   buildQuarters();
