@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Long Patience</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed 3D view; subtitles low-centre, talk line beneath, reading panel centred over a dimmed view. Single dark look. */
+:root{
+  --void:#05090a;
+  --veil:rgba(4,8,10,.6);
+  --ink:#d8e6e4;
+  --ink-dim:#7f9894;
+  --amber:#e8b45a;
+  --rule:rgba(216,230,228,.18);
+  --f-mono:"IBM Plex Mono", ui-monospace, "Courier New", monospace;
+  --sub:clamp(16px, 2.3vw, 19px);
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--void);overflow:hidden;color:var(--ink);font-family:var(--f-mono)}
+canvas{display:block;width:100vw;height:100vh;touch-action:none}
+button{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
+#hud{position:fixed;inset:0;pointer-events:none}
+#cross{position:absolute;left:50%;top:50%;width:4px;height:4px;margin:-2px 0 0 -2px;border-radius:50%;background:var(--ink);opacity:.5}
+#prompt{position:absolute;left:50%;top:calc(50% + 20px);transform:translateX(-50%);font-size:calc(var(--sub) * .68);color:var(--ink-dim);letter-spacing:.08em;white-space:nowrap}
+#sub{position:absolute;left:50%;bottom:14vh;transform:translateX(-50%);width:max-content;max-width:min(760px,calc(100vw - 32px));box-sizing:border-box;padding:10px 18px;background:var(--veil);font-size:var(--sub);line-height:1.5;text-align:center;opacity:0;transition:opacity .5s}
+#sub.on{opacity:1}
+#sub b{color:var(--amber);font-weight:500;margin-right:.6em;letter-spacing:.08em}
+#sub.you b{color:var(--ink-dim)}
+#sub.note{color:var(--ink-dim);font-style:italic}
+#talk{position:absolute;left:50%;bottom:calc(5vh + env(safe-area-inset-bottom, 0px));transform:translateX(-50%);width:min(560px,calc(100vw - 32px));pointer-events:auto}
+#talk:not([hidden]){display:flex}
+#talk span{padding:9px 8px 9px 14px;background:var(--veil);color:var(--amber);font-size:calc(var(--sub) * .85)}
+#talk input{flex:1;min-width:0;border:0;outline:0;padding:9px 14px 9px 0;background:var(--veil);color:var(--ink);font:inherit;font-size:calc(var(--sub) * .85)}
+#hint{position:absolute;right:16px;bottom:calc(12px + env(safe-area-inset-bottom, 0px));display:flex;gap:4px;pointer-events:auto}
+#hint button{background:none;border:0;padding:8px;font-size:calc(var(--sub) * .68);color:var(--ink-dim);letter-spacing:.08em;cursor:pointer}
+#read{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(2,5,6,.55);z-index:2}
+#read[hidden]{display:none}
+#read article{max-width:min(520px,100%);box-sizing:border-box;padding:22px 26px;background:rgba(6,12,13,.92);border:1px solid var(--rule)}
+#read h2{margin:0 0 14px;font-size:13px;font-weight:500;letter-spacing:.14em;color:var(--amber)}
+#read pre{margin:0;font:inherit;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+#read p{margin:18px 0 0;font-size:11px;color:var(--ink-dim);letter-spacing:.1em}
+#start,#end{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:16px;background:var(--void);text-align:center;z-index:3}
+#start[hidden],#end[hidden]{display:none}
+#start h1,#end h1{margin:0;font-weight:400;font-size:clamp(20px,4vw,28px);letter-spacing:.32em}
+#start p,#end p{margin:0;max-width:46ch;font-size:13px;line-height:1.6;color:var(--ink-dim)}
+#wake{margin-top:14px;padding:10px 22px;background:none;border:1px solid var(--amber);color:var(--amber);letter-spacing:.24em;cursor:pointer}
+#keybox{display:flex;flex-direction:column;gap:6px;width:min(420px,100%);margin-top:6px}
+#keybox[hidden]{display:none}
+#keybox label{font-size:12px;color:var(--ink-dim)}
+#keybox input{padding:8px 10px;background:transparent;border:1px solid var(--rule);color:var(--ink);font:inherit;font-size:13px}
+#status{font-size:12px;color:var(--ink-dim);min-height:1.4em}
+@media (prefers-reduced-motion: reduce){#sub{transition:none}}
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="cross"></div>
+  <div id="prompt" hidden></div>
+  <div id="sub"></div>
+  <div id="talk" hidden><span>&gt;</span><input id="talkIn" maxlength="240" autocomplete="off" spellcheck="false" aria-label="Say something to the ship"></div>
+  <div id="hint"><button id="useBtn" type="button" hidden>[E] INSPECT</button><button id="talkBtn" type="button">[T] TALK</button></div>
+</div>
+<div id="read" hidden><article><h2 id="readTitle"></h2><pre id="readText"></pre><p>[E] / [ESC] CLOSE</p></article></div>
+<div id="start">
+  <h1>LONG PATIENCE</h1>
+  <p>WASD to walk, mouse to look, E to inspect, T to talk to the ship. On touch: drag to look, hold to walk, tap to inspect.</p>
+  <p>Headphones recommended.</p>
+  <div id="keybox" hidden>
+    <label for="apiKey">The ship needs a Claude API key when the game runs outside Claude. It is kept in this browser only.</label>
+    <input id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+  </div>
+  <div id="status">Connecting…</div>
+  <button id="wake" type="button">WAKE</button>
+</div>
+<div id="end" hidden>
+  <h1>END OF BUILD 0.1</h1>
+  <p>The Spine isn't built yet. Thank you for playing this far.</p>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js"}}
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
