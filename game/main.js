@@ -1111,14 +1111,15 @@ const agent = createAgent({
       label: STORY.items[id]?.label || 'POD ' + id, read: read.seen.has(id) }))
     .filter(t => visited.has(t.area) || (t.area === 'connector' && visited.has('spine')) || t.id === 'bulkhead'),
   places: () => {
-    const out = [{ id: 'bay', label: 'Bay C, by your pod', x: playerPodPos.x - 1.2, z: playerPodPos.z }];
+    const out = [{ id: 'bay', label: 'Bay C, by your pod', x: playerPodPos.x - 1.2, z: playerPodPos.z },
+      { id: 'bulkhead', label: `the bulkhead at the end of Bay C, the only way out (${door.userData.open ? 'open' : 'closed'})`, x: 0, z: BZ + 1.4 }];
     if (visited.has('spine') || door.userData.open) out.push({ id: 'spine', label: visited.has('spine') ? 'the Spine, the main corridor beyond Bay C' : 'through the open bulkhead (unexplored)', x: 0, z: SZ });
     if (visited.has('spine')) out.push({ id: 'spine_west_end', label: 'the west end of the Spine', x: SX0 + 2.5, z: SZ }, { id: 'spine_east_end', label: 'the east end of the Spine', x: SX1 - 5, z: SZ });
     if (visited.has('quarters') || (visited.has('spine') && qdoor.userData.open)) out.push({ id: 'quarters', label: visited.has('quarters') ? 'the crew quarters' : 'through the open crew quarters door (unexplored)', x: QX, z: SZ - 5 });
     return out;
   },
   where, strength: () => Math.round((1 - thaw.weak) * 100),
-  doors: () => `Bay C bulkhead ${door.userData.open ? 'open' : 'closed'}; crew quarters door ${qdoor.userData.open ? 'open' : 'closed'}`,
+  doors: () => `Bay C bulkhead ${door.userData.open ? 'open' : 'closed'}` + (visited.has('spine') ? `; crew quarters door ${qdoor.userData.open ? 'open' : 'closed'}` : ''),
   journal: () => journal.slice(), carried: () => [...carried].map(id => STORY.items[id].title),
   title: id => STORY.items[id]?.title || id, doc: id => itemDoc(id),
   reading: () => reading, canAct: () => !!(reading && STORY.items[reading]?.action && !used.has(reading)),

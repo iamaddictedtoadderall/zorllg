@@ -13,7 +13,8 @@ Each turn choose ONE action and reply with only a JSON object:
 - act: use the thing you just inspected, if it offers something (eat, take). Leave target empty.
 - sleep: lie down in your own pod (C-14) and go back to sleep. This ends the game.
 - wait: stand still for a moment and listen.
-Say things the way Rowan would say them out loud: short, natural, in the first person.`;
+Say things the way Rowan would say them out loud: short, natural, in the first person.
+Doors between areas are controlled by PATIENCE: if a way onward is closed, ask it to open that door (name the door you mean). If something you try does not work, try something different rather than repeating it.`;
 
 export function createAgent(api) {
   const { THREE } = api;
@@ -103,6 +104,10 @@ YOUR NOTES: ${me.notes || '(none yet)'}`;
     if (typeof d.notes === 'string') me.notes = d.notes.slice(0, 600);
     const action = String(d.action || 'wait'), target = String(d.target || ''), text = String(d.text || '').slice(0, 240), show = String(d.show || '');
     api.log('agent', { thought: me.thought, action, target, text, show });
+    const key = action + ':' + target;
+    me.repeats = key === me.lastKey && action !== 'wait' && action !== 'say' ? (me.repeats || 0) + 1 : 0; me.lastKey = key;
+    if (me.repeats >= 2) recent(`(You have chosen "${action}${target ? ' ' + target : ''}" ${me.repeats + 1} times in a row and nothing new happened. Do something different.)`);
+    if (action !== 'act' && api.reading()) api.closeRead();
     if (action === 'inspect') return goInspect(target);
     if (action === 'go') return goPlace(target);
     if (action === 'say') {
@@ -114,8 +119,14 @@ YOUR NOTES: ${me.notes || '(none yet)'}`;
       me.mode = 'listen'; me.until = performance.now() + 1200; return;
     }
     if (action === 'act') {
+      // allow naming the thing, if it is within reach
+      if (!api.reading() && target) {
+        const t = api.things().find(x => x.id === target);
+        if (t && Math.hypot(t.center.x - api.player.pos.x, t.center.z - api.player.pos.z) < 2.8) api.inspect(target);
+      }
       if (api.canAct()) { recent(`You ${api.actLabel().toLowerCase()}.`); api.act(); }
-      else recent('(there was nothing to use)');
+      else recent(api.reading() ? '(this thing offers nothing to use, or you already used it)' : '(you are not looking at anything you can use; inspect it first)');
+      if (api.reading()) api.closeRead();
       me.mode = 'wait'; me.until = performance.now() + 1500; return;
     }
     if (action === 'sleep') {
@@ -142,7 +153,8 @@ YOUR NOTES: ${me.notes || '(none yet)'}`;
   function goPlace(id) {
     if (api.reading()) api.closeRead();
     const pl = api.places().find(x => x.id === id);
-    if (!pl) { recent(`(there is no place called "${id}" you can head for)`); me.mode = 'wait'; me.until = performance.now() + 1000; return; }
+    if (!pl) { recent(`(there is no place called "${id}" you can head for; use an id from PLACES)`); me.mode = 'wait'; me.until = performance.now() + 1000; return; }
+    if (Math.hypot(pl.x - api.player.pos.x, pl.z - api.player.pos.z) < 1.6) { recent(`(You are already at ${pl.label}.)`); me.mode = 'wait'; me.until = performance.now() + 800; return; }
     const from = V(api.player.pos.x, api.player.pos.z), to = V(pl.x, pl.z);
     const path = findPath(from, to);
     if (!path) { recent(`You couldn't get to ${pl.label}: ${findPath(from, to, true) ? 'a closed door is in the way' : 'there is no way through'}.`); me.mode = 'wait'; me.until = performance.now() + 1000; return; }
@@ -184,7 +196,7 @@ YOUR NOTES: ${me.notes || '(none yet)'}`;
     }
     me.fwd = 0;
     if (me.busyThinking || now < me.until) return;
-    if (me.mode === 'read') { api.closeRead(); me.mode = 'idle'; return; }
+    if (me.mode === 'read') me.mode = 'idle';   // the panel stays open into the next decision
     if (!api.shipIdle()) return;
     decide();
   }
