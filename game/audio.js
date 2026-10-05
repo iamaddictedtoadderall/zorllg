@@ -34,20 +34,8 @@ export function fadeOut(name, seconds = 2) {
   if (l.timer) clearInterval(l.timer);
 }
 
-// Low machine hum of the cryo bay.
-export function startBay() {
-  bed('bay', out => {
-    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 140; lp.connect(out);
-    const nodes = [46, 46.7, 92.3].map(f => {
-      const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
-      const g = ac.createGain(); g.gain.value = .035; o.connect(g); g.connect(lp); o.start(); return o;
-    });
-    const n = ac.createBufferSource(); n.buffer = noiseBuffer(2); n.loop = true;
-    const nl = ac.createBiquadFilter(); nl.type = 'lowpass'; nl.frequency.value = 500;
-    const ng = ac.createGain(); ng.gain.value = .25; n.connect(nl); nl.connect(ng); ng.connect(out); n.start();
-    return [...nodes, n];
-  }, 3);
-}
+// Low machine hum of the ship's interior; setRoom() reshapes it per area.
+export function startBay() { startBayRooms(); }
 
 // Title theme: a slow minor pad under sparse bell notes in a long echo.
 export function startTitle() {
@@ -154,4 +142,86 @@ export function tick(high = false) {
   o.type = 'sine'; o.frequency.value = high ? 1320 : 990;
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.03, t + .004); g.gain.exponentialRampToValueAtTime(.0001, t + .08);
   o.connect(g); g.connect(master); o.start(t); o.stop(t + .1);
+}
+
+// ---------- world sounds ----------
+let bayFilter = null, bayNoise = null;
+// Re-route the bay bed through adjustable filters so each room can sound different.
+export function setRoom(kind) {
+  if (!ac || !layers.bay) return;
+  const room = { bay: [140, .25], spine: [220, .4], quarters: [110, .12] }[kind] || [140, .25];
+  if (bayFilter) bayFilter.frequency.setTargetAtTime(room[0], ac.currentTime, 1.2);
+  if (bayNoise) bayNoise.gain.setTargetAtTime(room[1], ac.currentTime, 1.2);
+}
+export function startBayRooms() {
+  bed('bay', out => {
+    bayFilter = ac.createBiquadFilter(); bayFilter.type = 'lowpass'; bayFilter.frequency.value = 140; bayFilter.connect(out);
+    const nodes = [46, 46.7, 92.3].map(f => {
+      const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+      const g = ac.createGain(); g.gain.value = .035; o.connect(g); g.connect(bayFilter); o.start(); return o;
+    });
+    const n = ac.createBufferSource(); n.buffer = noiseBuffer(2); n.loop = true;
+    const nl = ac.createBiquadFilter(); nl.type = 'lowpass'; nl.frequency.value = 500;
+    bayNoise = ac.createGain(); bayNoise.gain.value = .25; n.connect(nl); nl.connect(bayNoise); bayNoise.connect(out); n.start();
+    return [...nodes, n];
+  }, 3);
+}
+
+// One footstep on deck grating. `alt` alternates feet so steps don't sound identical.
+export function step(alt, soft = false) {
+  if (!ac) return;
+  const t = ac.currentTime, n = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+  n.buffer = noiseBuffer(.12, false);
+  bp.type = 'bandpass'; bp.frequency.value = (alt ? 1900 : 2300) * (.9 + Math.random() * .2); bp.Q.value = 4;
+  g.gain.setValueAtTime(soft ? .05 : .11, t); g.gain.exponentialRampToValueAtTime(.001, t + .09);
+  n.connect(bp); bp.connect(g); g.connect(master); n.start(t);
+  const o = ac.createOscillator(), og = ac.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(alt ? 95 : 110, t); o.frequency.exponentialRampToValueAtTime(50, t + .08);
+  og.gain.setValueAtTime(soft ? .08 : .16, t); og.gain.exponentialRampToValueAtTime(.001, t + .1);
+  o.connect(og); og.connect(master); o.start(t); o.stop(t + .12);
+}
+
+// The hull settling: a slow resonant groan somewhere off to one side.
+export function creak() {
+  if (!ac) return;
+  const t = ac.currentTime, dur = 1.5 + Math.random() * 2.5;
+  const o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain(), p = ac.createStereoPanner();
+  o.type = 'sawtooth';
+  const f0 = 60 + Math.random() * 90;
+  o.frequency.setValueAtTime(f0, t); o.frequency.linearRampToValueAtTime(f0 * (.7 + Math.random() * .6), t + dur);
+  f.type = 'bandpass'; f.Q.value = 14; f.frequency.setValueAtTime(300 + Math.random() * 500, t); f.frequency.linearRampToValueAtTime(200 + Math.random() * 300, t + dur);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.06, t + dur * .3); g.gain.linearRampToValueAtTime(0, t + dur);
+  p.pan.value = Math.random() * 1.6 - .8;
+  o.connect(f); f.connect(g); g.connect(p); p.connect(master); o.start(t); o.stop(t + dur + .1);
+}
+// Something metal knocked far away, with a long ring.
+export function clank() {
+  if (!ac) return;
+  const t = ac.currentTime, p = ac.createStereoPanner(); p.pan.value = Math.random() * 1.8 - .9; p.connect(master);
+  [1, 2.76, 5.4].forEach((m, i) => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = (180 + Math.random() * 60) * m;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.025 / (i + 1), t + .005); g.gain.exponentialRampToValueAtTime(.0001, t + 2.5 / (i + 1));
+    o.connect(g); g.connect(p); o.start(t); o.stop(t + 2.6);
+  });
+}
+// Motor whine while a heavy door moves.
+export function servo(seconds = 1.6, up = true) {
+  if (!ac) return;
+  const t = ac.currentTime, o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(up ? 70 : 110, t); o.frequency.linearRampToValueAtTime(up ? 120 : 65, t + seconds);
+  f.type = 'lowpass'; f.frequency.value = 700;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + .15); g.gain.setValueAtTime(.05, t + seconds - .2); g.gain.linearRampToValueAtTime(0, t + seconds);
+  o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + seconds + .05);
+}
+// A soft two-note chime: the ship acknowledging something.
+export function chime() {
+  if (!ac) return;
+  [659.25, 987.77].forEach((fq, i) => {
+    const t = ac.currentTime + i * .16, o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = fq;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + 1.4);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + 1.5);
+  });
 }

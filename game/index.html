@@ -105,7 +105,7 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
     <button id="begin" type="button">BEGIN</button>
     <button id="openSettings" type="button">SETTINGS</button>
   </nav>
-  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.2</span><span>HEADPHONES RECOMMENDED</span></div>
+  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.3</span><span>HEADPHONES RECOMMENDED</span></div>
 </section>
 
 <section id="settings" class="screen dim" hidden>
@@ -115,6 +115,7 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
     <label for="setSens">LOOK SENSITIVITY</label><input id="setSens" type="range" min="40" max="200" step="5">
     <label for="setInvert">INVERT LOOK</label><input id="setInvert" type="checkbox">
     <label for="setSubs">SUBTITLE SIZE</label><select id="setSubs"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select>
+    <label for="setMind">SHIP MIND</label><select id="setMind"><option value="quick">Quick (answers in seconds)</option><option value="deep">Deep (slower, more thoughtful)</option></select>
     <label for="setFx">SCREEN EFFECTS</label><select id="setFx"><option value="full">Full (grain, flicker)</option><option value="reduced">Reduced (no flicker)</option></select>
     <label for="apiKey" class="keyrow" hidden>CLAUDE API KEY</label><input id="apiKey" class="keyrow" type="password" autocomplete="off" placeholder="sk-ant-… (kept in this browser only)" hidden>
   </form>
@@ -137,9 +138,9 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
 </section>
 
 <section id="end" class="screen dim" hidden>
-  <h2>END OF BUILD 0.2</h2>
-  <p>The Spine isn't built yet. Thank you for playing this far.</p>
-  <nav class="menu"><button id="endQuit" type="button">BACK TO TITLE</button></nav>
+  <h2>END OF BUILD 0.3</h2>
+  <p>What's beyond this door isn't built yet. You can keep exploring, or come back when the next part is ready.</p>
+  <nav class="menu"><button id="keepExploring" type="button">KEEP EXPLORING</button><button id="endQuit" type="button">BACK TO TITLE</button></nav>
 </section>
 
 <script type="importmap">

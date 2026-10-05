@@ -12,9 +12,14 @@ The person working on this repo intends to play the game blind.
 
 ## Layout
 
-- `game/index.html` – page, HUD, menus, styles. `game/main.js` – game states (title → cutscene → play ⇄ paused → ended), Bay C world, input, settings, opening cutscene timeline, subtitles, the ship's brain. `game/exterior.js` – the ark seen from outside (title backdrop, opening shots). `game/audio.js` – all synthesised sound. `game/sealed.js` – sealed story (includes cutscene text).
+- `game/index.html` – page, HUD, menus, styles. `game/main.js` – game states (title → cutscene → play ⇄ paused → sleeping/ended), the world (Bay C, connector, Spine, crew quarters; walkable rectangles + door gates for collision), input, settings, opening and sleep sequences, subtitles, things the ship notices (`worldEvents`: area entry, staring at cameras, long silences), the ship's brain. `game/exterior.js` – the ark seen from outside (title backdrop, opening shots). `game/audio.js` – all synthesised sound. `game/sealed.js` – sealed story (includes cutscene text).
 - `mockups/` – the original look tests (style 1, "fog & grain", was chosen).
 - The ship's brain: inside a claude.ai artifact it uses the page's `sample` capability; anywhere else it asks for an API key and calls the Messages API from the browser.
+
+## Conventions
+
+- Inspectable things use neutral ids in code (`q_term1`, `spine_east`, …); their labels and text live in the sealed file.
+- The ship's JSON reply fields are `say`, `lights`, `door` (Bay C bulkhead), `quarters`, `pod`. Adding a control means updating the sealed rules, `applyActions`, and the API schema in `apiBrain`.
 
 ## Running
 

@@ -18,4 +18,4 @@ Open `http://localhost:8000/game/`. Outside Claude the ship needs a Claude API k
 - Esc to pause
 - Touch: drag to look, hold to walk, tap to inspect
 
-Build 0.2: title screen, settings, opening, and the first area.
+Build 0.3: title screen, settings, opening, Bay C, the Spine and the crew quarters.

@@ -1,4 +1,4 @@
-// Long Patience — build 0.2: title, opening, Bay C.
+// Long Patience — build 0.3: title, opening, Bay C, the Spine, crew quarters.
 // The ship's brain is Claude. Inside a Claude artifact viewer it uses the page's `sample`
 // capability (the viewer's own Claude account); anywhere else it asks for an API key
 // and calls the Messages API from the browser. Story content is sealed in sealed.js.
@@ -10,7 +10,7 @@ import { buildExterior } from './exterior.js';
 const STORY = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(SEALED), c => c.charCodeAt(0))));
 
 // ---------- settings (kept in this browser) ----------
-const settings = { volume: .8, sens: 1, invert: false, subs: 'm', fx: 'full', key: '' };
+const settings = { volume: .8, sens: 1, invert: false, subs: 'm', fx: 'full', key: '', mind: 'quick' };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('lp-settings') || '{}')); } catch (e) {}
 try { settings.key = settings.key || localStorage.getItem('lp-key') || ''; } catch (e) {}
 function saveSettings() { try { localStorage.setItem('lp-settings', JSON.stringify(settings)); } catch (e) {} }
@@ -94,8 +94,46 @@ const floorM = std(S.floor, { map: grateTex, metalness: .4 });
 
 const LEN = 31, HALF = 3, H = 3.2, BZ = -LEN + 2;   // BZ: bulkhead plane
 const pickables = [];                                 // meshes the player can inspect
-const lamps = [], strips = [];
-let flickerLamp = null, trackingEye = null, door = null, podGlass = null, podLight = null, podReady = false;
+const lamps = [], strips = [], backs = [], eyes = [], doorList = [];
+let flickerLamp = null, door = null, qdoor = null, podGlass = null, podLight = null, podReady = false;
+
+// Walkable floor as rectangles; doorways are only walkable while their door is open.
+const walk = [], blocks = [];
+const rect = (x0, x1, z0, z1, gate) => ({ x0, x1, z0, z1, gate });
+const inside = (r, x, z) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1;
+const canStand = (x, z) => walk.some(r => (!r.gate || r.gate()) && inside(r, x, z)) && !blocks.some(r => inside(r, x, z));
+const isOpen = d => d.position.y > d.userData.closedY + 1.6;
+
+function addLamp(x, y, z, { w = 1.4, d = .32, dist = 9, power = 1, shadow = false } = {}) {
+  const lm = glowM(S.lamp, 0);
+  box(w, .05, d, lm, x, y + .15, z);
+  const L = new THREE.PointLight(S.lamp, 0, dist, 1.6);
+  L.position.set(x, y, z);
+  if (shadow) { L.castShadow = true; L.shadow.mapSize.set(512, 512); }
+  scene.add(L);
+  const lamp = { L, lm, x, z, power, onAt: Infinity, level: 0 };
+  lamps.push(lamp);
+  return lamp;
+}
+function makeDoor(w, h, x, z, item, rotY = 0) {
+  const d = box(w, h, .14, std(S.metal, { metalness: .7 }), x, h / 2, z, item);
+  d.rotation.y = rotY;
+  d.userData = { item, open: 0, closedY: h / 2, moveAt: 0, lamp: box(w * .8, .04, .04, glowM(0xd04020, .9), x, h + .08, z) };
+  d.userData.lamp.rotation.y = rotY;
+  doorList.push(d);
+  return d;
+}
+// Stencilled wall sign; text drawn to a canvas.
+function sign(text, x, y, z, rotY, { w = 2.4, h = .32, color = '#c9d8d6', size = 54 } = {}) {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = Math.round(1024 * h / w);
+  const g = c.getContext('2d');
+  g.fillStyle = color; g.font = `600 ${size}px "IBM Plex Mono", monospace`; g.textBaseline = 'middle'; g.textAlign = 'center';
+  g.fillText(text, c.width / 2, c.height / 2);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: t, transparent: true, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: .35, roughness: 1 }));
+  m.position.set(x, y, z); m.rotation.y = rotY; scene.add(m);
+  return m;
+}
 
 function box(w, h, d, mat, x, y, z, item) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -115,13 +153,12 @@ function build() {
   scene.fog = new THREE.FogExp2(S.bg, S.fog);
   scene.add(new THREE.HemisphereLight(S.ambient[0], S.ambient[1], S.ambient[2]));
 
-  const midZ = (1.5 + BZ - 8) / 2, len = 1.5 - (BZ - 8);
+  const midZ = (1.5 + BZ) / 2, len = 1.5 - BZ;
   box(HALF * 2, .1, len, floorM, 0, -.05, midZ);
   box(HALF * 2, .1, len, wallM, 0, H + .05, midZ);
   box(.1, H, len, wallM, -HALF - .05, H / 2, midZ);
   box(.1, H, len, wallM, HALF + .05, H / 2, midZ);
   box(HALF * 2, H, .1, wallM, 0, H / 2, 1.5);
-  box(HALF * 2, H, .1, metalM, 0, H / 2, BZ - 8);
 
   for (const sx of [-1, 1]) for (const dy of [0, .22]) {
     const p = new THREE.Mesh(new THREE.CylinderGeometry(.07, .07, LEN, 8), metalM);
@@ -134,19 +171,12 @@ function build() {
     box(HALF * 2, .28, .35, metalM, 0, H - .14, z);
 
     if (k % 2 === 0 && k < 12) {
-      const lm = glowM(S.lamp, 0);
-      box(1.4, .05, .32, lm, 0, H - .3, z - 1.25);
-      const L = new THREE.PointLight(S.lamp, 0, 9, 1.6);
-      L.position.set(0, H - .45, z - 1.25);
-      if (k === 6) { L.castShadow = true; L.shadow.mapSize.set(512, 512); }
-      scene.add(L);
-      const lamp = { L, lm, z: z - 1.25, onAt: Infinity, level: 0 };
-      lamps.push(lamp);
+      const lamp = addLamp(0, H - .45, z - 1.25, { shadow: k === 6 });
       if (k === 2) flickerLamp = lamp;
     }
     for (let j = 0; j < 3; j++) strips.push(box(.08, .02, .4, glowM(S.accent, 0), 0, .015, z - .4 - j * .85));
 
-    if (z - 1.25 < -LEN + 2.5) continue;
+    if (z - 1.25 < -LEN + 2.5 || z - 1.25 < BZ) continue;
     for (const sx of [-1, 1]) {
       const pz = z - 1.25, px = sx * (HALF - .55), id = podId(k, sx);
       const open = id === PLAYER_POD;
@@ -154,6 +184,7 @@ function build() {
       body.position.set(px + sx * .44, 1.15, pz); body.scale.set(.42, 1, 1.05); body.castShadow = true;
       const back = add(new THREE.Mesh(new THREE.CapsuleGeometry(.36, 1.05, 4, 10), glowM(open ? 0x000000 : S.glow, 1.2 + rand() * .5)), id);
       back.scale.set(.2, 1, .85); back.position.set(px + sx * .26, 1.15, pz);
+      if (!open) { back.userData.base = back.material.emissiveIntensity; back.userData.phase = rand() * 6.28; backs.push(back); }
       const glass = add(new THREE.Mesh(new THREE.CapsuleGeometry(.42, 1.1, 4, 10), new THREE.MeshStandardMaterial({
         color: S.glow, emissive: S.glow, emissiveIntensity: .08, transparent: true, opacity: .1,
         roughness: .15, metalness: .3, flatShading: true, depthWrite: false,
@@ -184,22 +215,155 @@ function build() {
   box(HALF - .8, H, .3, metalM, -(HALF + .8) / 2, H / 2, BZ, 'bulkhead');
   box(HALF - .8, H, .3, metalM, (HALF + .8) / 2, H / 2, BZ, 'bulkhead');
   box(1.6, H - 2.3, .3, metalM, 0, 2.3 + (H - 2.3) / 2, BZ, 'bulkhead');
-  door = box(1.6, 2.3, .14, std(S.metal, { metalness: .7 }), 0, 1.15, BZ + .05, 'bulkhead');
-  door.userData.open = 0;
-  door.userData.lamp = box(1.6, .06, .05, glowM(0xd04020), 0, 2.38, BZ + .2);
+  door = makeDoor(1.6, 2.3, 0, BZ + .05, 'bulkhead');
+  door.userData.lamp.position.z = BZ + .2;
   box(.3, .4, .06, glowM(S.glow, .5), 1.1, 1.3, BZ + .18, 'bulkhead');
 
-  const eye = (x, y, z) => {
-    const g = new THREE.Group(); g.position.set(x, y, z);
-    const housing = new THREE.Mesh(new THREE.SphereGeometry(.16, 10, 8), metalM);
-    const lens = new THREE.Mesh(new THREE.SphereGeometry(.06, 8, 6), glowM(S.accent));
-    lens.position.z = .13; housing.add(lens); g.add(housing); scene.add(g);
-    housing.userData.item = 'eye'; lens.userData.item = 'eye'; pickables.push(housing, lens);
-    box(.06, .25, .06, metalM, x, y + .2, z);
-    return housing;
+  eye(0, 2.75, BZ + .35);
+  eye(-HALF + .45, H - .45, -12.4);
+
+  buildSpine();
+  buildQuarters();
+  buildDust();
+
+  walk.push(rect(-1.6, 1.6, BZ + .55, 1.1));                                  // Bay C
+  walk.push(rect(-.55, .55, BZ - .7, BZ + .6, () => isOpen(door)));            // bulkhead doorway
+  walk.push(rect(-.95, .95, SZ + 2.1, BZ - .3));                               // connector
+  walk.push(rect(-13.4, 45.4, SZ - 2.1, SZ + 2.1));                            // Spine
+  walk.push(rect(QX - .45, QX + .45, SZ - 3.2, SZ - 1.8, () => isOpen(qdoor))); // quarters doorway
+  walk.push(rect(QX - 3.6, QX + 3.6, SZ - 9.1, SZ - 2.9));                     // quarters
+}
+
+// Ceiling camera: housing turns to follow the player; the lens glows when the ship speaks.
+function eye(x, y, z) {
+  const g = new THREE.Group(); g.position.set(x, y, z);
+  const housing = new THREE.Mesh(new THREE.SphereGeometry(.16, 10, 8), metalM);
+  const lens = new THREE.Mesh(new THREE.SphereGeometry(.06, 8, 6), glowM(S.accent));
+  lens.position.z = .13; housing.add(lens); g.add(housing); scene.add(g);
+  housing.userData.item = 'eye'; lens.userData.item = 'eye'; pickables.push(housing, lens);
+  box(.06, .25, .06, metalM, x, y + .2, z);
+  const e = { housing, lens, pos: new THREE.Vector3(x, y, z), stare: 0, cool: 0 };
+  eyes.push(e);
+  return e;
+}
+
+// ---------- the Spine: the ship's main corridor, running along x ----------
+const SZ = -37.5, SH = 4.4, SX0 = -14, SX1 = 46, QX = 18;   // Spine centre z, height, ends; quarters door x
+function buildSpine() {
+  const len = SX1 - SX0, mid = (SX0 + SX1) / 2;
+  const sFloor = std(S.floor, { map: grateTex.clone(), metalness: .4 }); sFloor.map.repeat.set(len / 1.6, 3); sFloor.map.needsUpdate = true;
+  const sWall = std(S.wall, { map: panelTex.clone() }); sWall.map.repeat.set(len / 2.2, 1.4); sWall.map.needsUpdate = true;
+  box(len, .1, 5, sFloor, mid, -.05, SZ);
+  box(len, .1, 5, sWall, mid, SH + .05, SZ);
+  // connector from Bay C's bulkhead into the Spine
+  const cz0 = BZ - .15, cz1 = SZ + 2.5, clen = cz0 - cz1, cmid = (cz0 + cz1) / 2;
+  box(2.7, .1, clen, floorM, 0, -.05, cmid); box(2.7, .1, clen, wallM, 0, 2.85, cmid);
+  box(.1, 2.9, clen, wallM, -1.35, 1.45, cmid); box(.1, 2.9, clen, wallM, 1.35, 1.45, cmid);
+  // near wall (z = SZ + 2.5) with the connector opening, far wall with the quarters opening
+  const nz = SZ + 2.55, fz = SZ - 2.55;
+  box(-1.35 - SX0, SH, .1, sWall, (SX0 - 1.35) / 2, SH / 2, nz); box(SX1 - 1.35, SH, .1, sWall, (SX1 + 1.35) / 2, SH / 2, nz);
+  box(2.7, SH - 2.9, .1, sWall, 0, 2.9 + (SH - 2.9) / 2, nz);
+  box(QX - .8 - SX0, SH, .1, sWall, (SX0 + QX - .8) / 2, SH / 2, fz); box(SX1 - QX - .8, SH, .1, sWall, (SX1 + QX + .8) / 2, SH / 2, fz);
+  box(1.6, SH - 2.3, .1, sWall, QX, 2.3 + (SH - 2.3) / 2, fz);
+  // ribs and conduits
+  for (let x = SX0 + 2; x < SX1; x += 4) {
+    box(.4, SH, .35, metalM, x, SH / 2, nz - .2); box(.4, SH, .35, metalM, x, SH / 2, fz + .2);
+    box(.4, .35, 5, metalM, x, SH - .17, SZ);
+    box(.4, .5, .5, metalM, x, SH - .5, nz - .45).rotation.x = .78; box(.4, .5, .5, metalM, x, SH - .5, fz + .45).rotation.x = -.78;
+  }
+  for (const [y, z, r] of [[SH - .35, SZ + 1.4, .16], [SH - .35, SZ + 1.05, .1], [SH - .35, SZ - 1.3, .2], [.25, SZ - 2.2, .12]]) {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8), metalM);
+    p.rotation.z = Math.PI / 2; p.position.set(mid, y, z); scene.add(p);
+  }
+  for (let x = SX0 + 6; x < SX1 - 2; x += 10) addLamp(x, SH - .55, SZ, { w: 2.2, d: .4, dist: 16, power: 1.35 });
+  // running lights along the foot of both walls
+  for (let x = SX0 + 1; x < SX1 - 1; x += 1.5) {
+    if (Math.abs(x) > 1.6) box(.7, .05, .04, glowM(S.glow, .55), x, .12, nz - .07);
+    if (Math.abs(x - QX) > 1) box(.7, .05, .04, glowM(S.glow, .55), x, .12, fz + .07);
+  }
+  // ends: Bay B pressure door (west), Archive core vault door (east)
+  box(.1, SH, 5, metalM, SX0, SH / 2, SZ, 'spine_west');
+  const bb = box(.14, 2.6, 2.2, std(S.metal, { metalness: .7 }), SX0 + .1, 1.3, SZ, 'spine_west');
+  box(.05, .06, 2.2, glowM(0xd04020), SX0 + .2, 2.7, SZ);
+  box(.1, SH, 5, metalM, SX1, SH / 2, SZ, 'spine_east');
+  const vault = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, .3, 24), std(0x5a6468, { metalness: .6 }));
+  vault.rotation.z = Math.PI / 2; vault.position.set(SX1 - .2, 2, SZ); add(vault, 'spine_east');
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.72, .05, 6, 40), glowM(S.accent, 1.2));
+  ring.rotation.y = Math.PI / 2; ring.position.set(SX1 - .36, 2, SZ); scene.add(ring);
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * Math.PI * 2;
+    box(.12, .3, .3, metalM, SX1 - .4, 2 + Math.sin(a) * 1.3, SZ + Math.cos(a) * 1.3, 'spine_east');
+  }
+  // signage
+  sign('BAY C', 0, 3.25, nz - .07, Math.PI, { w: 1.4, h: .32 });
+  sign('◀ BAY B', -6, 3.0, fz + .07, 0, { w: 2.2 });
+  sign('QUARTERS · ARCHIVE ▶', 6, 3.0, fz + .07, 0, { w: 3.8 });
+  sign('CREW QUARTERS', QX, 2.75, fz + .07, 0, { w: 2.6 });
+  sign('ARCHIVE CORE', SX1 - .08, 4.05, SZ + 1.3, -Math.PI / 2, { w: 2.6, color: '#e8b45a' });
+  sign('BAY B', SX0 + .08, 3.1, SZ + .6, Math.PI / 2, { w: 1.4 });
+  sign('SPINE · FRAME 112', 10, 1.2, nz - .07, Math.PI, { w: 2.8, h: .3, size: 46 });
+  eye(1.8, SH - .5, SZ + 1.8);
+  eye(30, SH - .5, SZ - 1.8);
+}
+
+// ---------- crew quarters: a room off the Spine's far wall ----------
+const QZ0 = SZ - 2.6, QZ1 = SZ - 9.6, QH = 2.6;
+function buildQuarters() {
+  const qlen = QZ0 - QZ1, qmid = (QZ0 + QZ1) / 2;
+  const qFloor = std(0x2e3434, { roughness: .9 });
+  box(8, .1, qlen, qFloor, QX, -.05, qmid); box(8, .1, qlen, wallM, QX, QH + .05, qmid);
+  box(.1, QH, qlen, wallM, QX - 4, QH / 2, qmid); box(.1, QH, qlen, wallM, QX + 4, QH / 2, qmid);
+  box(8, QH, .1, wallM, QX, QH / 2, QZ1);
+  qdoor = makeDoor(1.6, 2.3, QX, SZ - 2.45, 'q_door');
+  qdoor.userData.lamp.position.z = SZ - 2.36;
+  // bunks: frame, mattress, a small wall terminal above each
+  const bunk = (x, z, n) => {
+    const side = x < QX ? -1 : 1;
+    box(1.0, .42, 2.0, metalM, x, .21, z, 'q_bunk' + n);
+    box(.92, .14, 1.9, std(0x8c9290, { roughness: 1 }), x, .49, z, 'q_bunk' + n);
+    box(.5, .1, .35, std(0x9ca2a0, { roughness: 1 }), x, .6, z + .7, 'q_bunk' + n);
+    box(.05, .32, .46, glowM(S.glow, .7), x + side * .48, 1.35, z - .2, 'q_term' + n);
+    blocks.push(rect(x - .85, x + .85, z - 1.35, z + 1.35));
   };
-  const e1 = eye(0, 2.75, BZ + .35);
-  trackingEye = [e1, eye(-HALF + .45, H - .45, -12.4)];
+  bunk(QX - 3.45, QZ0 - 1.9, 1); bunk(QX - 3.45, QZ0 - 5.1, 2);
+  bunk(QX + 3.45, QZ0 - 1.9, 3); bunk(QX + 3.45, QZ0 - 5.1, 4);
+  // lockers, table, the floor plate
+  for (let i = 0; i < 4; i++) box(.7, 2, .5, std(0x4c5658, { metalness: .5 }), QX - 1.4 + i * .8 - 1, 1, QZ1 + .3, i === 3 ? 'q_locker' : null);
+  box(.4, .3, .05, glowM(S.glow, .7), QX, 1.4, QZ1 + .57, 'q_locker');
+  const tz = qmid - .4;
+  box(1.4, .06, .9, metalM, QX, .78, tz); box(.08, .75, .08, metalM, QX, .38, tz);
+  for (const dx of [-.35, .3]) add(new THREE.Mesh(new THREE.CylinderGeometry(.045, .04, .1, 8), std(0xa8a49a))).position.set(QX + dx, .86, tz + .1);
+  blocks.push(rect(QX - 1.05, QX + 1.05, tz - .8, tz + .8));
+  box(1.1, .012, 1.1, std(0x8a9496, { metalness: .8, roughness: .25 }), QX + .4, .007, QZ0 - 2.2, 'q_plate');
+  addLamp(QX, QH - .2, qmid, { w: 1, d: .5, dist: 8, power: .7 });
+  eye(QX + 3.5, QH - .3, QZ1 + .4);
+}
+
+// ---------- dust drifting through the light ----------
+let dust = null;
+function buildDust() {
+  const N = 1400, pos = new Float32Array(N * 3), seed = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const inSpine = i % 2;
+    pos.set(inSpine ? [SX0 + Math.random() * (SX1 - SX0), Math.random() * SH, SZ + (Math.random() - .5) * 4.8]
+                    : [(Math.random() - .5) * 5.6, Math.random() * H, 1 - Math.random() * (1 - BZ)], i * 3);
+    seed[i] = Math.random() * 100;
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  dust = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xbfe4e6, size: .022, transparent: true, opacity: .55, depthWrite: false, blending: THREE.AdditiveBlending }));
+  dust.userData.seed = seed;
+  scene.add(dust);
+}
+function updateDust(t, dt) {
+  const p = dust.geometry.attributes.position, a = p.array, seed = dust.userData.seed;
+  for (let i = 0; i < seed.length; i++) {
+    const k = seed[i];
+    a[i * 3] += Math.sin(t * .13 + k) * dt * .03;
+    a[i * 3 + 1] -= dt * (.012 + (k % 1) * .01);
+    a[i * 3 + 2] += Math.cos(t * .11 + k * 1.3) * dt * .03;
+    if (a[i * 3 + 1] < 0) a[i * 3 + 1] = i % 2 ? SH : H;
+  }
+  p.needsUpdate = true;
 }
 
 // ---------- player & input ----------
@@ -282,7 +446,7 @@ const read = { seen: new Set() };
 let stage = 0;
 function itemDoc(id) {
   const it = STORY.items[id];
-  if (it) return { ...it, text: it.text.replace('{door}', door.userData.open ? 'OPEN' : 'SEALED') };
+  if (it) return { ...it, text: it.text.replace('{door}', door.userData.open ? 'OPEN' : 'SEALED').replace('{qdoor}', qdoor.userData.open ? 'OPEN' : 'SEALED') };
   const name = STORY.podNames[id] || 'UNREGISTERED';
   return { title: `POD ${id} · STATUS PANEL`, text: STORY.podGeneric.replace('{name}', name), stage: 0, brief: `Rowan is reading the panel of pod ${id} (${name}).` };
 }
@@ -301,7 +465,7 @@ function inspect(id) {
 function closeRead() { $('read').hidden = true; reading = null; if (playing()) lock(); }
 
 // ---------- subtitles ----------
-let thinking = false, busy = false;
+let thinking = false, busy = false, lastActivity = 0, speakingUntil = 0;
 const sub = $('sub');
 let speech = Promise.resolve(), typingId = 0;
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -314,8 +478,9 @@ function say(text, { who = STORY.shipName, cls = '', hold } = {}) {
     const step = () => {
       if (id !== typingId) return res();
       sub.innerHTML = label + esc(text.slice(0, i));
+      lastActivity = performance.now();
       if (i < text.length) {
-        if (who === STORY.shipName) sfx.blip(text[i]);
+        if (who === STORY.shipName) { sfx.blip(text[i]); speakingUntil = performance.now() + 140; }
         i++; setTimeout(step, ',.—?'.includes(text[i - 1]) ? 200 : 32);
       } else setTimeout(() => {
         if (id === typingId) { sub.className = cls; if (thinking) showThinking(true); }
@@ -338,9 +503,22 @@ const queue = [];
 const minutesAwake = () => Math.round((performance.now() - wokeAt) / 60000);
 let wokeAt = 0, lightsMode = 'off';
 
+function areaOf(x, z) {
+  if (z > BZ) return 'bay';
+  if (z > SZ + 2.3) return 'connector';
+  if (z > SZ - 2.6) return 'spine';
+  return 'quarters';
+}
 function where() {
-  const z = player.pos.z;
-  if (z < BZ) return 'in the open bulkhead, stepping toward the Spine';
+  const x = player.pos.x, z = player.pos.z, a = areaOf(x, z);
+  if (a === 'quarters') return 'inside the Shift 9 crew quarters';
+  if (a === 'spine') {
+    if (x < SX0 + 5) return 'in the Spine, at the sealed pressure door to Bay B';
+    if (x > SX1 - 6) return 'in the Spine, at the Archive core door';
+    if (Math.abs(x - QX) < 3) return 'in the Spine, outside the crew quarters door';
+    return `in the Spine, ${x < QX ? 'between the Bay C junction and the crew quarters' : 'between the crew quarters and the Archive core'}`;
+  }
+  if (a === 'connector') return 'in the short passage between the Bay C bulkhead and the Spine';
   if (z < BZ + 4) return 'at the bulkhead to the Spine';
   const k = Math.max(0, Math.min(10, Math.round((-z - 1.25) / 2.5)));
   return `in the Bay C corridor beside pods ${podId(k, -1)} and ${podId(k, 1)}`;
@@ -348,7 +526,7 @@ function where() {
 function context() {
   const seen = [...read.seen].filter(id => STORY.items[id]).map(id => STORY.items[id].title);
   return `[STAGE ${stage}] Rowan has been awake ${minutesAwake()} min, is ${where()}, looking at ${looking ? itemDoc(looking).title : 'the corridor'}. ` +
-    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}.`;
+    `Bulkhead: ${door.userData.open ? 'open' : 'sealed'}. Quarters door: ${qdoor.userData.open ? 'open' : 'sealed'}. Lights: ${lightsMode}. Pod C-14: ${podReady ? 'ready for sleep' : 'open, idle'}. Rowan has read: ${seen.length ? seen.join('; ') : 'nothing yet'}.`;
 }
 
 function pushTurn(role, content) {
@@ -365,7 +543,7 @@ async function ask(userContent, { quiet = false } = {}) {
   catch (e) { reply = null; console.warn('ship error', e); handleBrainError(e, quiet); }
   showThinking(false); busy = false;
   if (!reply) { turns.pop(); sub.className = ''; return false; }
-  const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none'), pod: String(reply.pod ?? 'none') };
+  const out = { say: String(reply.say ?? '').trim(), lights: String(reply.lights ?? 'none'), door: String(reply.door ?? 'none'), quarters: String(reply.quarters ?? 'none'), pod: String(reply.pod ?? 'none') };
   pushTurn('assistant', JSON.stringify(out));
   applyActions(out);
   if (out.say) await say(out.say); else sub.className = '';
@@ -392,11 +570,16 @@ function shipEvent(text) {
   queue.push({ content: `${context()}\n${text}\nYou may react briefly, or stay silent with an empty "say".`, quiet: true }); pump();
 }
 
-function applyActions({ lights, door: d, pod }) {
+function moveDoor(dr, want) {
+  const open = want === 'open' ? 1 : want === 'close' ? 0 : dr.userData.open;
+  if (open === dr.userData.open) return;
+  dr.userData.open = open; dr.userData.moveAt = performance.now() + 450;
+  sfx.clunk(); setTimeout(() => sfx.servo(1.8, !!open), 350);
+}
+function applyActions({ lights, door: d, quarters, pod }) {
   if (pod === 'ready' && !podReady) { podReady = true; sfx.tick(true); looking = null; }
   if (['normal', 'dim', 'dark', 'guide'].includes(lights)) setLights(lights);
-  if (d === 'open' && !door.userData.open) { door.userData.open = 1; sfx.clunk(); }
-  if (d === 'close' && door.userData.open) { door.userData.open = 0; sfx.clunk(); }
+  moveDoor(door, d); moveDoor(qdoor, quarters);
 }
 function setLights(mode, stagger = false) {
   lightsMode = mode;
@@ -407,18 +590,19 @@ function setLights(mode, stagger = false) {
 
 // sample capability (inside a Claude viewer)
 async function sampleBrain(sample) {
-  return turns => sample.json([{ role: 'user', content: STORY.rules }, ...turns], { modelTier: 'quick', cache: false });
+  return turns => sample.json([{ role: 'user', content: STORY.rules }, ...turns], { modelTier: settings.mind === 'deep' ? 'default' : 'quick', cache: false });
 }
 // Messages API with the player's own key (anywhere else)
 async function apiBrain(key) {
   const { default: Anthropic } = await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.131.0/+esm');
   const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
   const schema = {
-    type: 'object', additionalProperties: false, required: ['say', 'lights', 'door', 'pod'],
+    type: 'object', additionalProperties: false, required: ['say', 'lights', 'door', 'quarters', 'pod'],
     properties: {
       say: { type: 'string' },
       lights: { type: 'string', enum: ['none', 'normal', 'dim', 'dark', 'guide'] },
       door: { type: 'string', enum: ['none', 'open', 'close'] },
+      quarters: { type: 'string', enum: ['none', 'open', 'close'] },
       pod: { type: 'string', enum: ['none', 'ready'] },
     },
   };
@@ -429,10 +613,10 @@ async function apiBrain(key) {
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       system: [{ type: 'text', text: STORY.rules, cache_control: { type: 'ephemeral' } }],
-      output_config: { effort: 'low', format: { type: 'json_schema', schema } },
+      output_config: { effort: settings.mind === 'deep' ? 'medium' : 'low', format: { type: 'json_schema', schema } },
       messages: turns,
     });
-    if (res.stop_reason === 'refusal') return { say: '', lights: 'none', door: 'none', pod: 'none' };
+    if (res.stop_reason === 'refusal') return { say: '', lights: 'none', door: 'none', quarters: 'none', pod: 'none' };
     const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
     return JSON.parse(text);
   };
@@ -473,12 +657,12 @@ function openSettings(from) {
   $('setVolume').value = Math.round(settings.volume * 100);
   $('setSens').value = Math.round(settings.sens * 100);
   $('setInvert').checked = settings.invert;
-  $('setSubs').value = settings.subs; $('setFx').value = settings.fx;
+  $('setSubs').value = settings.subs; $('setFx').value = settings.fx; $('setMind').value = settings.mind;
   show('settings'); $('setVolume').focus();
 }
 $('settingsForm').addEventListener('input', () => {
   settings.volume = $('setVolume').value / 100; settings.sens = $('setSens').value / 100;
-  settings.invert = $('setInvert').checked; settings.subs = $('setSubs').value; settings.fx = $('setFx').value;
+  settings.invert = $('setInvert').checked; settings.subs = $('setSubs').value; settings.fx = $('setFx').value; settings.mind = $('setMind').value;
   applySettings(); saveSettings();
 });
 keyIn.addEventListener('change', async () => {
@@ -489,7 +673,7 @@ keyIn.addEventListener('change', async () => {
 $('openSettings').onclick = () => openSettings('title');
 $('pauseSettings').onclick = () => openSettings('pause');
 $('closeSettings').onclick = () => { show(settingsReturn); $(settingsReturn === 'pause' ? 'resume' : 'begin').focus(); };
-$('resume').onclick = () => resume();
+$('resume').onclick = $('keepExploring').onclick = () => resume();
 $('quit').onclick = $('endQuit').onclick = $('endingQuit').onclick = () => location.reload();
 document.querySelectorAll('.menu button').forEach(b => {
   b.addEventListener('mouseenter', () => sfx.tick());
@@ -598,7 +782,7 @@ function finishCutscene() {
 }
 async function wake() {
   pushTurn('user', STORY.wakeEvent);
-  pushTurn('assistant', JSON.stringify({ say: STORY.intro.join(' '), lights: 'normal', door: 'none', pod: 'none' }));
+  pushTurn('assistant', JSON.stringify({ say: STORY.intro.join(' '), lights: 'normal', door: 'none', quarters: 'none', pod: 'none' }));
   await new Promise(r => setTimeout(r, 1400));
   await say(STORY.intro[0], { hold: 1200 });
   await say(STORY.intro[1], { hold: 1600 });
@@ -651,14 +835,14 @@ function runEnding(dt, t) {
     const line = document.createElement('div'); line.textContent = E.podHud[e.hud++].text; hud.append(line); sfx.blip('x', 980);
   }
   if (s > 9.5 && !e.faded) { e.faded = true; hud.style.transition = 'opacity 2s'; hud.style.opacity = 0; sfx.fadeOut('heart', 6); }
-  const cards = E.epilogue[String(Math.min(2, e.stage))], card = $('card');
+  const cards = E.epilogue[String(Math.min(3, e.stage))], card = $('card');
   const ci = s < 12 ? -1 : Math.floor((s - 12) / 6);
   if (ci !== e.card) {
     e.card = ci;
     if (ci >= 0 && ci < cards.length) { card.textContent = cards[ci]; card.className = 'on'; }
     else card.className = '';
     if (ci >= cards.length) {
-      $('cine').hidden = true; $('endingTitle').textContent = E.title[String(Math.min(2, e.stage))];
+      $('cine').hidden = true; $('endingTitle').textContent = E.title[String(Math.min(3, e.stage))];
       show('ending'); $('hud').hidden = true; state = 'ended'; $('endingQuit').focus();
     }
   }
@@ -666,10 +850,55 @@ function runEnding(dt, t) {
   return s < 9.5 ? .2 * g : clamp01(.2 + (s - 9.5) / 2);
 }
 
+// ---------- things the ship notices ----------
+const fwdV = new THREE.Vector3(), toEye = new THREE.Vector3();
+function worldEvents(now, dt) {
+  const a = areaOf(player.pos.x, player.pos.z);
+  if (a !== area) {
+    area = a; sfx.setRoom(a === 'connector' ? 'spine' : a);
+    if (!visited.has(a)) { visited.add(a); if (a !== 'connector') shipEvent(`[EVENT] Rowan has just entered ${a === 'spine' ? 'the Spine' : 'the Shift 9 crew quarters'} for the first time.`); }
+  }
+  const once = (key, cond, text) => { if (!notes.has(key) && cond) { notes.add(key); shipEvent(text); } };
+  once('bulkhead', area === 'bay' && player.pos.z < BZ + 3 && !door.userData.open, '[EVENT] Rowan is standing at the sealed bulkhead, looking at it.');
+  once('qdoor', area === 'spine' && Math.abs(player.pos.x - QX) < 2.2 && !qdoor.userData.open, '[EVENT] Rowan has stopped outside the sealed crew quarters door.');
+  once('west', area === 'spine' && player.pos.x < SX0 + 4, '[EVENT] Rowan has walked to the sealed Bay B pressure door.');
+
+  // the end of what's built so far
+  if (!notes.has('buildEnd') && area === 'spine' && player.pos.x > SX1 - 4) {
+    notes.add('buildEnd');
+    shipEvent('[EVENT] Rowan has reached the Archive core door.');
+    setTimeout(() => { if (state === 'play') { state = 'paused'; $('hud').hidden = true; show('end'); unlock(); $('keepExploring').focus(); } }, 4500);
+  }
+
+  // long silences
+  if (brain && !busy && !queue.length && lastActivity && now - lastActivity > idleAfter && idleCount < 5) {
+    idleCount++; idleAfter *= 1.6; lastActivity = now;
+    shipEvent(`[EVENT] Rowan has not spoken for about ${Math.round(idleAfter / 1.6 / 60000)} minutes and is ${where()}.`);
+  }
+
+  // staring into a camera
+  camera.getWorldDirection(fwdV);
+  for (const e of eyes) {
+    toEye.copy(e.pos).sub(camera.position);
+    const d = toEye.length();
+    const on = d < 14 && fwdV.dot(toEye.normalize()) > .996;
+    e.stare = on ? e.stare + dt : Math.max(0, e.stare - dt * 2);
+    if (e.stare > 2.4 && now > e.cool) {
+      e.cool = now + 150000; e.stare = 0;
+      shipEvent('[EVENT] Rowan is standing still, staring straight into one of your cameras.');
+    }
+  }
+
+  // the hull settling
+  if (!nextCreak) nextCreak = now + 15000;
+  if (now > nextCreak) { nextCreak = now + 14000 + Math.random() * 30000; Math.random() < .7 ? sfx.creak() : sfx.clank(); }
+}
+
 // ---------- frame ----------
 const ray = new THREE.Raycaster();
 let looking = null, last = performance.now(), dark = 1;
-const doorTop = 2.3 + 1.15;
+let stepDist = 0, stepAlt = false, area = 'bay', nextCreak = 0, idleAfter = 150000, idleCount = 0;
+const visited = new Set(['bay']), notes = new Set();
 
 function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
@@ -684,11 +913,13 @@ function frame(now) {
     const side = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
     if (fwd || side) {
       const sp = 1.35 * dt, s = Math.sin(player.yaw), c = Math.cos(player.yaw);
-      const nx = player.pos.x + (-s * fwd + c * side) * sp, nz = player.pos.z + (-c * fwd - s * side) * sp;
-      const passable = door.position.y > 2.8 && Math.abs(nx) <= .55;
-      player.pos.z = Math.max(passable ? BZ - 7 : BZ + .55, Math.min(1.1, nz));
-      const xr = player.pos.z < BZ + .5 ? .55 : 1.6;
-      player.pos.x = Math.max(-xr, Math.min(xr, nx));
+      const px = player.pos.x, pz = player.pos.z;
+      const nx = px + (-s * fwd + c * side) * sp, nz = pz + (-c * fwd - s * side) * sp;
+      if (canStand(nx, nz)) player.pos.set(nx, 0, nz);
+      else if (canStand(nx, pz)) player.pos.x = nx;
+      else if (canStand(px, nz)) player.pos.z = nz;
+      stepDist += Math.hypot(player.pos.x - px, player.pos.z - pz);
+      if (stepDist > .72) { stepDist = 0; stepAlt = !stepAlt; sfx.step(stepAlt, area === 'quarters'); }
     }
     player.bob = (fwd || side) ? Math.sin(t * 7) * .025 : Math.sin(t * 1.3) * .006;
   }
@@ -703,7 +934,7 @@ function frame(now) {
   else ext.update(t);
 
   $('lookhint').hidden = !(playing() && !locked && matchMedia('(hover: hover)').matches && talk.hidden && !reading);
-  if (state === 'play' && player.pos.z < BZ - 3) { state = 'ended'; $('hud').hidden = true; show('end'); unlock(); }
+  if (state === 'play') worldEvents(now, dt);
 
   if (state !== 'cutscene') dark += (wantDark - dark) * Math.min(1, dt * 1.5);
   post.uniforms.dark.value = dark; post.uniforms.time.value = t;
@@ -725,7 +956,7 @@ function updateBay(now, t, dt) {
       if ((n > 2.1 || thinking) && Math.sin(t * 60) > -.2) lv *= .08;
     }
     if (thinking && lv > .1) lv *= reduced ? .85 : .75 + .25 * Math.sin(t * 9 + l.z);
-    l.L.intensity = S.lampPower * lv; l.lm.emissiveIntensity = 1.6 * lv;
+    l.L.intensity = S.lampPower * l.power * lv; l.lm.emissiveIntensity = 1.6 * lv;
   }
   strips.forEach((s, i) => {
     let v = 0;
@@ -735,10 +966,19 @@ function updateBay(now, t, dt) {
   });
 
   if (podReady && state === 'play') { podLight.color.setHex(0x9fe8f0); podLight.intensity = 2.2 + Math.sin(t * 1.6) * 1.2; }
-  const dOpen = door.userData.open;
-  door.position.y += ((dOpen ? doorTop + .2 : 1.15) - door.position.y) * Math.min(1, dt * 1.6);
-  door.userData.lamp.material.emissive.setHex(dOpen ? 0x40d070 : 0xd04020);
-  for (const e of trackingEye) e.lookAt(camera.position);
+  for (const d of doorList) {
+    const u = d.userData, target = u.open ? u.closedY * 3 + .2 : u.closedY;
+    if (now > u.moveAt) d.position.y += (target - d.position.y) * Math.min(1, dt * 1.6);
+    const moving = Math.abs(target - d.position.y) > .03 || now <= u.moveAt;
+    u.lamp.material.emissive.setHex(moving ? ((t * 4) % 1 < .5 ? 0xf0a640 : 0x000000) : u.open ? 0x40d070 : 0xd04020);
+  }
+  const talking = now < speakingUntil;
+  for (const e of eyes) {
+    e.housing.lookAt(camera.position);
+    e.lens.material.emissiveIntensity = talking ? 2.6 + Math.random() * 1.4 : thinking ? 1.2 + Math.sin(t * 8) * .6 : 1.6;
+  }
+  for (const b of backs) b.material.emissiveIntensity = b.userData.base * (.8 + .2 * Math.sin(t * .45 + b.userData.phase));
+  updateDust(t, dt);
 
   ray.setFromCamera({ x: 0, y: 0 }, camera); ray.far = 2.1;
   const hit = playing() && !reading ? ray.intersectObjects(pickables, false)[0] : null;
@@ -746,7 +986,7 @@ function updateBay(now, t, dt) {
   if (next !== looking) {
     looking = next;
     promptEl.hidden = useBtn.hidden = !looking;
-    if (looking) promptEl.textContent = `[E] ${looking === 'eye' ? 'CAMERA' : looking === 'badge' ? 'CARD' : looking === 'bulkhead' ? 'BULKHEAD' : 'POD ' + looking}${looking === PLAYER_POD ? ' · YOUR POD' : ''}`;
+    if (looking) promptEl.textContent = `[E] ${STORY.items[looking]?.label || (looking === 'eye' ? 'CAMERA' : 'POD ' + looking)}${looking === PLAYER_POD ? ' · YOUR POD' : ''}`;
   }
 }
 
@@ -759,5 +999,5 @@ $('hud').hidden = true; show('title'); $('begin').focus();
 requestAnimationFrame(frame);
 
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending };
+  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending, get area() { return area; }, notes, eyes };
 }
