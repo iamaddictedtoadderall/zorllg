@@ -76,9 +76,16 @@ button:focus-visible,input:focus-visible{outline:1px solid var(--amber);outline-
 #pick button:hover,#pick button:focus-visible{color:var(--ink);outline:0;background:rgba(216,230,228,.05)}
 #actRow{margin-top:18px;gap:4px}
 #actRow button{color:var(--amber)}
+#agentHud{position:absolute;left:max(16px,3vw);top:calc(16px + env(safe-area-inset-top, 0px));display:flex;flex-direction:column;gap:6px;max-width:min(46ch,calc(100vw - 32px));padding:10px 14px;background:var(--veil);pointer-events:auto}
+#agentHud .who{font-size:10.5px;letter-spacing:.2em;color:var(--amber)}
+#agentThought{font-size:13px;line-height:1.5;font-style:italic;color:var(--ink)}
+#agentThought:empty{display:none}
+#takeOver{align-self:flex-start;background:none;border:0;padding:2px 0;font-size:10.5px;letter-spacing:.14em;color:var(--ink-dim);cursor:pointer}
+.menu button small{font-size:.62em;letter-spacing:.14em;color:var(--ink-dim)}
 #toast{position:absolute;left:50%;top:calc(16px + env(safe-area-inset-top, 0px));transform:translateX(-50%);padding:7px 14px;background:var(--veil);font-size:11px;letter-spacing:.14em;color:var(--amber);opacity:0;transition:opacity .4s;white-space:nowrap}
 #toast.on{opacity:1}
 #chill{position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse at 50% 50%,transparent 45%,rgba(170,215,230,.16) 80%,rgba(190,230,240,.32));opacity:0}
+body.watching #cross,body.watching #prompt,body.watching #hint,body.watching #lookhint,body.watching #talkWrap{display:none!important}
 body.cinematic #cross,body.cinematic #prompt,body.cinematic #hint,body.cinematic #lookhint,body.cinematic #talkWrap,body.cinematic #toast{display:none!important}
 #read p{margin:18px 0 0;font-size:11px;color:var(--ink-dim);letter-spacing:.1em}
 /* screens: title, settings, pause, end */
@@ -127,6 +134,7 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
     <div id="talkHelp">ENTER SAY · TAB SHOW SOMETHING FROM YOUR JOURNAL · ESC CANCEL</div>
   </div>
   <div id="toast"></div>
+  <div id="agentHud" hidden><span class="who">CLAUDE IS PLAYING</span><span id="agentThought"></span><button id="takeOver" type="button">[ESC] TAKE OVER</button></div>
   <div id="lookhint" hidden>CLICK TO LOOK AROUND</div>
   <div id="hint"><button id="useBtn" type="button" hidden>[E] INSPECT</button><button id="journalBtn" type="button">[J] JOURNAL</button><button id="talkBtn" type="button">[T] TALK</button></div>
 </div>
@@ -148,9 +156,10 @@ body.subs-s{--sub:clamp(14px,1.9vw,16px)} body.subs-l{--sub:clamp(19px,2.8vw,24p
   <h1>LONG<br>PATIENCE</h1>
   <nav class="menu" aria-label="Main menu">
     <button id="begin" type="button">BEGIN</button>
+    <button id="watch" type="button" title="Watching shows you the story">WATCH CLAUDE PLAY <small>· SHOWS YOU THE STORY</small></button>
     <button id="openSettings" type="button">SETTINGS</button>
   </nav>
-  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.4</span><span>HEADPHONES RECOMMENDED</span></div>
+  <div class="foot"><span id="status">Connecting to the ship…</span><span>BUILD 0.5</span><span>HEADPHONES RECOMMENDED</span></div>
 </section>
 
 <section id="settings" class="screen dim" hidden>

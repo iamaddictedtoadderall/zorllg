@@ -19,4 +19,4 @@ Open `http://localhost:8000/game/`. Outside Claude the ship needs a Claude API k
 - Esc to pause
 - Touch: drag to look, hold to walk, tap to inspect
 
-Build 0.4: adds the journal, showing evidence to the ship, and weakness after the thaw.
+Build 0.5: adds Watch Claude Play, where a second Claude plays as Rowan and you spectate (Esc to take over). Watching shows you the story.

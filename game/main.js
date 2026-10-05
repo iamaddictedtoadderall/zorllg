@@ -1,4 +1,4 @@
-// Long Patience — build 0.4: title, opening, Bay C, the Spine, crew quarters; journal, evidence, thaw.
+// Long Patience — build 0.5: title, opening, Bay C, the Spine, crew quarters; journal, evidence, thaw; watch mode.
 // The ship's brain is Claude. Inside a Claude artifact viewer it uses the page's `sample`
 // capability (the viewer's own Claude account); anywhere else it asks for an API key
 // and calls the Messages API from the browser. Story content is sealed in sealed.js.
@@ -7,6 +7,7 @@ import { SEALED } from './sealed.js';
 import * as sfx from './audio.js';
 import { buildExterior } from './exterior.js';
 import * as plog from './log.js';
+import { createAgent } from './agent.js';
 
 const STORY = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(SEALED), c => c.charCodeAt(0))));
 
@@ -103,7 +104,7 @@ let flickerLamp = null, door = null, qdoor = null, podGlass = null, podLight = n
 const walk = [], blocks = [];
 const rect = (x0, x1, z0, z1, gate) => ({ x0, x1, z0, z1, gate });
 const inside = (r, x, z) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1;
-const canStand = (x, z) => walk.some(r => (!r.gate || r.gate()) && inside(r, x, z)) && !blocks.some(r => inside(r, x, z));
+const canStand = (x, z, openAll = false) => walk.some(r => (!r.gate || openAll || r.gate()) && inside(r, x, z)) && !blocks.some(r => inside(r, x, z));
 const isOpen = d => d.position.y > d.userData.closedY + 1.6;
 
 function addLamp(x, y, z, { w = 1.4, d = .32, dist = 9, power = 1, shadow = false } = {}) {
@@ -386,7 +387,7 @@ const playing = () => state === 'play';
 const $ = id => document.getElementById(id);
 const talk = $('talkWrap'), talkIn = $('talkIn'), promptEl = $('prompt'), useBtn = $('useBtn');
 
-function lock() { try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+function lock() { if (agent && agent.active) return; try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 function unlock() { if (document.pointerLockElement) { quietUnlock = true; document.exitPointerLock(); } }
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
@@ -411,6 +412,7 @@ addEventListener('keydown', e => {
   if (state === 'cutscene' && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipCutscene(); return; }
   if (state === 'paused' && e.code === 'Escape' && $('settings').hidden) { resume(); return; }
   if (!playing()) return;
+  if (agent.active) { if (e.code === 'Escape') takeOver(); return; }
   if (document.activeElement === talkIn) {
     if (e.key === 'Escape') closeTalk();
     if (e.key === 'Tab') { e.preventDefault(); cycleShowing(e.shiftKey ? -1 : 1); }
@@ -543,14 +545,15 @@ function inspect(id) {
     shipEvent(`[EVENT] ${it.seenBrief || doc.brief}`, !!it.journal);
   }
 }
-$('actBtn').addEventListener('click', () => {
+$('actBtn').addEventListener('click', () => doAct());
+function doAct() {
   const id = reading, it = STORY.items[id];
   if (!it || used.has(id)) return;
   used.add(id); closeRead(); plog.log('act', { id, action: it.action });
   if (it.action === 'eat') { thaw.ate++; thaw.weak = Math.max(0, thaw.weak - .45); sfx.eat(); toast('YOU EAT. WARMTH SPREADS SLOWLY'); }
   if (it.action === 'take') { carried.add(id); sfx.tick(true); toast('TAKEN · IN YOUR JOURNAL UNDER CARRIED'); }
   if (it.actBrief) shipEvent(`[EVENT] ${it.actBrief}`, true);
-});
+}
 function closeRead() { $('read').hidden = true; reading = null; if (playing()) lock(); }
 
 // ---------- subtitles ----------
@@ -652,6 +655,7 @@ async function ask(userContent, { quiet = false } = {}) {
   pushTurn('assistant', JSON.stringify(out));
   plog.log('ship', { ...out, quiet, ms: Math.round(performance.now() - askedAt) });
   applyActions(out);
+  if (out.say) agent.heard(`PATIENCE said: "${out.say}"`);
   if (!out.say && !quiet) out.say = '…';            // spoken to but silent: make the silence deliberate
   if (out.say) await say(out.say); else if (!thinking) sub.className = '';
   return !!out.say && out.say !== '…';
@@ -697,6 +701,7 @@ function moveDoor(dr, want) {
   const open = want === 'open' ? 1 : want === 'close' ? 0 : dr.userData.open;
   if (open === dr.userData.open) return;
   dr.userData.open = open; dr.userData.moveAt = performance.now() + 450;
+  agent.heard(`(The ${dr === door ? 'Bay C bulkhead' : 'crew quarters door'} ${open ? 'opened' : 'closed'}.)`);
   sfx.clunk(); setTimeout(() => sfx.servo(1.8, !!open), 350);
 }
 let heaterOn = true, climate = 'normal';
@@ -722,9 +727,18 @@ async function sampleBrain(sample) {
   return turns => sample.json([{ role: 'user', content: STORY.rules }, ...turns], { modelTier: settings.mind === 'deep' ? 'default' : 'quick', cache: false });
 }
 // Messages API with the player's own key (anywhere else)
+let think = null;            // async (prompt) => decision, for Claude playing as Rowan
 async function apiBrain(key) {
   const { default: Anthropic } = await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.131.0/+esm');
   const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
+  think = async prompt => {
+    const res = await client.beta.messages.create({
+      model: 'claude-opus-5-5', max_tokens: 4000, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+      output_config: { effort: 'low' }, messages: [{ role: 'user', content: prompt + '\nReply with only the JSON object.' }],
+    });
+    const text = res.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  };
   const schema = {
     type: 'object', additionalProperties: false, required: ['say', ...Object.keys(FIELDS)],
     properties: { say: { type: 'string' }, ...Object.fromEntries(Object.entries(FIELDS).map(([f, v]) => [f, { type: 'string', enum: ['none', ...v] }])) },
@@ -752,8 +766,9 @@ let mode = 'pending';
   if (window.claude && typeof window.claude.use === 'function') sample = await window.claude.use('sample').catch(() => null);
   if (sample) {
     mode = 'sample'; brain = await sampleBrain(sample); status.textContent = 'THE SHIP THINKS WITH YOUR CLAUDE ACCOUNT';
+    think = prompt => sample.json(prompt, { modelTier: settings.mind === 'deep' ? 'default' : 'quick', cache: false });
     const store = await window.claude.use('db').catch(() => null);
-    if (store) plog.init(store, { build: '0.4', mind: settings.mind, fx: settings.fx },
+    if (store) plog.init(store, { build: '0.5', mind: settings.mind, fx: settings.fx },
       () => ({ state, stage, area, strength: Math.round((1 - thaw.weak) * 100), journal: journal.length, shown: presented.size }));
     return;
   }
@@ -903,7 +918,8 @@ function runCutscene(dt) {
   return { scene: 'bay', dark };
 }
 function finishCutscene() {
-  plog.log('play');
+  plog.log('play', { watching });
+  if (watching) { $('agentHud').hidden = false; document.body.classList.add('watching'); setTimeout(() => agent.start(), 500); }
   state = 'play';
   $('cine').hidden = true; $('skip').hidden = true; $('hud').hidden = false; $('card').className = '';
   sfx.fadeOut('void', 1); sfx.fadeOut('heart', 2); sfx.fadeOut('alarm', .3); sfx.startBay();
@@ -1011,7 +1027,7 @@ function updateThaw(now, dt, moving) {
   if (!thaw.nextStumble) thaw.nextStumble = now + 20000;
   if (moving && thaw.weak > .35 && now > thaw.nextStumble && thaw.stumbleT < 0) {
     thaw.stumbleT = 0; thaw.nextStumble = now + (16000 + Math.random() * 20000) / thaw.weak;
-    sfx.step(true); sfx.breath(1);
+    sfx.step(true); sfx.breath(1); agent.heard('(Your legs gave way for a moment. You caught yourself.)');
     if (!thaw.stumbled) { thaw.stumbled = true; shipEvent('[EVENT] Rowan\'s legs just gave way for a moment; they caught themselves. They are still weak from the thaw.', true); }
   }
   // breath clouds while cold
@@ -1070,7 +1086,59 @@ function worldEvents(now, dt) {
   if (now > nextCreak) { nextCreak = now + 14000 + Math.random() * 30000; Math.random() < .7 ? sfx.creak() : sfx.clank(); }
 }
 
+// ---------- watch mode: Claude plays as Rowan ----------
+let watching = false;
+const navNodes = [];
+function buildNav() {
+  for (let z = 0; z > BZ; z -= 2.5) navNodes.push({ x: 0, z });
+  navNodes.push({ x: 0, z: BZ + .9 }, { x: 0, z: BZ - .9 }, { x: 0, z: (BZ + SZ) / 2 }, { x: 0, z: SZ + 1 });
+  for (let x = SX0 + 2; x <= SX1 - 2; x += 4) navNodes.push({ x, z: SZ });
+  navNodes.push({ x: QX, z: SZ - 1.4 }, { x: QX, z: SZ - 3.4 }, { x: QX, z: SZ - 5 }, { x: QX - 1.7, z: SZ - 6.2 }, { x: QX + 1.7, z: SZ - 6.2 }, { x: QX, z: SZ - 8.6 });
+}
+const thingCenters = new Map();
+function measureThings() {
+  const acc = new Map(), v = new THREE.Vector3();
+  for (const m of pickables) {
+    const id = m.userData.item; if (!id || id === 'eye') continue;
+    m.getWorldPosition(v);
+    const a = acc.get(id) || { sum: new THREE.Vector3(), n: 0 }; a.sum.add(v); a.n++; acc.set(id, a);
+  }
+  for (const [id, a] of acc) thingCenters.set(id, a.sum.divideScalar(a.n));
+}
+const agent = createAgent({
+  THREE, player, canStand, nodes: navNodes, playerPod: PLAYER_POD,
+  things: () => [...thingCenters].map(([id, center]) => ({ id, center, area: areaOf(center.x, center.z),
+      label: STORY.items[id]?.label || 'POD ' + id, read: read.seen.has(id) }))
+    .filter(t => visited.has(t.area) || (t.area === 'connector' && visited.has('spine')) || t.id === 'bulkhead'),
+  places: () => {
+    const out = [{ id: 'bay', label: 'Bay C, by your pod', x: playerPodPos.x - 1.2, z: playerPodPos.z }];
+    if (visited.has('spine') || door.userData.open) out.push({ id: 'spine', label: visited.has('spine') ? 'the Spine, the main corridor beyond Bay C' : 'through the open bulkhead (unexplored)', x: 0, z: SZ });
+    if (visited.has('spine')) out.push({ id: 'spine_west_end', label: 'the west end of the Spine', x: SX0 + 2.5, z: SZ }, { id: 'spine_east_end', label: 'the east end of the Spine', x: SX1 - 5, z: SZ });
+    if (visited.has('quarters') || (visited.has('spine') && qdoor.userData.open)) out.push({ id: 'quarters', label: visited.has('quarters') ? 'the crew quarters' : 'through the open crew quarters door (unexplored)', x: QX, z: SZ - 5 });
+    return out;
+  },
+  where, strength: () => Math.round((1 - thaw.weak) * 100),
+  doors: () => `Bay C bulkhead ${door.userData.open ? 'open' : 'closed'}; crew quarters door ${qdoor.userData.open ? 'open' : 'closed'}`,
+  journal: () => journal.slice(), carried: () => [...carried].map(id => STORY.items[id].title),
+  title: id => STORY.items[id]?.title || id, doc: id => itemDoc(id),
+  reading: () => reading, canAct: () => !!(reading && STORY.items[reading]?.action && !used.has(reading)),
+  actLabel: () => STORY.items[reading]?.actionLabel || '', act: () => doAct(),
+  inspect: id => inspect(id), closeRead: () => closeRead(),
+  say: (text, show) => playerSays(text, show), sleep: () => startSleep(),
+  shipIdle: () => !busy && !queue.length && !thinking && performance.now() - lastActivity > 1300,
+  think: prompt => think ? think(prompt) : Promise.reject({ code: 'no_brain' }),
+  onThought: text => { $('agentThought').textContent = text; },
+  log: (k, d) => plog.log(k, d), state: () => state,
+});
+function takeOver() {
+  agent.stop(); watching = false; $('agentHud').hidden = true; document.body.classList.remove('watching');
+  toast('YOU HAVE CONTROL · CLICK TO LOOK AROUND'); plog.log('take_over');
+}
+$('takeOver').addEventListener('click', e => { e.stopPropagation(); takeOver(); });
+$('watch').addEventListener('click', () => { watching = true; beginGame(); });
+
 // ---------- frame ----------
+const DT_CAP = new URLSearchParams(location.search).has('fast') ? .25 : .05;   // ?fast: bigger steps for slow test machines
 const ray = new THREE.Raycaster();
 let looking = null, last = performance.now(), dark = 1;
 let loggedStage = 0;
@@ -1078,16 +1146,18 @@ let stepDist = 0, stepAlt = false, area = 'bay', nextCreak = 0, idleAfter = 1500
 const visited = new Set(['bay']), notes = new Set();
 
 function frame(now) {
-  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  const dt = Math.min(DT_CAP, (now - last) / 1000); last = now;
   const t = now / 1000;
   let view = 'bay', wantDark = 0;
 
   if (state === 'title' || (state === 'settings')) { view = 'ext'; ext.orbit(t); wantDark = 0; }
   else if (state === 'cutscene') { const c = runCutscene(dt); view = c.scene; wantDark = c.dark; dark = wantDark; }
   else if (state === 'sleeping') { wantDark = runEnding(dt, t); dark = wantDark; }
+  else if (state === 'play' && agent.active && reading) agent.update(dt, now);
   else if (state === 'play' && !reading && $('journal').hidden) {
-    const fwd = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-    const side = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+    agent.update(dt, now);
+    const fwd = agent.active ? agent.fwd : (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+    const side = agent.active ? 0 : (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
     if (fwd || side) {
       const sp = (thaw.stumbleT >= 0 ? .15 : 1.35 * (1 - .45 * thaw.weak)) * dt, s = Math.sin(player.yaw), c = Math.cos(player.yaw);
       const px = player.pos.x, pz = player.pos.z;
@@ -1181,11 +1251,11 @@ addEventListener('error', e => plog.log('jserror', { message: String(e.message).
 addEventListener('unhandledrejection', e => plog.log('jserror', { message: String((e.reason && e.reason.message) || e.reason).slice(0, 300) }));
 function resizeAll() { resize(); ext.camera.aspect = innerWidth / innerHeight; ext.camera.updateProjectionMatrix(); }
 addEventListener('resize', resizeAll);
-build(); resizeAll(); applySettings();
+build(); resizeAll(); applySettings(); buildNav(); measureThings();
 player.pos.set(playerPodPos.x - 1.15, 0, playerPodPos.z + .2);
 $('hud').hidden = true; show('title'); $('begin').focus();
 requestAnimationFrame(frame);
 
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending, get area() { return area; }, notes, eyes, thaw, journal, presented, get showing() { return showingId; } };
+  window.__lp = { player, inspect, turns, get stage() { return stage; }, get state() { return state; }, skipCutscene, get cineT() { return cine.t; }, set cineT(v) { cine.t = v; }, ending, get area() { return area; }, notes, eyes, thaw, journal, presented, get showing() { return showingId; }, agent, get watching() { return watching; } };
 }
