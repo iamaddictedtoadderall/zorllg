@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Physics Toybox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: full-bleed graph-paper stage, tool tray docked below, settings card floating top-right */
+:root {
+  --paper: #edf1f5;
+  --grid: #dde4ec;
+  --grid-strong: #c9d3df;
+  --ink: #1e2940;
+  --muted: #5b6880;
+  --panel: rgba(255, 255, 255, 0.9);
+  --line: #cbd4e0;
+  --accent: #e5533d;
+  --outline: #1e2940;
+  --rope: #8a5a34;
+  --toy-1: #e5533d;
+  --toy-2: #f2b829;
+  --toy-3: #3b82c4;
+  --toy-4: #3fa36b;
+  --toy-5: #8e5bb5;
+  --toy-6: #f08a2b;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #121826; --grid: #1a2232; --grid-strong: #243046; --ink: #e3e9f3; --muted: #93a0b8;
+    --panel: rgba(24, 31, 47, 0.9); --line: #2e3a52; --accent: #ff6b52; --outline: #0a0e17; --rope: #c08a5a;
+    --toy-1: #ff6b52; --toy-2: #ffc93d; --toy-3: #4f9be0; --toy-4: #4cbd7d; --toy-5: #a874d4; --toy-6: #ff9a3d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #121826; --grid: #1a2232; --grid-strong: #243046; --ink: #e3e9f3; --muted: #93a0b8;
+  --panel: rgba(24, 31, 47, 0.9); --line: #2e3a52; --accent: #ff6b52; --outline: #0a0e17; --rope: #c08a5a;
+  --toy-1: #ff6b52; --toy-2: #ffc93d; --toy-3: #4f9be0; --toy-4: #4cbd7d; --toy-5: #a874d4; --toy-6: #ff9a3d;
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--display);
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.app { height: 100%; display: flex; flex-direction: column; }
+.stage { position: relative; flex: 1; min-height: 0; }
+#stage { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+#stage.grab { cursor: grab; }
+#stage.grabbing { cursor: grabbing; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.badge {
+  position: absolute; top: 12px; left: 12px;
+  padding: 10px 14px;
+  max-width: min(320px, calc(100% - 24px));
+  display: grid; gap: 2px;
+  pointer-events: none;
+}
+.badge h1 { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.1; }
+.badge .count { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.badge .hint { font-size: 13px; color: var(--muted); line-height: 1.35; margin-top: 4px; }
+
+.settings {
+  position: absolute; top: 12px; right: 12px;
+  width: 268px; max-width: calc(100% - 24px);
+  display: flex; flex-direction: column;
+}
+.settings-toggle {
+  display: none;
+  font: 700 13px var(--display);
+  color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 8px 12px; cursor: pointer; align-self: flex-end;
+}
+.settings-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.group { display: flex; flex-direction: column; gap: 6px; }
+.row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.readout { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip, .btn {
+  font: 600 12px var(--display);
+  color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 4px 10px; cursor: pointer;
+}
+.chip:hover, .btn:hover { border-color: var(--muted); }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.btn { border-radius: 10px; padding: 8px 10px; font-size: 13px; }
+.btn.warn { color: var(--accent); border-color: var(--accent); }
+#pause[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tray {
+  flex: none;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding-block: 8px;
+  padding-inline: 12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  overflow-x: auto;
+}
+.tools { display: flex; gap: 4px; justify-content: center; min-width: max-content; margin-inline: auto; }
+.tool {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 64px; padding: 7px 8px 6px;
+  font: 600 12px var(--display); color: var(--ink);
+  background: transparent; border: 1px solid transparent; border-radius: 12px;
+  cursor: pointer; position: relative;
+}
+.tool:hover { border-color: var(--line); }
+.tool svg { width: 26px; height: 26px; }
+.tool kbd { position: absolute; top: 3px; right: 6px; font: 500 9px var(--mono); color: var(--muted); }
+.tool[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.tool[aria-pressed="true"] kbd { color: var(--paper); opacity: 0.6; }
+
+@media (max-width: 640px) {
+  .settings-toggle { display: block; }
+  .settings { width: 248px; gap: 6px; }
+  .settings.collapsed .settings-body { display: none; }
+  .badge .hint { font-size: 12px; }
+  .badge { max-width: calc(100% - 130px); }
+  .tools { justify-content: flex-start; }
+  .tool { min-width: 54px; font-size: 11px; }
+  .tool kbd { display: none; }
+}
+</style>
+
+<div class="app">
+  <div class="stage" id="stageWrap">
+    <canvas id="stage" class="grab" aria-label="Physics play area"></canvas>
+
+    <div class="badge card">
+      <h1>Physics Toybox</h1>
+      <div class="count" id="count">0 objects</div>
+      <div class="hint" id="hint"></div>
+    </div>
+
+    <div class="settings" id="settings">
+      <button class="settings-toggle" id="settingsToggle" aria-expanded="true" aria-controls="settingsBody">Settings</button>
+      <div class="settings-body card" id="settingsBody">
+        <div class="group">
+          <div class="row"><span class="label">Gravity</span><span class="readout" id="gravOut">9.81 m/s²</span></div>
+          <div class="chips" id="gravChips">
+            <button class="chip" data-g="0">Zero-g</button>
+            <button class="chip" data-g="0.165">Moon</button>
+            <button class="chip" data-g="1">Earth</button>
+            <button class="chip" data-g="2.53">Jupiter</button>
+            <button class="chip" data-g="-1">Flipped</button>
+          </div>
+          <input type="range" id="grav" min="-1" max="2.6" step="0.005" value="1" aria-label="Gravity">
+        </div>
+        <div class="group">
+          <div class="row"><span class="label">Bounciness</span><span class="readout" id="bounceOut">35%</span></div>
+          <input type="range" id="bounce" min="0" max="0.95" step="0.01" value="0.35" aria-label="Bounciness">
+        </div>
+        <div class="group">
+          <div class="row"><span class="label">Time speed</span><span class="readout" id="timeOut">1.00×</span></div>
+          <input type="range" id="time" min="0.1" max="1" step="0.05" value="1" aria-label="Time speed">
+        </div>
+        <div class="group">
+          <span class="label">Scenes</span>
+          <div class="chips">
+            <button class="chip" data-scene="pyramid">Pyramid</button>
+            <button class="chip" data-scene="dominoes">Dominoes</button>
+            <button class="chip" data-scene="cradle">Newton's cradle</button>
+            <button class="chip" data-scene="pit">Ball pit</button>
+            <button class="chip" data-scene="welcome">Starter</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="pause" aria-pressed="false">Pause</button>
+          <button class="btn" id="clear">Clear all</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tray">
+    <div class="tools" id="tools" role="toolbar" aria-label="Tools"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+(() => {
+  const { Engine, Bodies, Body, Composite, Constraint, Query, Vector, Events } = Matter;
+
+  // ---------- tools ----------
+  const TOOLS = [
+    { id: 'grab', name: 'Grab', hint: 'Drag anything around. Let go mid-swing to fling it.',
+      icon: '<path d="M6 3l13 7-5.5 1.6L11 17z" fill="currentColor"/>' },
+    { id: 'ball', name: 'Ball', hint: 'Click to drop a ball. Hold and move to pour lots.',
+      icon: '<circle cx="12" cy="12" r="8" fill="currentColor"/>' },
+    { id: 'box', name: 'Box', hint: 'Click to drop a box. Hold and move to pour lots.',
+      icon: '<rect x="4.5" y="4.5" width="15" height="15" rx="2" fill="currentColor"/>' },
+    { id: 'poly', name: 'Shape', hint: 'Drops a random triangle, pentagon, hexagon or more.',
+      icon: '<path d="M12 3.5l8.5 6.2-3.2 10H6.7l-3.2-10z" fill="currentColor"/>' },
+    { id: 'balloon', name: 'Balloon', hint: 'Balloons float upward. Flip gravity and they sink.',
+      icon: '<ellipse cx="12" cy="9.5" rx="6.5" ry="7.5" fill="currentColor"/><path d="M12 17v4.5" stroke="currentColor" stroke-width="1.6" fill="none"/>' },
+    { id: 'wall', name: 'Wall', hint: 'Drag to draw a solid wall or ramp.',
+      icon: '<path d="M4 18L20 7" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>' },
+    { id: 'rope', name: 'Rope', hint: 'Drag to make a rope. Start or end on an object to tie it on.',
+      icon: '<circle cx="5" cy="5" r="2.2" fill="currentColor"/><path d="M5 5c4 2 2 6 6 8s3 5 7 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><circle cx="18" cy="19" r="2.6" fill="currentColor"/>' },
+    { id: 'bomb', name: 'Blast', hint: 'Click to blast everything nearby away.',
+      icon: '<circle cx="11" cy="14" r="6.5" fill="currentColor"/><path d="M15 9l3-3M19 3v2M21 7h-2M17.5 4.5l1 1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' },
+    { id: 'erase', name: 'Eraser', hint: 'Click or drag over things to delete them. Cut ropes too.',
+      icon: '<path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>' },
+  ];
+  const SPAWNERS = new Set(['ball', 'box', 'poly', 'balloon']);
+
+  // ---------- DOM ----------
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('stageWrap');
+  const countEl = document.getElementById('count');
+  const hintEl = document.getElementById('hint');
+  const toolsEl = document.getElementById('tools');
+
+  TOOLS.forEach((t, i) => {
+    const b = document.createElement('button');
+    b.className = 'tool';
+    b.id = 'tool-' + t.id;
+    b.dataset.tool = t.id;
+    b.setAttribute('aria-pressed', 'false');
+    b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${t.icon}</svg><span>${t.name}</span><kbd>${i + 1}</kbd>`;
+    b.addEventListener('click', () => setTool(t.id));
+    toolsEl.appendChild(b);
+  });
+
+  // ---------- theme colors (read from CSS tokens) ----------
+  let C = {};
+  function readColors() {
+    const s = getComputedStyle(document.documentElement);
+    const v = n => s.getPropertyValue(n).trim();
+    C = {
+      paper: v('--paper'), grid: v('--grid'), gridStrong: v('--grid-strong'), ink: v('--ink'),
+      muted: v('--muted'), accent: v('--accent'), outline: v('--outline'), rope: v('--rope'),
+      toys: [1, 2, 3, 4, 5, 6].map(i => v('--toy-' + i)),
+    };
+  }
+  readColors();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
+  new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+
+  // ---------- engine ----------
+  const engine = Engine.create({ positionIterations: 8, velocityIterations: 6 });
+  const world = engine.world;
+  engine.gravity.y = 1;
+
+  const state = {
+    tool: 'grab', paused: false, bounce: 0.35,
+    pointer: { x: 0, y: 0, over: false, down: false },
+    dragStart: null, grab: null, spray: 0, rings: [],
+  };
+  let W = 0, H = 0, dpr = 1;
+  let bounds = [];
+  const spawned = []; // spawn order, used to cap object count
+  const MAX_OBJECTS = 450;
+
+  // Constraint.create resets .plugin, so attach our tags afterwards.
+  function makeConstraint({ plugin, ...opts }) {
+    const c = Constraint.create(opts);
+    Object.assign(c.plugin, plugin);
+    return c;
+  }
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const randInt = n => Math.floor(Math.random() * n);
+
+  function buildBounds() {
+    if (bounds.length) Composite.remove(world, bounds);
+    const t = 400, o = { isStatic: true, friction: 0.6, plugin: { boundary: true } };
+    bounds = [
+      Bodies.rectangle(W / 2, H + t / 2, W + t * 2, t, o),
+      Bodies.rectangle(W / 2, -t / 2, W + t * 2, t, o),
+      Bodies.rectangle(-t / 2, H / 2, t, H + t * 2, o),
+      Bodies.rectangle(W + t / 2, H / 2, t, H + t * 2, o),
+    ];
+    Composite.add(world, bounds);
+  }
+
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    buildBounds();
+    for (const b of Composite.allBodies(world)) {
+      if (b.isStatic) continue;
+      const x = Math.min(Math.max(b.position.x, 20), W - 20);
+      const y = Math.min(Math.max(b.position.y, 20), H - 20);
+      if (x !== b.position.x || y !== b.position.y) Body.setPosition(b, { x, y });
+    }
+  }
+
+  function dynamicBodies() {
+    return Composite.allBodies(world).filter(b => !b.isStatic);
+  }
+
+  function track(b) {
+    spawned.push(b);
+    while (spawned.length > MAX_OBJECTS) {
+      const old = spawned.shift();
+      if (Composite.get(world, old.id, 'body')) removeBody(old);
+    }
+  }
+
+  function makeShape(kind, x, y) {
+    const opts = { restitution: state.bounce, friction: 0.3, plugin: { color: randInt(6) }, angle: rand(0, Math.PI * 2) };
+    let b;
+    if (kind === 'ball') b = Bodies.circle(x, y, rand(12, 30), opts);
+    else if (kind === 'box') b = Bodies.rectangle(x, y, rand(26, 62), rand(26, 62), { ...opts, chamfer: { radius: 3 } });
+    else if (kind === 'poly') b = Bodies.polygon(x, y, 3 + randInt(5), rand(18, 34), opts);
+    else if (kind === 'balloon') {
+      b = Bodies.circle(x, y, rand(20, 28), { ...opts, angle: 0, density: 0.0004, frictionAir: 0.03, restitution: 0.6, plugin: { color: randInt(6), balloon: true, fixedBounce: true } });
+    }
+    Composite.add(world, b);
+    track(b);
+    return b;
+  }
+
+  function removeBody(b) {
+    for (const c of Composite.allConstraints(world)) {
+      if (c.bodyA === b || c.bodyB === b) Composite.remove(world, c, true);
+    }
+    Composite.remove(world, b, true);
+    if (state.grab && state.grab.bodyB === b) endGrab();
+    const i = spawned.indexOf(b);
+    if (i >= 0) spawned.splice(i, 1);
+  }
+
+  function clearAll() {
+    endGrab();
+    for (const c of Composite.allConstraints(world)) Composite.remove(world, c, true);
+    for (const b of Composite.allBodies(world)) if (!b.plugin.boundary) Composite.remove(world, b, true);
+    spawned.length = 0;
+  }
+
+  function bodyAt(p, includeStatic) {
+    const hits = Query.point(Composite.allBodies(world), p).filter(b => !b.plugin.boundary && (includeStatic || !b.isStatic));
+    return hits[hits.length - 1] || null;
+  }
+
+  // ---------- walls ----------
+  function makeWall(a, b) {
+    const len = Vector.magnitude(Vector.sub(b, a));
+    if (len < 12) return;
+    const mid = Vector.mult(Vector.add(a, b), 0.5);
+    const w = Bodies.rectangle(mid.x, mid.y, len + 14, 14, {
+      isStatic: true, angle: Math.atan2(b.y - a.y, b.x - a.x), friction: 0.5,
+      chamfer: { radius: 7 }, plugin: { userWall: true },
+    });
+    Composite.add(world, w);
+  }
+
+  // ---------- ropes ----------
+  function makeRope(a, b, startBody, endBody) {
+    if (Vector.magnitude(Vector.sub(b, a)) < 20) { b = { x: a.x, y: a.y + 170 }; endBody = null; }
+    const group = Body.nextGroup(true);
+    const seg = 14;
+    const n = Math.max(4, Math.round(Vector.magnitude(Vector.sub(b, a)) / seg));
+    const step = Vector.div(Vector.sub(b, a), n);
+    const links = [];
+    for (let i = 1; i <= n; i++) {
+      const p = Vector.add(a, Vector.mult(step, i));
+      const link = Bodies.circle(p.x, p.y, 5, {
+        density: 0.002, frictionAir: 0.015, friction: 0.4, restitution: 0,
+        collisionFilter: { group }, plugin: { link: true, fixedBounce: true },
+      });
+      links.push(link);
+    }
+    if (startBody) links[0].collisionFilter.mask = 0;
+    if (endBody) links[n - 1].collisionFilter.mask = 0;
+    const segLen = Vector.magnitude(step);
+    const ropeOpts = { stiffness: 0.95, damping: 0.05, length: segLen, plugin: { rope: true } };
+    const cons = [];
+    cons.push(startBody
+      ? makeConstraint({ ...ropeOpts, bodyA: startBody, pointA: Vector.sub(a, startBody.position), bodyB: links[0], plugin: { rope: true } })
+      : makeConstraint({ ...ropeOpts, pointA: { x: a.x, y: a.y }, bodyB: links[0], plugin: { rope: true, pin: true } }));
+    for (let i = 1; i < n; i++) cons.push(makeConstraint({ ...ropeOpts, bodyA: links[i - 1], bodyB: links[i] }));
+    const extras = [];
+    if (endBody) {
+      cons.push(makeConstraint({ ...ropeOpts, length: 1, bodyA: links[n - 1], bodyB: endBody, pointB: Vector.sub(b, endBody.position) }));
+    } else {
+      const last = links[n - 1].position;
+      const weight = Bodies.circle(last.x, last.y + 16, 16, {
+        density: 0.004, restitution: state.bounce, friction: 0.3,
+        collisionFilter: { group }, plugin: { color: randInt(6) },
+      });
+      extras.push(weight);
+      cons.push(makeConstraint({ ...ropeOpts, length: 16, bodyA: links[n - 1], bodyB: weight }));
+    }
+    Composite.add(world, [...links, ...extras, ...cons]);
+    extras.forEach(track);
+  }
+
+  // ---------- blast ----------
+  const BLAST_R = 220;
+  function blast(p) {
+    for (const b of dynamicBodies()) {
+      const d = Vector.sub(b.position, p);
+      const dist = Vector.magnitude(d);
+      if (dist > BLAST_R) continue;
+      const f = 1 - dist / BLAST_R;
+      const dir = dist > 0.01 ? Vector.div(d, dist) : { x: 0, y: -1 };
+      Body.setVelocity(b, Vector.add(b.velocity, Vector.mult(dir, 30 * f)));
+      Body.setAngularVelocity(b, b.angularVelocity + rand(-0.4, 0.4) * f);
+    }
+    state.rings.push({ x: p.x, y: p.y, t: 0 });
+  }
+
+  // ---------- eraser ----------
+  function eraseAt(p) {
+    const seen = new Set();
+    for (const o of [[0, 0], [9, 0], [-9, 0], [0, 9], [0, -9]]) {
+      const b = bodyAt({ x: p.x + o[0], y: p.y + o[1] }, true);
+      if (b && !seen.has(b)) { seen.add(b); removeBody(b); }
+    }
+  }
+
+  // ---------- grabbing ----------
+  function startGrab(p) {
+    const b = bodyAt(p, false);
+    if (!b) return;
+    const c = makeConstraint({
+      pointA: { x: p.x, y: p.y }, bodyB: b, pointB: Vector.sub(p, b.position),
+      length: 0.01, stiffness: 0.2, damping: 0.1, plugin: { grab: true },
+    });
+    Composite.add(world, c);
+    state.grab = c;
+    canvas.classList.add('grabbing');
+  }
+  function endGrab() {
+    if (state.grab) Composite.remove(world, state.grab, true);
+    state.grab = null;
+    canvas.classList.remove('grabbing');
+  }
+
+  // ---------- balloons float ----------
+  Events.on(engine, 'beforeUpdate', () => {
+    const g = engine.gravity;
+    for (const b of Composite.allBodies(world)) {
+      if (b.plugin.balloon) b.force.y -= b.mass * g.y * g.scale * 2.3;
+    }
+  });
+
+  // ---------- input ----------
+  function localPoint(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    if (e.button !== undefined && e.button > 0) return;
+    canvas.setPointerCapture(e.pointerId);
+    const p = localPoint(e);
+    Object.assign(state.pointer, p, { down: true, over: true });
+    state.dragStart = p;
+    const t = state.tool;
+    if (t === 'grab') startGrab(p);
+    else if (SPAWNERS.has(t)) { makeShape(t, p.x, p.y); state.spray = 0; }
+    else if (t === 'bomb') blast(p);
+    else if (t === 'erase') eraseAt(p);
+    else if (t === 'rope') state.ropeStart = bodyAt(p, true);
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    const p = localPoint(e);
+    Object.assign(state.pointer, p, { over: true });
+    if (!state.pointer.down) return;
+    if (state.grab) state.grab.pointA = { x: p.x, y: p.y };
+    if (state.tool === 'erase') eraseAt(p);
+  });
+
+  function pointerUp(e) {
+    if (!state.pointer.down) return;
+    const p = localPoint(e);
+    state.pointer.down = false;
+    if (state.tool === 'wall') makeWall(state.dragStart, p);
+    if (state.tool === 'rope') {
+      const endBody = bodyAt(p, true);
+      makeRope(state.dragStart, p, state.ropeStart, endBody && endBody !== state.ropeStart ? endBody : null);
+      state.ropeStart = null;
+    }
+    endGrab();
+    state.dragStart = null;
+  }
+  canvas.addEventListener('pointerup', pointerUp);
+  canvas.addEventListener('pointercancel', pointerUp);
+  canvas.addEventListener('pointerleave', () => { if (!state.pointer.down) state.pointer.over = false; });
+
+  // ---------- controls ----------
+  function setTool(id) {
+    state.tool = id;
+    document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tool === id)));
+    hintEl.textContent = TOOLS.find(t => t.id === id).hint;
+    canvas.classList.toggle('grab', id === 'grab');
+  }
+
+  const grav = document.getElementById('grav');
+  const gravOut = document.getElementById('gravOut');
+  function setGravity(g) {
+    engine.gravity.y = g;
+    grav.value = g;
+    gravOut.textContent = (g * 9.81).toFixed(2) + ' m/s²' + (g < 0 ? ' ↑' : '');
+    document.querySelectorAll('#gravChips .chip').forEach(c =>
+      c.setAttribute('aria-pressed', String(Math.abs(parseFloat(c.dataset.g) - g) < 0.003)));
+  }
+  grav.addEventListener('input', () => setGravity(parseFloat(grav.value)));
+  document.querySelectorAll('#gravChips .chip').forEach(c =>
+    c.addEventListener('click', () => setGravity(parseFloat(c.dataset.g))));
+
+  const bounce = document.getElementById('bounce');
+  const bounceOut = document.getElementById('bounceOut');
+  bounce.addEventListener('input', () => {
+    state.bounce = parseFloat(bounce.value);
+    bounceOut.textContent = Math.round(state.bounce * 100) + '%';
+    for (const b of Composite.allBodies(world)) {
+      if (!b.isStatic && !b.plugin.fixedBounce) b.restitution = state.bounce;
+    }
+  });
+
+  const time = document.getElementById('time');
+  const timeOut = document.getElementById('timeOut');
+  time.addEventListener('input', () => {
+    engine.timing.timeScale = parseFloat(time.value);
+    timeOut.textContent = parseFloat(time.value).toFixed(2) + '×';
+  });
+
+  const pauseBtn = document.getElementById('pause');
+  function togglePause() {
+    state.paused = !state.paused;
+    pauseBtn.setAttribute('aria-pressed', String(state.paused));
+    pauseBtn.textContent = state.paused ? 'Resume' : 'Pause';
+  }
+  pauseBtn.addEventListener('click', togglePause);
+
+  // Two-step clear, since there is no undo.
+  const clearBtn = document.getElementById('clear');
+  let clearTimer = null;
+  clearBtn.addEventListener('click', () => {
+    if (clearTimer) {
+      clearTimeout(clearTimer); clearTimer = null;
+      clearAll();
+      clearBtn.textContent = 'Clear all'; clearBtn.classList.remove('warn');
+    } else {
+      clearBtn.textContent = 'Tap again'; clearBtn.classList.add('warn');
+      clearTimer = setTimeout(() => {
+        clearTimer = null; clearBtn.textContent = 'Clear all'; clearBtn.classList.remove('warn');
+      }, 2200);
+    }
+  });
+
+  const settings = document.getElementById('settings');
+  const settingsToggle = document.getElementById('settingsToggle');
+  settingsToggle.addEventListener('click', () => {
+    const collapsed = settings.classList.toggle('collapsed');
+    settingsToggle.setAttribute('aria-expanded', String(!collapsed));
+  });
+  if (window.innerWidth <= 640) {
+    settings.classList.add('collapsed');
+    settingsToggle.setAttribute('aria-expanded', 'false');
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = e.target.tagName;
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= TOOLS.length) { setTool(TOOLS[n - 1].id); return; }
+    if (e.key === ' ' && tag !== 'BUTTON' && tag !== 'INPUT') { e.preventDefault(); togglePause(); }
+  });
+
+  // ---------- scenes ----------
+  const SCENES = {
+    pyramid() {
+      const rows = 11, size = Math.min(38, (W * 0.7) / rows);
+      for (let r = 0; r < rows; r++) {
+        const count = rows - r;
+        const x0 = W / 2 - ((count - 1) * size) / 2;
+        for (let i = 0; i < count; i++) {
+          const b = Bodies.rectangle(x0 + i * size, H - size / 2 - r * size, size, size, {
+            restitution: state.bounce, friction: 0.7, plugin: { color: r % 6 },
+          });
+          Composite.add(world, b); track(b);
+        }
+      }
+    },
+    dominoes() {
+      const gap = 46, count = Math.max(4, Math.floor((W - 160) / gap));
+      const x0 = (W - (count - 1) * gap) / 2;
+      for (let i = 0; i < count; i++) {
+        const d = Bodies.rectangle(x0 + i * gap, H - 42, 12, 84, {
+          restitution: 0.05, friction: 0.5, density: 0.004, plugin: { color: i % 6 },
+        });
+        if (i === 0) Body.setAngle(d, 0.3);
+        Composite.add(world, d); track(d);
+      }
+    },
+    cradle() {
+      const n = 5, r = Math.min(28, W / 22), sep = r * 1.9;
+      const len = Math.min(260, H * 0.5), top = Math.max(60, H * 0.12);
+      const x0 = W / 2 - ((n - 1) * sep) / 2;
+      for (let i = 0; i < n; i++) {
+        const x = x0 + i * sep;
+        const ball = Bodies.circle(x, top + len, r, {
+          inertia: Infinity, restitution: 1, friction: 0, frictionAir: 0.0001, slop: r * 0.02,
+          plugin: { color: 2, fixedBounce: true },
+        });
+        const string = makeConstraint({ pointA: { x, y: top }, bodyB: ball, plugin: { pin: true } });
+        Composite.add(world, [ball, string]); track(ball);
+        if (i === 0) Body.translate(ball, { x: -len * 0.7, y: -len * 0.4 });
+      }
+    },
+    pit() {
+      const cols = Math.floor(W / 34), rows = Math.min(10, Math.floor(H / 60));
+      for (let r = 0; r < rows; r++) {
+        for (let i = 0; i < cols; i++) {
+          const b = Bodies.circle(20 + i * 34 + (r % 2) * 12, 30 + r * 36, rand(10, 16), {
+            restitution: state.bounce, friction: 0.1, plugin: { color: randInt(6) },
+          });
+          Composite.add(world, b); track(b);
+        }
+      }
+    },
+    welcome() {
+      const size = 34, rows = 7, cx = W > 700 ? W * 0.66 : W / 2;
+      for (let r = 0; r < rows; r++) {
+        const count = rows - r;
+        const x0 = cx - ((count - 1) * size) / 2;
+        for (let i = 0; i < count; i++) {
+          const b = Bodies.rectangle(x0 + i * size, H - size / 2 - r * size, size, size, {
+            restitution: state.bounce, friction: 0.7, plugin: { color: (r + 2) % 6 },
+          });
+          Composite.add(world, b); track(b);
+        }
+      }
+      if (W > 560) {
+        const pin = { x: W * 0.2, y: Math.max(130, H * 0.2) };
+        makeRope(pin, { x: pin.x + 150, y: pin.y + 40 }, null, null);
+        makeWall({ x: W * 0.06, y: H * 0.55 }, { x: W * 0.36, y: H * 0.72 });
+      }
+      for (let i = 0; i < 3; i++) makeShape('balloon', cx - 120 + i * 120, H - 260 - rows * size + rand(-20, 20));
+      for (let i = 0; i < 6; i++) makeShape(['ball', 'poly'][i % 2], rand(W * 0.1, W * 0.9), rand(80, H * 0.35));
+    },
+  };
+  document.querySelectorAll('[data-scene]').forEach(b => b.addEventListener('click', () => {
+    clearAll();
+    SCENES[b.dataset.scene]();
+  }));
+
+  // ---------- drawing ----------
+  function drawGrid() {
+    ctx.fillStyle = C.paper;
+    ctx.fillRect(0, 0, W, H);
+    ctx.lineWidth = 1;
+    for (const [stepPx, color] of [[25, C.grid], [125, C.gridStrong]]) {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      for (let x = stepPx; x < W; x += stepPx) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); }
+      for (let y = H - stepPx; y > 0; y -= stepPx) { ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); }
+      ctx.stroke();
+    }
+  }
+
+  function tracePart(part) {
+    ctx.beginPath();
+    if (part.circleRadius) {
+      ctx.arc(part.position.x, part.position.y, part.circleRadius, 0, Math.PI * 2);
+    } else {
+      const v = part.vertices;
+      ctx.moveTo(v[0].x, v[0].y);
+      for (let i = 1; i < v.length; i++) ctx.lineTo(v[i].x, v[i].y);
+      ctx.closePath();
+    }
+  }
+
+  function drawBody(b) {
+    const parts = b.parts.length > 1 ? b.parts.slice(1) : [b];
+    const fill = b.plugin.userWall ? C.ink : C.toys[b.plugin.color ?? 0];
+    if (b.plugin.balloon) {
+      // string dangles opposite to the lift
+      const down = engine.gravity.y >= 0 ? 1 : -1;
+      const r = b.circleRadius, x = b.position.x, y = b.position.y + r * down;
+      ctx.strokeStyle = C.muted; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(x, y);
+      ctx.bezierCurveTo(x - 6, y + 12 * down, x + 6, y + 22 * down, x, y + 34 * down);
+      ctx.stroke();
+    }
+    for (const part of parts) {
+      tracePart(part);
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.strokeStyle = C.outline; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+    }
+    if (b.plugin.balloon) {
+      const r = b.circleRadius;
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.beginPath(); ctx.ellipse(b.position.x - r * 0.35, b.position.y - r * 0.35, r * 0.22, r * 0.32, -0.6, 0, Math.PI * 2); ctx.fill();
+    } else if (b.circleRadius && !b.plugin.link) {
+      // spin marker
+      const r = b.circleRadius * 0.7;
+      ctx.strokeStyle = C.outline; ctx.globalAlpha = 0.55; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(b.position.x, b.position.y);
+      ctx.lineTo(b.position.x + Math.cos(b.angle) * r, b.position.y + Math.sin(b.angle) * r);
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+
+  const endA = c => c.bodyA ? Vector.add(c.bodyA.position, c.pointA) : c.pointA;
+  const endB = c => c.bodyB ? Vector.add(c.bodyB.position, c.pointB) : c.pointB;
+
+  function drawConstraints() {
+    ctx.lineCap = 'round';
+    for (const c of Composite.allConstraints(world)) {
+      if (c.plugin.grab) continue;
+      const a = endA(c), b = endB(c);
+      if (c.plugin.rope) { ctx.strokeStyle = C.rope; ctx.lineWidth = 6; }
+      else { ctx.strokeStyle = C.muted; ctx.lineWidth = 1.5; }
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    for (const c of Composite.allConstraints(world)) {
+      if (!c.plugin.pin) continue;
+      ctx.fillStyle = C.paper; ctx.strokeStyle = C.ink; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(c.pointA.x, c.pointA.y, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+  }
+
+  function drawOverlays(dt) {
+    const p = state.pointer;
+    ctx.setLineDash([6, 6]);
+    if (p.down && state.dragStart && (state.tool === 'wall' || state.tool === 'rope')) {
+      ctx.strokeStyle = state.tool === 'wall' ? C.ink : C.rope;
+      ctx.globalAlpha = 0.6; ctx.lineWidth = state.tool === 'wall' ? 14 : 5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(state.dragStart.x, state.dragStart.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    if (p.over && state.tool === 'bomb') {
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, BLAST_R, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    if (p.over && state.tool === 'erase') {
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if (state.grab) {
+      const a = state.grab.pointA, b = endB(state.grab);
+      ctx.strokeStyle = C.ink; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.fillStyle = C.ink;
+      ctx.beginPath(); ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+    state.rings = state.rings.filter(r => (r.t += dt / 450) < 1);
+    for (const r of state.rings) {
+      const e = 1 - Math.pow(1 - r.t, 3);
+      ctx.strokeStyle = C.accent; ctx.globalAlpha = 1 - r.t; ctx.lineWidth = 6 * (1 - r.t) + 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, BLAST_R * e, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = C.toys[1]; ctx.globalAlpha = (1 - r.t) * 0.35;
+      ctx.beginPath(); ctx.arc(r.x, r.y, BLAST_R * 0.35 * e, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function draw(dt) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawGrid();
+    drawConstraints();
+    let count = 0;
+    for (const b of Composite.allBodies(world)) {
+      if (b.plugin.boundary || b.plugin.link) continue;
+      drawBody(b);
+      if (!b.isStatic) count++;
+    }
+    drawOverlays(dt);
+    countEl.textContent = `${count} object${count === 1 ? '' : 's'}${state.paused ? ' · paused' : ''}`;
+  }
+
+  // ---------- loop ----------
+  const STEP = 1000 / 60;
+  let last = performance.now(), acc = 0;
+  function frame(now) {
+    const dt = Math.min(100, now - last);
+    last = now;
+    if (!state.paused) {
+      acc += dt;
+      let n = 0;
+      while (acc >= STEP && n < 4) { Engine.update(engine, STEP); acc -= STEP; n++; }
+      if (n === 4) acc = 0;
+    }
+    if (state.pointer.down && SPAWNERS.has(state.tool)) {
+      state.spray += dt;
+      if (state.spray > 110) { state.spray = 0; makeShape(state.tool, state.pointer.x + rand(-4, 4), state.pointer.y); }
+    }
+    draw(dt);
+    requestAnimationFrame(frame);
+  }
+
+  new ResizeObserver(resize).observe(wrap);
+  resize();
+  setTool('grab');
+  setGravity(1);
+  SCENES.welcome();
+  requestAnimationFrame(frame);
+})();
+</script>
+</html>
