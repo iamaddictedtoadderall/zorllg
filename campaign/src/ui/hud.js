@@ -73,7 +73,11 @@ const HUD_CSS = `
 #prompt.tear{border-left-color:var(--accent)}
 #prompt.tear .pb i{background:var(--accent)}
 #prompt.tear span:not(.hold){color:var(--accent);font-weight:700;letter-spacing:.3em}
-#choice{pointer-events:none}
+#choice{pointer-events:none;width:min(780px,94vw);top:56%}
+#hud.choosing #prompt,#hud.choosing #killfeed,#hud.choosing #progress,#hud.choosing #hint{visibility:hidden}
+#choice .opts{flex-wrap:nowrap}
+#choice .opt{white-space:nowrap}
+#game.touch #choice .opts{flex-wrap:wrap}
 #choice .opt{display:flex;align-items:center;gap:0;font-family:var(--f-display);color:var(--hud);transition:border-color .15s,background .15s}
 #choice .opt:hover,#choice .opt.pick{border-color:var(--accent);background:rgba(224,145,60,.18)}
 #choice .opt.pick{color:var(--accent)}
@@ -623,11 +627,13 @@ export function install(ctx) {
     });
     setW(root.querySelector('.bar i'), 1);
     show(root, true);
+    toggle(el.hud, 'choosing', true);
   }
   function endChoice(key) {
     const r = CH.resolve;
     CH.def = null; CH.resolve = null; CH.latch.length = 0;
     show(el.choice, false);
+    toggle(el.hud, 'choosing', false);
     if (r) r(key);
   }
   function padButtons() {

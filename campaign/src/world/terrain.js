@@ -5,8 +5,8 @@
 // tier.terrainSegments segments per side (64 → 16/8/4/2 m spacing at 1024/512/256/128 m).
 //
 // Selection (each update, from cameraPos, horizontal distance): a node splits while dist(camera, node square) <
-// K × size and size > 128, where K = min(tier.terrainSplit, 2.0). The cap holds the High budget (≤ 0.7 M terrain
-// triangles; measured, see the P2 hand-off). A parent stays drawn until its four children are built, and children
+// K × size and size > 128, where K = min(tier.terrainSplit, 1.8). The cap holds the High budget (≤ 0.7 M terrain
+// triangles in the main pass; measured at 10 route points, see the P2 hand-off). A parent stays drawn until its four children are built, and children
 // stay drawn until their parent is ready, so there are never holes.
 //
 // No popping: every vertex carries a morph target, the surface its parent node would draw at that point (odd vertices
@@ -32,10 +32,10 @@ import { clamp, smooth, lerp, mulberry32 } from '../core/util.js';
 import { createValueNoise2D, tileable2 } from '../core/noise.js';
 
 const ROOT = 1024, MIN = 128, MAXL = 3;
-const SPLIT_CAP = 2.0;
+const SPLIT_CAP = 1.8;
 const POOL_SPARE = 24;
 const _col = new THREE.Color(), _c2 = new THREE.Color();
-const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, inside: false };
+const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, curv: 0, inside: false };
 const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere();
 
 // ====================================================================== detail textures (AD §3.6), cached
@@ -123,8 +123,9 @@ function detailTextures(style, size, aniso) {
     soil = makeData(size, (u, v, o) => {
       const base = 0.6 * A(u * 8, v * 8) + 0.4 * B(u * 32, v * 32);
       const fine = C(u * 64, v * 64);
-      const w = W(u, v, _wo), cr = hash1(w.id), peb = smooth(0.34, 0.18, w.f1 * 1.0) * (cr > 0.55 ? 1 : 0);
-      const crack = smooth(0.04, 0.0, w.f2 - w.f1) * 0.7;
+      const w = W(u, v, _wo), cr = hash1(w.id), patch = smooth(0.42, 0.62, E(u * 4 + 0.37, v * 4 + 0.11));
+      const peb = smooth(0.3, 0.16, w.f1 * 1.0) * (cr > 0.62 ? 1 : 0) * (0.4 + 0.6 * (1 - patch));
+      const crack = smooth(0.035, 0.0, w.f2 - w.f1) * 0.45 * patch;   // dried-mud cracks only in patches
       o[0] = 0.5 + (base - 0.5) * 0.6 + (fine - 0.5) * 0.15 + peb * (hash1(w.id + 7) - 0.5) * 0.5 - crack * 0.3;
       o[1] = base * 0.55 + peb * 0.45 - crack * 0.5 + (fine - 0.5) * 0.1;
       o[2] = 1 - crack * 0.8;
@@ -206,11 +207,12 @@ const F_PARS = /* glsl */`
 uniform sampler2D tSoil, tRock, tNoise, tStrata;
 uniform vec2 uRockSlope;
 uniform vec3 uStrata, uSnow, uSnowColor, uPath;
-uniform float uWet, uGloss, uBump, uSparkle;
+uniform float uWet, uGloss, uBump, uSparkle, uSoilTexel;
 uniform vec3 uSunCol, uSunDirT;
 varying vec4 vSurf;
 varying vec3 vTW, vTN;
-float tH, tR, tSnowW;
+float tH, tR, tSnowW, tRockW, tHr;
+vec2 tGrad;
 mat2 tRot2( float a ) { float c = cos( a ), s = sin( a ); return mat2( c, -s, s, c ); }
 vec3 tPerturbH( vec3 p, vec3 n, float h, float k ) {
   vec3 sx = dFdx( p ), sy = dFdy( p ), r1 = cross( sy, n ), r2 = cross( n, sx );
@@ -227,8 +229,15 @@ float tGlint( vec3 wp, vec3 n, vec3 v, vec3 l, float density ) {
 const F_ALBEDO = /* glsl */`
 {
   vec3 wn = normalize( vTN );
-  vec4 soil = texture2D( tSoil, vTW.xz * 0.111 );
+  vec2 tUV = vTW.xz * 0.111;
+  vec4 soil = texture2D( tSoil, tUV );
+  tGrad = vec2( 0.0 );
 #ifndef TERRAIN_LITE
+  {
+    // soil bump from texture-space differences (smooth, unlike screen derivatives on a fine height map)
+    float tE = uSoilTexel * 1.5;
+    tGrad = vec2( texture2D( tSoil, tUV + vec2( tE, 0.0 ) ).g - soil.g, texture2D( tSoil, tUV + vec2( 0.0, tE ) ).g - soil.g ) * ( 0.111 / tE );
+  }
   soil = mix( soil, texture2D( tSoil, tRot2( 0.83 ) * vTW.xz * 0.027 ), 0.35 );
   vec3 bw = pow( abs( wn ), vec3( 4.0 ) ); bw /= dot( bw, vec3( 1.0 ) );
   vec4 rk = texture2D( tRock, vTW.zy * 0.06 ) * bw.x + texture2D( tRock, vTW.xz * 0.06 ) * bw.y
@@ -249,6 +258,9 @@ const F_ALBEDO = /* glsl */`
   tSnowW = uSnow.x * smoothstep( uSnow.y, uSnow.z, wn.y + ( soil.g - 0.5 ) * 0.15 );
   diffuseColor.rgb = mix( col, uSnowColor * ( 0.92 + 0.08 * soil.r ), tSnowW );
   tH = mix( soil.g, rk.g, rockW ) * ( 1.0 - 0.7 * tSnowW );
+  tHr = rk.g * ( 1.0 - 0.7 * tSnowW );
+  tRockW = rockW;
+  tGrad *= ( 1.0 - 0.7 * tSnowW );
   tR = mix( mix( soil.a, rk.a, rockW ), 0.78, tSnowW ) - wet * 0.45 - vSurf.a * 0.1;
 }
 `;
@@ -256,11 +268,16 @@ const F_ROUGH = /* glsl */`
   roughnessFactor = clamp( mix( roughnessFactor * ( 0.6 + 0.5 * tR ), 0.2, uGloss ), 0.04, 1.0 );
 `;
 const F_NORMAL = /* glsl */`
+{
+  float tDist = length( vViewPosition );
 #ifdef TERRAIN_LITE
-  normal = tPerturbH( - vViewPosition, normal, tH, uBump * ( 1.0 - smoothstep( 25.0, 40.0, length( vViewPosition ) ) ) );
+  normal = tPerturbH( - vViewPosition, normal, tH, uBump * 0.5 * ( 1.0 - smoothstep( 25.0, 40.0, tDist ) ) );
 #else
-  normal = tPerturbH( - vViewPosition, normal, tH, uBump * ( 1.0 - smoothstep( 80.0, 260.0, length( vViewPosition ) ) ) );
+  vec3 tPert = vec3( tGrad.x, 0.0, tGrad.y ) * 0.07 * uBump * ( 1.0 - tRockW ) * ( 1.0 - smoothstep( 40.0, 160.0, tDist ) );
+  normal = normalize( normal - mat3( viewMatrix ) * tPert );
+  normal = tPerturbH( - vViewPosition, normal, tHr, uBump * 0.6 * tRockW * ( 1.0 - smoothstep( 80.0, 260.0, tDist ) ) );
 #endif
+}
 `;
 const F_SPARKLE = /* glsl */`
   if ( uSparkle > 0.0 && tSnowW > 0.01 ) {
@@ -318,13 +335,13 @@ export class TerrainRenderer {
     const sunCol = new THREE.Color(1, 1, 1);
     const U = this.uniforms = {
       tSoil: { value: T.soil }, tRock: { value: T.rock }, tNoise: { value: T.noise }, tStrata: { value: this._strataTex },
-      uRockSlope: { value: new THREE.Vector2(...(S.rockSlope ?? [0.28, 0.5])) },
+      uRockSlope: { value: new THREE.Vector2(...(S.rockSlope ?? [0.16, 0.36])) },
       uStrata: { value: new THREE.Vector3(S.strataHeight ?? 9, S.strataWarp ?? 1.5, S.strataStrength ?? 0.8) },
       uSnow: { value: new THREE.Vector3(S.snow ?? 0, S.snowSlope?.[0] ?? 0.75, S.snowSlope?.[1] ?? 0.92) },
       uSnowColor: { value: new THREE.Color(pal.snow ?? '#e8eef5') },
       uWet: { value: S.wetness ?? 0.5 }, uGloss: { value: S.gloss ?? 0 }, uBump: { value: S.bump ?? 1 },
       uPath: { value: new THREE.Color(pal.dust ?? '#8a7a6a') },
-      uSparkle: { value: S.sparkle ?? 0 },
+      uSparkle: { value: S.sparkle ?? 0 }, uSoilTexel: { value: 1 / size },
       uSunCol: { value: sunCol }, uSunDirT: { value: new THREE.Vector3(0, 1, 0) },
       uLodCenter: { value: new THREE.Vector3() }, uSplitK: { value: 2 },
     };
@@ -396,14 +413,16 @@ export class TerrainRenderer {
       const a = j * V + i, b = a + 1, c = a + V + 1, d = a + V;
       idx.push(a, c, b, a, d, c);
     }
-    // skirts: 4 edges, each a strip from the edge row down to its skirt copy (both windings so it never culls away)
+    // skirts: 4 edges, each a strip from the edge row down to its skirt copy, facing outward (a crack is only ever seen
+    // from the neighbour's side; the neighbour's own skirt covers the other case)
     const base = V * V;
     const edge = (e, k) => {           // e: 0 z=0 row, 1 x=n col, 2 z=n row, 3 x=0 col; k along the edge
       if (e === 0) return k; if (e === 1) return k * V + n; if (e === 2) return n * V + k; return k * V;
     };
     for (let e = 0; e < 4; e++) for (let k = 0; k < n; k++) {
       const a = edge(e, k), b = edge(e, k + 1), sa = base + e * V + k, sb = sa + 1;
-      idx.push(a, b, sb, a, sb, sa, a, sb, b, a, sa, sb);
+      if (e === 0 || e === 1) idx.push(a, b, sb, a, sb, sa);
+      else idx.push(a, sb, b, a, sa, sb);
     }
     this.vertCount = V * V + 4 * V;
     this._index = new THREE.BufferAttribute(new Uint16Array(idx), 1);
@@ -465,12 +484,23 @@ export class TerrainRenderer {
       let all = true;
       for (const k of kids) if (!this._canCover(k)) { all = false; break; }
       if (all) { for (const k of kids) this._cover(k, cx, cz, covered || !!n.mesh); return true; }
-      for (const k of kids) this._want(k, this._dist(k, cx, cz), covered || !!n.mesh);
+      for (const k of kids) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), covered || !!n.mesh); }
+    }
+    else if (n.L < MAXL && n.mesh && d < this.K * n.size * 1.3) {
+      // prefetch: children are built a little before they're needed, so they appear fully morphed (no pop)
+      for (const k of this._kids(n)) if (!k.mesh) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), true, 2000); }
     }
     if (n.mesh) { this._draw(n); return true; }
     this._want(n, d, covered);
     if (n.kids && n.kids.every(k => this._canCover(k))) { for (const k of n.kids) this._drawCovered(k, cx, cz); return true; }
     return false;
+  }
+  /** wanted-but-not-drawn nodes for a root that is about to enter the view distance */
+  _prefetch(n, cx, cz, depth) {
+    n.used = this._frame;
+    const d = this._dist(n, cx, cz);
+    if (!n.mesh) this._want(n, d, true, 2000);
+    if (depth < 1 && n.L < MAXL && d < this.K * n.size) for (const k of this._kids(n)) this._prefetch(k, cx, cz, depth + 1);
   }
   /** draw whatever covers a node that isn't wanted at this level (zooming out while the parent builds) */
   _drawCovered(n, cx, cz) {
@@ -478,10 +508,11 @@ export class TerrainRenderer {
     for (const k of n.kids) this._drawCovered(k, cx, cz);
   }
   /** queue a build. Priority: holes first (nothing drawn above), then equal screen error (distance / size) */
-  _want(n, d, covered = true) {
+  _want(n, d, covered = true, extra = 0) {
     if (n.mesh || n.want === this._frame) return;
     n.want = this._frame;
-    n._p = (covered ? 1000 : 0) + d / n.size;
+    n._p = (covered ? 1000 : 0) + extra + d / n.size;
+    if (extra) n._pre = true; else n._pre = false;
     this._queue.push(n); n._d = d;
   }
   _draw(n) {
@@ -494,9 +525,9 @@ export class TerrainRenderer {
     for (const n of this._drawn) if (n.mesh) n.mesh.visible = false;
     this._drawn.length = 0;
     this._queue.length = 0;
-    const o = this.hf.gridOrigin, R = this.viewDist;
-    const i0 = Math.floor((cx - R - o.x) / ROOT), i1 = Math.floor((cx + R - o.x) / ROOT);
-    const j0 = Math.floor((cz - R - o.z) / ROOT), j1 = Math.floor((cz + R - o.z) / ROOT);
+    const o = this.hf.gridOrigin, R = this.viewDist, RP = R * 1.3;
+    const i0 = Math.floor((cx - RP - o.x) / ROOT), i1 = Math.floor((cx + RP - o.x) / ROOT);
+    const j0 = Math.floor((cz - RP - o.z) / ROOT), j1 = Math.floor((cz + RP - o.z) / ROOT);
     // the renderable region: the bounds plus the outer margin
     const b = this.hf.bounds, M = 2816;
     const ri0 = Math.floor((b.x0 - M - o.x) / ROOT), ri1 = Math.floor((b.x1 + M - o.x) / ROOT);
@@ -505,12 +536,15 @@ export class TerrainRenderer {
     for (let j = Math.max(j0, rj0); j <= Math.min(j1, rj1); j++) for (let i = Math.max(i0, ri0); i <= Math.min(i1, ri1); i++) {
       const n = this._node(0, i, j);
       const d = this._dist(n, cx, cz);
-      if (d > R) continue;
+      if (d > RP) continue;
       n.used = this._frame;
+      if (d > R) { this._prefetch(n, cx, cz, 0); continue; }   // just outside the view: build ahead, draw nothing
       if (!this._cover(n, cx, cz)) holes++;
     }
     this._queue.sort((a, b2) => a._p - b2._p || a.L - b2.L);
-    this._stats.pending = this._queue.length;
+    let pend = 0; for (const q of this._queue) if (!q._pre) pend++;
+    this._stats.pending = pend;
+    this._stats.prefetch = this._queue.length - pend;
     this._stats.holes = holes;
   }
 
@@ -556,10 +590,12 @@ export class TerrainRenderer {
       hf.bakeAt(x, z, _bk);
       const slope = _bk.slope >= 0 ? _bk.slope : 1 - nO[1];
       const sed = smooth(0.15, 0.6, _bk.flow);
+      const cv = _bk.curv || 0;
       _col.copy(pal.ground)
         .lerp(pal.sediment, sed * 0.8)
-        .lerp(pal.high, smooth(h20, h80, h) * 0.5)
-        .lerp(pal.rock, smooth(0.2, 0.45, slope))
+        .lerp(pal.high, Math.min(1, smooth(h20, h80, h) * 0.5 + Math.max(0, cv) * 0.35))
+        .lerp(_c2.copy(pal.sediment).multiplyScalar(0.8), Math.max(0, -cv) * 0.3)
+        .lerp(pal.rock, smooth(0.16, 0.4, slope))
         .lerp(pal.dust, _bk.bed * 0.6);
       const patch = 0.88 + 0.24 * this._vn(x / 37, z / 37);
       const light = patch * (0.55 + 0.45 * _bk.sun);
@@ -604,7 +640,7 @@ export class TerrainRenderer {
     else slot.geo.dispose();
   }
   _evict(cx, cz) {
-    const far = this.viewDist * 1.15;
+    const far = this.viewDist * 1.45;
     let over = this._built - this.cacheMax;
     const old = [];
     for (const n of this._nodes.values()) {
@@ -646,7 +682,8 @@ export class TerrainRenderer {
       }
       if (built) this._select(cam.x, cam.z);
     }
-    this._evict(cam.x, cam.z);
+    // eviction walks every known node: every 15 frames, or now when the cache is over its cap
+    if (this._built > this.cacheMax || (this._frame % 15) === 0) this._evict(cam.x, cam.z);
     this._shadows(focus || cam);
     this._count();
   }
@@ -659,10 +696,14 @@ export class TerrainRenderer {
   /** build every wanted node now (no yields), re-selecting until nothing is pending */
   settle(cameraPos) {
     const cam = cameraPos || this._lastCam;
+    this._lastCam.copy(cam);
+    this.uniforms.uLodCenter.value.copy(cam);
+    this._syncUniforms();
     for (let it = 0; it < 8; it++) {
       this._select(cam.x, cam.z);
-      if (!this._queue.length) break;
-      for (const n of this._queue.slice()) if (!n.mesh) this._build(n);
+      const q = this._queue.filter(n => !n._pre);
+      if (!q.length) break;
+      for (const n of q) if (!n.mesh) this._build(n);
     }
     this._select(cam.x, cam.z);
     this._evict(cam.x, cam.z);
@@ -677,7 +718,7 @@ export class TerrainRenderer {
     let done = 0, t = performance.now();
     for (let it = 0; it < 10; it++) {
       this._select(cam.x, cam.z);
-      const q = this._queue.slice();
+      const q = this._queue.filter(n => !n._pre);
       if (!q.length) break;
       for (const n of q) {
         if (!n.mesh) this._build(n);
@@ -694,7 +735,7 @@ export class TerrainRenderer {
     onProgress?.(1);
   }
   stats() {
-    return { nodes: this._stats.nodes, pending: this._stats.pending, triangles: this._stats.triangles, built: this._stats.built,
+    return { nodes: this._stats.nodes, pending: this._stats.pending, prefetch: this._stats.prefetch || 0, triangles: this._stats.triangles, built: this._stats.built,
              pooled: this._stats.pooled, holes: this._stats.holes || 0, builds: this._stats.builds,
              avgBuildMs: this._stats.builds ? this._stats.buildMs / this._stats.builds : 0 };
   }
@@ -710,12 +751,63 @@ export class TerrainRenderer {
     }
     return { calls, triangles: calls * this.trisVisiblePerNode, drawn: this._drawn.length };
   }
+  /** extra (tests): the rendered, morphed surface height at (x, z) (a CPU replica of the vertex shader), or null */
+  renderedHeightAt(x, z) {
+    const n = this._drawnAt(x, z);
+    if (n) {
+      const sp = n.size / this.segs, V = this.segs + 1;
+      const fx = Math.min(this.segs - 1e-9, (x - n.x0) / sp), fz = Math.min(this.segs - 1e-9, (z - n.z0) / sp);
+      const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j;
+      const h = (a, b) => this._morphedY(n, a, b, V, sp);
+      const h00 = h(i, j), h11 = h(i + 1, j + 1);
+      if (tx >= tz) { const h10 = h(i + 1, j); return h00 + (h10 - h00) * tx + (h11 - h10) * tz; }
+      const h01 = h(i, j + 1); return h00 + (h01 - h00) * tz + (h11 - h01) * tx;
+    }
+    return null;
+  }
+  /** the drawn node covering (x, z): walk the levels through the node map (O(levels)) */
+  _drawnAt(x, z) {
+    const o = this.hf.gridOrigin;
+    for (let L = MAXL; L >= 0; L--) {
+      const size = ROOT >> L, ix = Math.floor((x - o.x) / size), iz = Math.floor((z - o.z) / size);
+      const n = this._nodes.get((L * 8192 + (ix + 4096)) * 8192 + (iz + 4096));
+      if (n && n.mesh && n.mesh.visible) return n;
+    }
+    return null;
+  }
+  _morphedY(n, i, j, V, sp) {
+    const geo = n.mesh.geometry, P = geo.attributes.position.array, M = geo.attributes.morph.array, v = j * V + i;
+    const y = P[v * 3 + 1], S = M[v * 4 + 3];
+    if (!(S > 0)) return y;
+    const c = this.uniforms.uLodCenter.value, wx = n.x0 + i * sp, wz = n.z0 + j * sp;
+    const d = Math.hypot(wx - c.x, wz - c.z), e0 = (this.K + 1.45) * S, e1 = 2 * this.K * S;
+    const t = Math.min(1, Math.max(0, (d - e0) / (e1 - e0))), k = t * t * (3 - 2 * t);
+    return y + (M[v * 4] - y) * k;
+  }
+  /** extra (tests): the largest height gap between a drawn node's rendered edge and its neighbours' surfaces */
+  edgeGap() {
+    let max = 0, count = 0;
+    for (const n of this._drawn) {
+      const sp = n.size / this.segs, V = this.segs + 1, eps = 0.01;
+      for (let k = 0; k <= this.segs; k++) {
+        for (const [i, j, ox, oz] of [[k, 0, 0, -eps], [k, this.segs, 0, eps], [0, k, -eps, 0], [this.segs, k, eps, 0]]) {
+          const x = n.x0 + i * sp, z = n.z0 + j * sp;
+          const other = this.renderedHeightAt(x + ox, z + oz);
+          if (other === null) continue;
+          const g = Math.abs(this._morphedY(n, i, j, V, sp) - other);
+          count++;
+          if (g > max) max = g;
+        }
+      }
+    }
+    return { max, count };
+  }
   /** extra: the drawn node meshes (tests: raycasting against the settled mesh) */
   drawnMeshes() { return this._drawn.map(n => n.mesh); }
   /** extra: the drawn node that covers (x, z), with its size */
   nodeAt(x, z) {
-    for (const n of this._drawn) if (x >= n.x0 && x <= n.x0 + n.size && z >= n.z0 && z <= n.z0 + n.size) return { mesh: n.mesh, size: n.size, L: n.L };
-    return null;
+    const n = this._drawnAt(x, z);
+    return n ? { mesh: n.mesh, size: n.size, L: n.L } : null;
   }
   dispose() {
     this.root.parent?.remove(this.root);

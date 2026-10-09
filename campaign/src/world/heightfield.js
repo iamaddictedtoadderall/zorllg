@@ -25,7 +25,7 @@ import { createNoise2D, createValueNoise2D, fbm2, ridged2, warp2 } from '../core
 
 const TILE = 64;                 // collision tile cells (2 m) per side → 128 m
 const TILE_MAX = 512;
-const OUTER_CELL = 32;           // coarse grid outside the bounds
+const OUTER_CELL = 64;           // coarse grid outside the bounds
 const OUTER_MARGIN = 2816;       // how far the outer grid extends past the bounds (≥ High view distance)
 const EDGE_BLEND = 96;           // bounds edge blend band (m)
 const BAKE_DIV = 2;              // light bakes at 2 × macroCell
@@ -46,6 +46,48 @@ function crw(t, out, o) {
 }
 const _wx = new Float64Array(4), _wz = new Float64Array(4);
 const yieldNow = () => new Promise(r => setTimeout(r, 0));
+
+/** droplet erosion for a batch of start positions (a plain function, so the hot loop optimises well) */
+function erodeBatch(Hn, flowAcc, BO, BW, starts, n, P) {
+  const { nx, lo, hiX, hiZ, inertia, capF, minCap, erodeS, depositS, evap, grav, maxSteps, maxEr, NB } = P;
+  for (let q0 = 0; q0 < n; q0++) {
+    let px = starts[q0 * 2], pz = starts[q0 * 2 + 1];
+    let dx = 0, dz = 0, speed = 1, water = 1, sed = 0;
+    for (let step = 0; step < maxSteps; step++) {
+      const ix = px | 0, iz = pz | 0, fx = px - ix, fz = pz - iz, k = iz * nx + ix;
+      const h00 = Hn[k], h10 = Hn[k + 1], h01 = Hn[k + nx], h11 = Hn[k + nx + 1];
+      const gx = (h10 - h00) * (1 - fz) + (h11 - h01) * fz, gz = (h01 - h00) * (1 - fx) + (h11 - h10) * fx;
+      const w00 = (1 - fx) * (1 - fz), w10 = fx * (1 - fz), w01 = (1 - fx) * fz, w11 = fx * fz;
+      const h = h00 * w00 + h10 * w10 + h01 * w01 + h11 * w11;
+      dx = dx * inertia - gx * (1 - inertia); dz = dz * inertia - gz * (1 - inertia);
+      const len = Math.sqrt(dx * dx + dz * dz);
+      if (len < 1e-9) break;
+      dx /= len; dz /= len;
+      const fw = water * (0.5 + 0.5 * (speed < 4 ? speed : 4));
+      flowAcc[k] += fw * w00; flowAcc[k + 1] += fw * w10; flowAcc[k + nx] += fw * w01; flowAcc[k + nx + 1] += fw * w11;
+      px += dx; pz += dz;
+      if (px < lo || pz < lo || px >= hiX || pz >= hiZ) break;
+      const jx = px | 0, jz = pz | 0, qx = px - jx, qz = pz - jz, q = jz * nx + jx;
+      const nh = Hn[q] * (1 - qx) * (1 - qz) + Hn[q + 1] * qx * (1 - qz) + Hn[q + nx] * (1 - qx) * qz + Hn[q + nx + 1] * qx * qz;
+      const dh = nh - h;
+      const cap = Math.max(-dh * speed * water * capF, minCap);
+      if (sed > cap || dh > 0) {
+        const dep = dh > 0 ? (dh < sed ? dh : sed) : (sed - cap) * depositS;
+        sed -= dep;
+        Hn[k] += dep * w00; Hn[k + 1] += dep * w10; Hn[k + nx] += dep * w01; Hn[k + nx + 1] += dep * w11;
+      } else {
+        let er = (cap - sed) * erodeS;
+        if (er > -dh) er = -dh;
+        if (er > maxEr) er = maxEr;
+        for (let b = 0; b < NB; b++) Hn[k + BO[b]] -= er * BW[b];
+        sed += er;
+      }
+      const sp2 = speed * speed - dh * grav;
+      speed = sp2 > 0 ? Math.sqrt(sp2) : 0;
+      water *= 1 - evap;
+    }
+  }
+}
 
 export class Heightfield {
   constructor(def, route, stamps = [], o = {}) {
@@ -202,7 +244,7 @@ export class Heightfield {
   // ------------------------------------------------------------------ build
   _cacheKey() {
     const r = this.route;
-    return JSON.stringify({ v: 3, d: this.def, p: r.points, hw: [r.halfWidthAt(0), r.maxHalfWidth, r.length,
+    return JSON.stringify({ v: 4, d: this.def, p: r.points, hw: [r.halfWidthAt(0), r.maxHalfWidth, r.length,
       ...Array.from(r.controlS || []).map((s) => r.halfWidthAt(s))], st: this.stamps, seed: this.seed, cell: this.cell,
       er: this.tier.erosionScale ?? 1, sun: [this.sunDir.x, this.sunDir.y, this.sunDir.z].map(v => Math.round(v * 1000)) });
   }
@@ -217,19 +259,56 @@ export class Heightfield {
       onProgress?.(1, 'Terrain');
       return;
     }
-    let tLast = performance.now();
+    let tLast = performance.now(), tStage = tLast;
+    const stages = this.stats.stages = {};
+    const stage = (k) => { const n = performance.now(); stages[k] = Math.round(n - tStage); tStage = n; };
     const tick = async (p, label) => {
       if (performance.now() - tLast > 45) { onProgress?.(p, label); await yieldNow(); tLast = performance.now(); }
     };
     const { nx, nz, cell } = this, x0 = this.bounds.x0, z0 = this.bounds.z0, N = nx * nz;
     const route = this.route, P = this.P;
     const H = new Float32Array(N);
-    // 1–2. base relief + features
+    // route distance on a coarse 64 m lattice (cheap; the corridor stage refines it near the route)
+    const route0 = this.route, CC = 64;
+    const cnx = Math.ceil((nx - 1) * cell / CC) + 2, cnz = Math.ceil((nz - 1) * cell / CC) + 2;
+    const cd = new Float32Array(cnx * cnz);
+    for (let j = 0; j < cnz; j++) for (let i = 0; i < cnx; i++) cd[j * cnx + i] = route0.closestInto(x0 + i * CC, z0 + j * CC, _c).dist;
+    const cdAt = (x, z) => {          // bilinear coarse distance (continuous)
+      const fx = (x - x0) / CC, fz = (z - z0) / CC, i = Math.min(cnx - 2, Math.floor(fx)), j = Math.min(cnz - 2, Math.floor(fz));
+      const tx = fx - i, tz = fz - j, k = j * cnx + i;
+      return (cd[k] * (1 - tx) + cd[k + 1] * tx) * (1 - tz) + (cd[k + cnx] * (1 - tx) + cd[k + cnx + 1] * tx) * tz;
+    };
+    this._cdAt = cdAt;
+    // 1–2. base relief + features: exact on the 8 m lattice within hw + 600 m of the route (where it is seen up close),
+    // a 16 m bicubic lattice beyond, blended over 150 m
+    const hwM = route0.maxHalfWidth ?? 400, EXACT = hwM * 1.2 + 330, BLEND = 150;
+    const C2 = cell * 2, rnx = Math.ceil((nx - 1) / 2) + 4, rnz = Math.ceil((nz - 1) / 2) + 4;
+    const R2 = new Float32Array(rnx * rnz);
+    for (let j = 0; j < rnz; j++) {
+      for (let i = 0; i < rnx; i++) R2[j * rnx + i] = this._relief(x0 + (i - 1) * C2, z0 + (j - 1) * C2);
+      if ((j & 15) === 0) await tick(0.04 * j / rnz, 'Relief');
+    }
     for (let j = 0; j < nz; j++) {
       const z = z0 + j * cell;
-      for (let i = 0; i < nx; i++) H[j * nx + i] = this._relief(x0 + i * cell, z);
-      if ((j & 7) === 0) await tick(0.12 * j / nz, 'Relief');
+      for (let i = 0; i < nx; i++) {
+        const x = x0 + i * cell, d = cdAt(x, z);
+        if (d <= EXACT) { H[j * nx + i] = this._relief(x, z); continue; }
+        // bicubic from the 16 m lattice
+        const fx = i / 2 + 1, fz = j / 2 + 1, ix = Math.floor(fx), iz = Math.floor(fz);
+        crw(fx - ix, _wx, 0); crw(fz - iz, _wz, 0);
+        let h = 0;
+        for (let b = 0; b < 4; b++) {
+          const row = Math.min(rnz - 1, Math.max(0, iz - 1 + b)) * rnx;
+          let r = 0;
+          for (let a = 0; a < 4; a++) r += R2[row + Math.min(rnx - 1, Math.max(0, ix - 1 + a))] * _wx[a];
+          h += r * _wz[b];
+        }
+        if (d < EXACT + BLEND) h = lerp(this._relief(x, z), h, smooth(EXACT, EXACT + BLEND, d));
+        H[j * nx + i] = h;
+      }
+      if ((j & 7) === 0) await tick(0.04 + 0.08 * j / nz, 'Relief');
     }
+    stage('relief');
     // 3. route bed profile
     const ds = 8, nb = Math.max(2, Math.ceil(route.length / ds) + 1);
     let bed = new Float64Array(nb);
@@ -271,21 +350,43 @@ export class Heightfield {
       this._bedRef = ref;
     }
     this._bed = bed; this._bedDs = ds;
-    // 4. corridor shaping. Route coordinates per cell: exact near the route, conservative far away (coarse 64 m pass)
+    // 4. corridor shaping. Route coordinates per cell: exact on a 16 m lattice near the route and interpolated between
+    // (exact again where the lattice straddles a jump in s or the route ends); far away a conservative coarse bound
     const RS = new Float32Array(N), RL = new Float32Array(N), RD = new Float32Array(N);
-    const hwMax = route.maxHalfWidth ?? 400, FAR = hwMax + 700;
-    const CC = 64, cnx = Math.ceil((nx - 1) * cell / CC) + 2, cnz = Math.ceil((nz - 1) * cell / CC) + 2;
-    const cd = new Float32Array(cnx * cnz);
-    for (let j = 0; j < cnz; j++) for (let i = 0; i < cnx; i++) cd[j * cnx + i] = route.closestInto(x0 + i * CC, z0 + j * CC, _c).dist;
+    const hwMax = route.maxHalfWidth ?? 400, FAR = Math.max(hwMax * 2.3, hwMax + 700);
     const bedHalf = P.carve.bedWidth / 2, sh = Math.max(1, P.carve.shoulder), W = P.walls;
+    const lbAt = (i, j) => {
+      const ci = Math.floor(i * cell / CC), cj = Math.floor(j * cell / CC);
+      return Math.min(cd[cj * cnx + ci], cd[cj * cnx + ci + 1], cd[(cj + 1) * cnx + ci], cd[(cj + 1) * cnx + ci + 1]) - CC * 1.5;
+    };
+    const lnx2 = Math.ceil((nx - 1) / 2) + 1, lnz2 = Math.ceil((nz - 1) / 2) + 1;
+    const LS = new Float32Array(lnx2 * lnz2).fill(NaN), LL = new Float32Array(lnx2 * lnz2), LD = new Float32Array(lnx2 * lnz2);
+    for (let b = 0; b < lnz2; b++) for (let a = 0; a < lnx2; a++) {
+      const i = Math.min(nx - 1, a * 2), j = Math.min(nz - 1, b * 2);
+      if (lbAt(i, j) > FAR + 2 * CC) continue;
+      route.closestInto(x0 + a * 2 * cell, z0 + b * 2 * cell, _c);
+      LS[b * lnx2 + a] = _c.s; LL[b * lnx2 + a] = _c.l; LD[b * lnx2 + a] = _c.dist;
+    }
+    await tick(0.13, 'Corridor');
+    const rlen = route.length, jump = cell * 6;
     for (let j = 0; j < nz; j++) {
       const z = z0 + j * cell;
       for (let i = 0; i < nx; i++) {
         const k = j * nx + i, x = x0 + i * cell;
-        const ci = Math.floor(i * cell / CC), cj = Math.floor(j * cell / CC);
-        const lb = Math.min(cd[cj * cnx + ci], cd[cj * cnx + ci + 1], cd[(cj + 1) * cnx + ci], cd[(cj + 1) * cnx + ci + 1]) - CC * 1.5;
+        const lb = lbAt(i, j);
         if (lb > FAR) { RS[k] = -1; RL[k] = 0; RD[k] = lb; H[k] += W.height * this._wallF(x, z); continue; }
-        route.closestInto(x, z, _c);
+        // route coordinates from the lattice
+        const a0 = i >> 1, b0 = j >> 1, ta = (i & 1) * 0.5, tb = (j & 1) * 0.5;
+        const a1 = Math.min(lnx2 - 1, a0 + (i & 1)), b1 = Math.min(lnz2 - 1, b0 + (j & 1));
+        const q00 = b0 * lnx2 + a0, q10 = b0 * lnx2 + a1, q01 = b1 * lnx2 + a0, q11 = b1 * lnx2 + a1;
+        const s00 = LS[q00], s10 = LS[q10], s01 = LS[q01], s11 = LS[q11];
+        const smin = Math.min(s00, s10, s01, s11), smax = Math.max(s00, s10, s01, s11);
+        if (smin === smin && smax - smin < jump && smin > 1 && smax < rlen - 1) {
+          const w00 = (1 - ta) * (1 - tb), w10 = ta * (1 - tb), w01 = (1 - ta) * tb, w11 = ta * tb;
+          _c.s = s00 * w00 + s10 * w10 + s01 * w01 + s11 * w11;
+          _c.l = LL[q00] * w00 + LL[q10] * w10 + LL[q01] * w01 + LL[q11] * w11;
+          _c.dist = Math.abs(_c.l);
+        } else route.closestInto(x, z, _c);
         RS[k] = _c.s; RL[k] = _c.l; RD[k] = _c.dist;
         const hw = route.halfWidthAt(_c.s);
         // the rim line wanders (±7 %) so the canyon isn't a perfect offset of the route
@@ -293,10 +394,13 @@ export class Heightfield {
         // walls rise from walls.start; where the land outside sits low (a valley crossing the corridor edge) the wall
         // also lifts it toward a smoothed bed reference, so the rim always stands well above the route. The lift fades
         // out between 1.5 and 2.2 half-widths (no seams in the far field).
-        const ramp = smooth(W.start, 1.2, d);
+        // spurs (ridged noise pushes buttresses into the corridor) and benches (a partly stepped ramp) break the face
+        const dsp = d - 0.11 * (ridged2(this.nRidge, x / 230 + 5.3, z / 230 - 2.1, 3) - 0.45);
+        let ramp = smooth(W.start, 1.2, dsp);
+        if (ramp > 0 && ramp < 1) { const q = ramp * 5, f = q - Math.floor(q); ramp = lerp(ramp, (Math.floor(q) + smooth(0.3, 0.7, f)) / 5, 0.45); }
         let h = H[k];
         if (ramp > 0) {
-          const lift = Math.max(0, this._bedRefAt(_c.s) + 30 - h) * (1 - smooth(1.5, 2.2, d));
+          const lift = Math.max(0, this._bedRefAt(_c.s) + 0.12 * W.height - h) * (1 - smooth(1.5, 2.2, d));
           h += ramp * (W.height * this._wallF(x, z) + lift);
         }
         const bw = P.carve.strength * (1 - smooth(bedHalf, bedHalf + sh, _c.dist));
@@ -305,13 +409,16 @@ export class Heightfield {
       }
       if ((j & 7) === 0) await tick(0.12 + 0.12 * j / nz, 'Corridor');
     }
+    stage('corridor');
     // erosion region mask (corridor + 600 m)
     const region = new Uint8Array(N);
     for (let k = 0; k < N; k++) if (RS[k] >= 0 && RD[k] <= route.halfWidthAt(RS[k]) + 600) region[k] = 1;
     // 5. erosion
     const flowAcc = new Float32Array(N);
     await this._erode(H, region, flowAcc, (p) => tick(0.24 + 0.4 * p, 'Erosion'));
+    stage('erosion');
     for (let p = 0; p < P.erosion.thermal; p++) { this._thermal(H, region); await tick(0.64 + 0.03 * p, 'Erosion'); }
+    stage('thermal');
     // 6. re-carve at 50 % and stamps
     const bedMask = new Uint8Array(N);
     for (let k = 0; k < N; k++) {
@@ -329,9 +436,9 @@ export class Heightfield {
     const flow = new Float32Array(N);
     {
       let mx = 0; const hist = [];
-      for (let k = 0; k < N; k++) if (flowAcc[k] > 0) hist.push(flowAcc[k]);
+      for (let k = 0; k < N; k += 5) if (flowAcc[k] > 0) hist.push(flowAcc[k]);
       hist.sort((a, b) => a - b);
-      mx = hist.length ? hist[Math.floor(hist.length * 0.995)] : 1;
+      mx = hist.length ? hist[Math.floor(hist.length * 0.98)] : 1;
       const lm = Math.log(1 + Math.max(1e-6, mx));
       for (let k = 0; k < N; k++) flow[k] = clamp(Math.log(1 + flowAcc[k]) / lm, 0, 1);
       // a light blur so channels read as soft bands
@@ -345,6 +452,13 @@ export class Heightfield {
         tmp[j * nx + i] = s / n;
       }
       flow.set(tmp);
+    }
+    // curvature (convex ridges +, hollows −) from a 2-cell Laplacian, squashed to ±1
+    const curv = new Float32Array(N);
+    for (let j = 2; j < nz - 2; j++) for (let i = 2; i < nx - 2; i++) {
+      const k = j * nx + i;
+      const lap = (H[k - 2] + H[k + 2] + H[k - 2 * nx] + H[k + 2 * nx] - 4 * H[k]) / (4 * cell * cell);
+      curv[k] = Math.tanh(-lap * 22);
     }
     const slope = new Float32Array(N), mask = new Float32Array(N);
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
@@ -360,21 +474,24 @@ export class Heightfield {
     // height percentiles over the corridor
     {
       const hs = [];
-      for (let k = 0; k < N; k += 3) if (RS[k] >= 0 && RD[k] <= route.halfWidthAt(RS[k]) * 1.1) hs.push(H[k]);
+      for (let k = 0; k < N; k += 7) if (RS[k] >= 0 && RD[k] <= route.halfWidthAt(RS[k]) * 1.1) hs.push(H[k]);
       hs.sort((a, b) => a - b);
       this.h20 = hs.length ? hs[Math.floor(hs.length * 0.2)] : 0;
       this.h80 = hs.length ? hs[Math.floor(hs.length * 0.8)] : 1;
       this.hMin = hs.length ? hs[0] : 0; this.hMax = hs.length ? hs[hs.length - 1] : 1;
       if (this.h80 - this.h20 < 1) this.h80 = this.h20 + 1;
     }
-    this.H = H; this.flow = flow; this.slope = slope; this.mask = mask; this.bedMask = bedMask;
+    this.H = H; this.flow = flow; this.slope = slope; this.mask = mask; this.bedMask = bedMask; this.curv = curv;
+    stage('bakes');
     // light bakes at BAKE_DIV × cell
     await this._bakeLight(tick);
+    stage('light');
     // outer grid
     await this._buildOuter(tick);
+    stage('outer');
     this.built = true;
     this.stats.buildMs = performance.now() - t0;
-    CACHE = { key, data: { H, flow, slope, mask, bedMask, h20: this.h20, h80: this.h80, hMin: this.hMin, hMax: this.hMax,
+    CACHE = { key, data: { H, flow, slope, mask, bedMask, curv, h20: this.h20, h80: this.h80, hMin: this.hMin, hMax: this.hMax,
                            sun: this.sun, sky: this.sky, lnx: this.lnx, lnz: this.lnz, outer: this.outer, _bed: this._bed,
                            _bedDs: this._bedDs, _bedRef: this._bedRef, stamps: this.stamps.map(t => ({ ...t })), stats: { ...this.stats } } };
     onProgress?.(1, 'Terrain');
@@ -403,65 +520,39 @@ export class Heightfield {
     this.stats.droplets = count;
     if (count <= 0) return;
     const rng = mulberry32(this.seed ^ 0xe7051 ^ hashString('erosion'));
-    const HS = cell * 14;                      // height normalisation (m per unit): Lague's constants expect gentle unit slopes
+    // heights are eroded in normalised units (HS metres per unit): Lague's constants expect gentle unit slopes
+    const HS = cell * 10, iHS = 1 / HS;
     const inertia = 0.05, capF = 4, minCap = 0.01, erodeS = 0.3, depositS = 0.3, evap = 0.01, grav = 4, maxSteps = 48;
-    // brush: radius 2 cells
-    const BR = 2, bo = [], bw = [];
+    const maxEr = MAX_ERODE * iHS;
+    const N = nx * nz, Hn = new Float32Array(N);
+    for (let k = 0; k < N; k++) Hn[k] = H[k] * iHS;
+    // brush: radius 2 cells, as flat index offsets (droplets stay ≥ 3 cells from the edge, so no bounds checks)
+    const BR = 2, offs = [], bw = [];
     let wsum = 0;
     for (let b = -BR; b <= BR; b++) for (let a = -BR; a <= BR; a++) {
       const d = Math.hypot(a, b); if (d >= BR + 0.5) continue;
-      const w = Math.max(0, 1 - d / (BR + 0.5)); bo.push([a, b]); bw.push(w); wsum += w;
+      const w = Math.max(0, 1 - d / (BR + 0.5)); offs.push(b * nx + a); bw.push(w); wsum += w;
     }
-    const BW = Float32Array.from(bw.map(w => w / wsum)), BA = Int32Array.from(bo.map(o => o[0])), BB = Int32Array.from(bo.map(o => o[1]));
+    const BW = Float32Array.from(bw.map(w => w / wsum)), BO = Int32Array.from(offs), NB = BW.length;
     const v = new THREE.Vector3(), x0 = this.bounds.x0, z0 = this.bounds.z0;
-    let tLast = performance.now();
-    for (let d = 0; d < count; d++) {
-      const s = rng() * route.length, hw = route.halfWidthAt(s);
-      const l = (rng() * 2 - 1) * (hw + 600);
-      route.toWorld(s, l, v);
-      let px = (v.x - x0) / cell, pz = (v.z - z0) / cell;
-      if (px < 1 || pz < 1 || px >= nx - 2 || pz >= nz - 2) continue;
-      if (!region[Math.floor(pz) * nx + Math.floor(px)]) continue;
-      let dx = 0, dz = 0, speed = 1, water = 1, sed = 0;
-      for (let step = 0; step < maxSteps; step++) {
-        const ix = Math.floor(px), iz = Math.floor(pz), fx = px - ix, fz = pz - iz, k = iz * nx + ix;
-        const h00 = H[k] / HS, h10 = H[k + 1] / HS, h01 = H[k + nx] / HS, h11 = H[k + nx + 1] / HS;
-        const gx = (h10 - h00) * (1 - fz) + (h11 - h01) * fz, gz = (h01 - h00) * (1 - fx) + (h11 - h10) * fx;
-        const h = h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz) + h01 * (1 - fx) * fz + h11 * fx * fz;
-        dx = dx * inertia - gx * (1 - inertia); dz = dz * inertia - gz * (1 - inertia);
-        const len = Math.hypot(dx, dz);
-        if (len < 1e-9) break;
-        dx /= len; dz /= len;
-        // flow accumulates where the droplet is
-        const fw = water * (0.5 + 0.5 * Math.min(4, speed));
-        flowAcc[k] += fw * (1 - fx) * (1 - fz); flowAcc[k + 1] += fw * fx * (1 - fz);
-        flowAcc[k + nx] += fw * (1 - fx) * fz; flowAcc[k + nx + 1] += fw * fx * fz;
-        px += dx; pz += dz;
-        if (px < 1 || pz < 1 || px >= nx - 2 || pz >= nz - 2) break;
-        const jx = Math.floor(px), jz = Math.floor(pz), qx = px - jx, qz = pz - jz, q = jz * nx + jx;
-        const nh = (H[q] * (1 - qx) * (1 - qz) + H[q + 1] * qx * (1 - qz) + H[q + nx] * (1 - qx) * qz + H[q + nx + 1] * qx * qz) / HS;
-        const dh = nh - h;
-        const cap = Math.max(-dh * speed * water * capF, minCap);
-        if (sed > cap || dh > 0) {
-          const dep = dh > 0 ? Math.min(dh, sed) : (sed - cap) * depositS;
-          sed -= dep;
-          const m = dep * HS;
-          H[k] += m * (1 - fx) * (1 - fz); H[k + 1] += m * fx * (1 - fz); H[k + nx] += m * (1 - fx) * fz; H[k + nx + 1] += m * fx * fz;
-        } else {
-          const er = Math.min((cap - sed) * erodeS, -dh, MAX_ERODE / HS);
-          for (let b = 0; b < BW.length; b++) {
-            const ii = ix + BA[b], jj = iz + BB[b];
-            if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
-            const e = er * BW[b];
-            H[jj * nx + ii] -= e * HS;
-            sed += e;
-          }
-        }
-        speed = Math.sqrt(Math.max(0, speed * speed - dh * grav));
-        water *= 1 - evap;
+    const P = { nx, nz, lo: 3, hiX: nx - 4, hiZ: nz - 4, inertia, capF, minCap, erodeS, depositS, evap, grav, maxSteps, maxEr, NB };
+    const starts = new Float64Array(2048);
+    for (let d0 = 0; d0 < count; d0 += 1024) {
+      const m = Math.min(1024, count - d0);
+      let n = 0;
+      for (let d = 0; d < m; d++) {
+        const s = rng() * route.length, hw = route.halfWidthAt(s);
+        const l = (rng() * 2 - 1) * (hw + 600);
+        route.toWorld(s, l, v);
+        const px = (v.x - x0) / cell, pz = (v.z - z0) / cell;
+        if (px < P.lo || pz < P.lo || px >= P.hiX || pz >= P.hiZ) continue;
+        if (!region[Math.floor(pz) * nx + Math.floor(px)]) continue;
+        starts[n * 2] = px; starts[n * 2 + 1] = pz; n++;
       }
-      if ((d & 1023) === 0 && performance.now() - tLast > 40) { await prog(d / count); tLast = performance.now(); }
+      erodeBatch(Hn, flowAcc, BO, BW, starts, n, P);
+      await prog(d0 / count);
     }
+    for (let k = 0; k < N; k++) H[k] = Hn[k] * HS;
   }
   _thermal(H, region) {
     const { nx, nz, cell } = this;
@@ -524,26 +615,33 @@ export class Heightfield {
     const x0 = this.bounds.x0, z0 = this.bounds.z0;
     const dirs = [];
     for (let a = 0; a < 8; a++) dirs.push([Math.cos(a * Math.PI / 4), Math.sin(a * Math.PI / 4)]);
-    const steps = [16, 28, 42, 58, 76, 96];
+    const steps = [16, 34, 60, 96];
     const sd = this.sunDir, sl = Math.hypot(sd.x, sd.z);
     const sdx = sl > 1e-4 ? sd.x / sl : 0, sdz = sl > 1e-4 ? sd.z / sl : 0, tanE = sl > 1e-4 ? sd.y / sl : 99;
-    const sunSteps = []; for (let t = 10; t <= 600; t *= 1.22) sunSteps.push(t);
+    const sunSteps = []; for (let t = 12; t <= 600; t *= 1.3) sunSteps.push(t);
     const softA = 0.06;   // radians of soft clearance
+    const farD = (this.route.maxHalfWidth ?? 400) + 900;
     for (let j = 0; j < lnz; j++) {
       for (let i = 0; i < lnx; i++) {
         const x = x0 + i * lc, z = z0 + j * lc, h0 = this._sampleGrid(H, x, z) + 1.5;
-        let occ = 0;
-        for (const [dx, dz] of dirs) {
+        // full horizon scan near the corridor; far terrain (seen from ≥ 1 km) gets every other direction and step
+        const far = this._cdAt ? this._cdAt(x, z) > farD : false, ds = far ? 2 : 1;
+        let occ = 0, nd = 0;
+        for (let q = 0; q < 8; q += ds) {
+          const dx = dirs[q][0], dz = dirs[q][1];
           let m = 0;
-          for (const t of steps) { const e = (this._sampleGrid(H, x + dx * t, z + dz * t) - h0) / t; if (e > m) m = e; }
+          for (let si = 0; si < steps.length; si += ds) { const t = steps[si]; const e = (this._sampleGrid(H, x + dx * t, z + dz * t) - h0) / t; if (e > m) m = e; }
           occ += m / Math.sqrt(1 + m * m);         // sin of the horizon elevation
+          nd++;
         }
-        sky[j * lnx + i] = Math.round(255 * clamp(1 - occ / 8 * 1.15, 0, 1));
+        sky[j * lnx + i] = Math.round(255 * clamp(1 - occ / nd * 1.15, 0, 1));
         let vis = 1;
         if (sd.y <= 0.0) vis = 0;
         else if (sl > 1e-4) {
           let minA = 1;
-          for (const t of sunSteps) {
+          const far = this._cdAt ? this._cdAt(x, z) > farD : false;
+          for (let si = 0; si < sunSteps.length; si += far ? 2 : 1) {
+            const t = sunSteps[si];
             const ry = h0 + t * tanE, gh = this._sampleGrid(H, x + sdx * t, z + sdz * t);
             const a = Math.atan2(ry - gh, t);
             if (a < minA) minA = a;
@@ -695,13 +793,14 @@ export class Heightfield {
   bakeAt(x, z, o) {
     const b = this.bounds;
     if (!this.built || x < b.x0 || z < b.z0 || x > b.x1 || z > b.z1) {
-      o.flow = 0; o.bed = 0; o.sky = 1; o.sun = this.sunDir.y > 0 ? 1 : 0; o.slope = -1; o.inside = false;
+      o.flow = 0; o.bed = 0; o.sky = 1; o.sun = this.sunDir.y > 0 ? 1 : 0; o.slope = -1; o.curv = 0; o.inside = false;
       return o;
     }
     o.inside = true;
     o.flow = this._sampleGrid(this.flow, x, z);
     o.bed = this._sampleGrid(this.bedMask, x, z) / 255;
     o.slope = this._sampleGrid(this.slope, x, z);
+    o.curv = this.curv ? this._sampleGrid(this.curv, x, z) : 0;
     o.sky = this._sampleLight(this.sky, x, z) / 255;
     o.sun = this._sampleLight(this.sun, x, z) / 255;
     return o;

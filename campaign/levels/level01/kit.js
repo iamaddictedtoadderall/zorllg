@@ -148,7 +148,8 @@ export function mats(ctx) {
     cyanDead: E('#5fe3ff', 0.5), goldLight: E('#ffcc66', 3), red: E('#ff2a1a', 3), amber: E('#ffb04a', 3),
     flare: E('#ff7048', 5), orangeTeeth: E('#ff7a2a', 3), collar: E('#bff6ff', 4),
     // per-level animated materials (not from the library: their intensity changes every frame)
-    ghost: shared(patch(ctx, new THREE.MeshStandardMaterial({ color: 0x000000, emissive: '#a8ff9e', emissiveIntensity: 6, name: 'l01-ghost' }))),
+    // the ghost-cab light: a library emissive (no extra shader program) of its own, pulsed by the runtime on the beat
+    ghost: ctx.materials.emissive('#a8ff9e', 6.0001),
     lod: S({ color: '#ffffff', vertexColors: true, roughness: 0.85, metalness: 0.1, envMapIntensity: 0.4 }),
   };
   M_CACHE.set(ctx, m);
@@ -284,10 +285,44 @@ export function instance(ctx, built, o = {}) {
 
 // ── misc helpers ─────────────────────────────────────────────────────────────────────────────────────────────
 export const rngFor = (s) => mulberry32(typeof s === 'number' ? s : hashString(String(s)));
-/** canvas texture with text (signage); uses ctx.materials.sign when available */
+/**
+ * canvas texture with text (signage) from ctx.materials.sign, cached per ctx. `weathered` is applied here by drawing
+ * chips and grime over a copy of the sign (no canvas readback: getImageData stalls for tens of seconds on the first
+ * call in software-GL browsers, which would land in the level's load).
+ */
+const SIGN_CACHE = new WeakMap();
 export function signTex(ctx, text, o = {}) {
-  if (ctx.materials?.sign) return ctx.materials.sign(text, o);
-  return null;
+  if (!ctx.materials?.sign) return null;
+  let cache = SIGN_CACHE.get(ctx); if (!cache) { cache = new Map(); SIGN_CACHE.set(ctx, cache); }
+  const key = String(text) + JSON.stringify(o);
+  if (cache.has(key)) return cache.get(key);
+  const wd = Math.max(0, Math.min(1, +o.weathered || 0));
+  const base = ctx.materials.sign(text, { ...o, weathered: 0 });
+  let tex = base;
+  const src = base?.image;
+  if (wd > 0 && src && typeof document !== 'undefined' && src.width) {
+    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+    const g = c.getContext('2d');
+    g.drawImage(src, 0, 0);
+    const rng = mulberry32(hashString(key)), W = c.width, H = c.height;
+    // paint chips: flecks of the background colour, denser toward the edges
+    g.fillStyle = o.bg || '#2a2a2a';
+    for (let i = 0; i < Math.round(160 * wd); i++) {
+      const x = rng() * W, y = rng() * H, r = 1 + rng() * rng() * 6;
+      g.globalAlpha = 0.35 + rng() * 0.5; g.beginPath(); g.ellipse(x, y, r * (1 + rng()), r, rng() * 3, 0, Math.PI * 2); g.fill();
+    }
+    // grime: soft dark streaks running down, and a dull wash
+    g.fillStyle = '#1a1612';
+    for (let i = 0; i < Math.round(26 * wd); i++) { g.globalAlpha = 0.05 + rng() * 0.12 * wd; g.fillRect(rng() * W, rng() * H * 0.3, 2 + rng() * 10, H * (0.3 + rng() * 0.7)); }
+    g.globalAlpha = 0.12 * wd; g.fillRect(0, 0, W, H);
+    g.globalAlpha = 1;
+    tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = base.anisotropy || 1;
+    shared(tex);
+  }
+  cache.set(key, tex);
+  return tex;
 }
 /** a plain textured plane mesh (decals, signs); material is per call */
 export function decal(ctx, tex, w, h, o = {}) {
@@ -295,6 +330,7 @@ export function decal(ctx, tex, w, h, o = {}) {
                                              emissive: o.emissive ? new THREE.Color(o.emissive) : new THREE.Color(0),
                                              emissiveMap: o.emissive ? tex : null, emissiveIntensity: o.emissiveIntensity ?? 1,
                                              depthWrite: !o.transparent, polygonOffset: true, polygonOffsetFactor: -2 });
+  m.userData.noAO = true;   // flat paint on a surface: no ambient-occlusion pass variant
   const mesh = new THREE.Mesh(plane(w, h), patch(ctx, m));
   mesh.receiveShadow = true;
   return mesh;

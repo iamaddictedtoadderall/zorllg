@@ -9,12 +9,12 @@ import { FOG_PARS } from './glsl.js';
 const TYPES = {
   //        size m       fall m/s  sway  streak  box xz/y   alpha  additive  colour            lit
   clear:     { size: [0.05, 0.1], fall: 0, sway: 0, streak: 0, box: [60, 30], alpha: 0, add: 0, color: '#ffffff' },
-  ash:       { size: [0.12, 0.26], fall: 2.0, sway: 1.0, streak: 0, box: [70, 40], alpha: 0.55, add: 0, color: '#cfc3b8' },
+  ash:       { size: [0.08, 0.18], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8' },
   snow:      { size: [0.06, 0.15], fall: 1.4, sway: 0.6, streak: 0, box: [56, 34], alpha: 0.85, add: 0, color: '#f4f8ff' },
-  rain:      { size: [0.018, 0.026], fall: 12, sway: 0, streak: 0.06, box: [40, 30], alpha: 0.5, add: 0, color: '#c8d4e0' },
+  rain:      { size: [0.014, 0.022], fall: 12, sway: 0, streak: 0.07, box: [26, 20], alpha: 0.55, add: 0, color: '#dfe8f2' },
   dust:      { size: [0.03, 0.08], fall: -0.05, sway: 0.4, streak: 0, box: [40, 24], alpha: 0.9, add: 1, color: '#fff0d8' },
   embers:    { size: [0.04, 0.07], fall: -1.8, sway: 0.8, streak: 0, box: [50, 30], alpha: 1, add: 1, color: '#ff8a3a' },
-  sandstorm: { size: [0.02, 0.06], fall: 0.6, sway: 0.3, streak: 0.04, box: [50, 26], alpha: 0.6, add: 0, color: '#d8c7a8' },
+  sandstorm: { size: [0.04, 0.1], fall: 0.6, sway: 0.3, streak: 0.05, box: [30, 18], alpha: 0.55, add: 0, color: '#d8c7a8' },
 };
 
 const VS = /* glsl */`
@@ -26,8 +26,10 @@ uniform vec2 uPx;
 uniform vec3 uColor, uSunC, uHemiC, uLightDir;
 varying vec4 vCol;
 varying vec2 vUv;
+varying float vStreak;
 void main() {
   vUv = uv;
+  vStreak = uStreak > 0.0 ? 1.0 : 0.0;
   if (aSeed.w > uIntensity) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vCol = vec4(0.0); return; }
   vec3 p = aSeed.xyz * uBox + uOffset;
   p.x += sin(uTime * (0.7 + aSeed.w) + aSeed.w * 40.0) * uSway;
@@ -39,8 +41,8 @@ void main() {
   // minimum on-screen size: tiny flakes stay visible, faded to keep their energy
   float px = projectionMatrix[1][1] * size / max(-mv.z, 0.1);
   float minN = uMinPx * uPx.y;
-  float fade = px < minN ? (px / minN) * (px / minN) : 1.0;
-  float ndcSize = max(px, minN);
+  float fade = px < minN ? (uStreak > 0.0 ? sqrt(px / minN) : (px / minN) * (px / minN)) : 1.0;
+  float ndcSize = max(px, minN * (uStreak > 0.0 ? 1.4 : 1.0));
   vec4 clip = projectionMatrix * mv;
   vec2 c = position.xy;
   vec2 off;
@@ -49,7 +51,7 @@ void main() {
     float sl = length(sv);
     vec2 d = sl > 1e-4 ? sv / sl : vec2(0.0, 1.0);
     float len = ndcSize + projectionMatrix[1][1] * sl * uStreak / max(-mv.z, 0.1);
-    off = d * c.y * len + vec2(-d.y, d.x) * c.x * ndcSize;
+    off = d * c.y * len + vec2(d.y, -d.x) * c.x * ndcSize;
   } else off = c * ndcSize;
   clip.xy += off * vec2(projectionMatrix[0][0] / projectionMatrix[1][1], 1.0) * clip.w;
   // light: sky fill plus sun, brighter looking toward the sun (forward scatter)
@@ -57,7 +59,7 @@ void main() {
   float fwd = pow(max(dot(vd, uLightDir), 0.0), 6.0);
   vec3 light = uHemiC * 0.6 + uSunC * (0.35 + 1.2 * fwd);
   float edge = 1.0 - smoothstep(0.35, 0.5, max(abs(rel.x) / uBox.x, max(abs(rel.y) / uBox.y, abs(rel.z) / uBox.z)));
-  float near = smoothstep(0.4, 1.5, -mv.z);
+  float near = smoothstep(1.0, 3.5, -mv.z);
   float f = cFogAmount(wp);
   vCol = vec4(uColor * light, uAlpha * fade * edge * near * (1.0 - f * 0.8));
   gl_Position = clip;
@@ -66,9 +68,11 @@ const FS = /* glsl */`
 uniform float uAdd;
 varying vec4 vCol;
 varying vec2 vUv;
+varying float vStreak;
 void main() {
-  float r = length(vUv - 0.5) * 2.0;
-  float a = smoothstep(1.0, 0.2, r) * vCol.a;
+  float a;
+  if (vStreak > 0.5) a = smoothstep(0.5, 0.12, abs(vUv.x - 0.5)) * smoothstep(0.5, 0.15, abs(vUv.y - 0.5)) * vCol.a;
+  else a = smoothstep(1.0, 0.2, length(vUv - 0.5) * 2.0) * vCol.a;
   if (a < 0.003) discard;
   if (uAdd > 0.5) gl_FragColor = vec4(vCol.rgb * a, 1.0);
   else gl_FragColor = vec4(vCol.rgb, a);

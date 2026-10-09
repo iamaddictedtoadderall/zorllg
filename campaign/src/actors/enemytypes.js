@@ -11,6 +11,7 @@ import { Unit } from './enemy.js';
 import { buildUnit, animateUnit } from '../art/units.js';
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _c = new THREE.Vector3(), _t = new THREE.Vector3(), _f = new THREE.Vector3();
+const _iw = { x: 0, z: 0 };
 
 // kind → base stats (Appendix C.5)
 const STATS = {
@@ -78,6 +79,9 @@ class Drone extends Unit {
   init() {
     this.flying = true; this.boomScale = 0.9; this.debris = 4; this.debrisScale = 0.6;
     this.ai.orbitDir = this.ctx.random() < 0.5 ? -1 : 1; this.ai.orbitR = this.rnd(60, 110); this.ai.alt = this.rnd(12, 26);
+    if (this.behavior === 'sniper') this.ai.orbitR = this.rnd(150, 200);
+    else if (this.behavior === 'flank') this.ai.orbitR *= 1.3;
+    this.ai.range = this.behavior === 'sniper' ? 260 : 240;
     const g = this.groundAt();
     if (this.pos.y < g + 10) this.pos.y = g + this.rnd(14, 24);
   }
@@ -91,12 +95,14 @@ class Drone extends Unit {
       if (ai.orbitA === undefined) ai.orbitA = Math.atan2(this.pos.z - T.pos.z, this.pos.x - T.pos.x);
       ai.orbitA += ai.orbitDir * dt * 0.35;
       if (ctx.random() < dt * 0.15) ai.orbitDir *= -1;
-      if (dist > 240) { tx = T.pos.x; tz = T.pos.z; }
+      if (dist > Math.max(240, ai.orbitR + 60)) { tx = T.pos.x; tz = T.pos.z; }
       else { tx = T.pos.x + Math.cos(ai.orbitA) * ai.orbitR; tz = T.pos.z + Math.sin(ai.orbitA) * ai.orbitR; }
     } else {
-      // no target: loiter around home
+      // no target: patrol / escort / loiter around home
       ai.orbitA = (ai.orbitA ?? 0) + dt * 0.25;
-      tx = this.home.x + Math.cos(ai.orbitA) * 30; tz = this.home.z + Math.sin(ai.orbitA) * 30;
+      const c = this.idleWish(1, _iw) || this.home;
+      const r = this.behavior === 'patrol' ? 0 : 30;
+      tx = c.x + Math.cos(ai.orbitA) * r; tz = c.z + Math.sin(ai.orbitA) * r;
       dx = tx - this.pos.x; dz = tz - this.pos.z;
     }
     if (this.heldT <= 0) {
@@ -115,7 +121,7 @@ class Drone extends Unit {
     r.rotation.z = -(this.vel.x * Math.cos(this.yaw) - this.vel.z * Math.sin(this.yaw)) * 0.01;
     animateUnit(this.rig, dt, { speed: this.vel.length(), alert: !!T });
     this.cd -= dt;
-    if (this.cd <= 0 && this.canFire() && dist < 240) {
+    if (this.cd <= 0 && this.canFire() && dist < ai.range) {
       this.cd = this.rnd(1.5, 2.6);
       const from = muzzleWorld(this, 0, new THREE.Vector3());
       const aim = this.lead(from, T, 130, _w).lerp(T.center(_c), 0.4);
@@ -147,14 +153,19 @@ class Tank extends Unit {
     let mvx = 0, mvz = 0, dist = Infinity, dx = 0, dz = 0;
     if (T) { dx = T.pos.x - this.pos.x; dz = T.pos.z - this.pos.z; dist = Math.hypot(dx, dz) || 1; }
     if (this.stagT <= 0) {
-      ai.strafeT -= dt; if (ai.strafeT <= 0) { ai.strafe *= -1; ai.strafeT = this.rnd(2, 5); }
+      const B = this.behavior;
+      ai.strafeT -= dt; if (ai.strafeT <= 0) { if (B !== 'flank') ai.strafe *= -1; ai.strafeT = this.rnd(2, 5); }
       if (this.blindT > 0) { this.drift(dt); mvx = Math.cos(ai.driftA) * 4; mvz = Math.sin(ai.driftA) * 4; }
-      else if (this.outsideLeash() || (!T && this.home.distanceTo(this.pos) > 20 && this.behavior !== 'hold')) {
+      else if (this.outsideLeash()) {
         const hx = this.home.x - this.pos.x, hz = this.home.z - this.pos.z, hl = Math.hypot(hx, hz) || 1;
         mvx = hx / hl * 8; mvz = hz / hl * 8;
-      } else if (T && this.behavior !== 'hold') {
-        if (dist > 150) { const s = this.heavy ? 7 : 10; mvx = dx / dist * s; mvz = dz / dist * s; }
-        else { const s = this.heavy ? 3 : 6; mvx = -dz / dist * ai.strafe * s; mvz = dx / dist * ai.strafe * s; }
+      } else if (!T) { this.idleWish(8, _iw); mvx = _iw.x; mvz = _iw.z; }
+      else if (B !== 'hold') {
+        // prototype: close to 150 m, then strafe; sniper keeps 200–260 m, flank circles wider and never reverses
+        const near = B === 'sniper' ? 200 : B === 'flank' ? 120 : 150, far = B === 'sniper' ? 260 : near;
+        if (dist > far) { const s = this.heavy ? 7 : 10; mvx = dx / dist * s; mvz = dz / dist * s; }
+        else if (B === 'sniper' && dist < near) { const s = this.heavy ? 4 : 6; mvx = -dx / dist * s; mvz = -dz / dist * s; }
+        else { const s = (this.heavy ? 3 : 6) * (B === 'flank' ? 1.6 : 1); mvx = -dz / dist * ai.strafe * s; mvz = dx / dist * ai.strafe * s; }
       }
     }
     this.moveGround(dt, mvx, mvz, 1, 2);
@@ -203,13 +214,13 @@ class Turret extends Unit {
     this.ai.burst = 0; this.ai.bt = 0; this.ai.mi = 0;
     const g = this.supportAt(this.pos.x, this.pos.z, this.pos.y + 1);
     if (this.pos.y < g) this.pos.y = g;
-    const C = this.ctx.collision;
-    if (C?.circle) this.colliders.push(C.circle(this.pos.x, this.pos.z, 2.0, this.pos.y + 3.2, this.pos.y - 0.5, { owner: this, surface: 'metal', tag: 'unit' }));
+    this.addBodyCollider(2.0, 3.2);
   }
   update(dt) {
     this.baseUpdate(dt);
     const ai = this.ai, P = this.rig.parts;
     animateUnit(this.rig, dt, {});
+    this.syncColliders();
     if (this.behavior === 'scripted') return;
     const T = this.acquire(dt, Math.max(this.aggroRange, 300));
     if (!T) return;
@@ -246,8 +257,7 @@ class Beacon extends Unit {
     this.hitY = 8; this.hitR = 3.5;
     this.ai.spawnT = this.rnd(4, 8); this.ai.spawned = [];
     this.pos.y = this.supportAt(this.pos.x, this.pos.z, this.pos.y + 1);
-    const C = this.ctx.collision;
-    if (C?.circle) this.colliders.push(C.circle(this.pos.x, this.pos.z, 2.6, this.pos.y + 17, this.pos.y - 0.5, { owner: this, surface: 'metal', tag: 'unit' }));
+    this.addBodyCollider(2.6, 17);
   }
   hitTest(q) { const dx = q.x - this.pos.x, dz = q.z - this.pos.z; return dx * dx + dz * dz < 12 && q.y > this.pos.y && q.y < this.pos.y + 18; }
   update(dt) {
@@ -255,6 +265,7 @@ class Beacon extends Unit {
     const ai = this.ai, beam = this.rig.parts.beam;
     if (beam) { const k = 1 + Math.sin(this.ctx.clock.time * 5) * 0.25; beam.scale.set(k, 1, k); }
     animateUnit(this.rig, dt, {});
+    this.syncColliders();
     if (this.behavior === 'scripted') return;
     ai.spawnT -= dt;
     if (ai.spawnT <= 0) {
@@ -294,6 +305,9 @@ class Gunship extends Unit {
       ai.a += ai.orbitDir * dt * 18 / ai.r;
       if (ctx.random() < dt * 0.08) ai.orbitDir *= -1;
       tx = T.pos.x + Math.cos(ai.a) * ai.r; tz = T.pos.z + Math.sin(ai.a) * ai.r;
+    } else {
+      const c = this.idleWish(1, _iw);
+      if (c) { tx = c.x; tz = c.z; }
     }
     if (this.heldT <= 0) {
       const ty = Math.max(this.groundAt(tx, tz), this.groundAt()) + ai.alt + Math.sin(ctx.clock.time * 0.7 + ai.r) * 4;
@@ -398,7 +412,8 @@ class Walker extends Unit {
       ai.strafeT -= dt; if (ai.strafeT <= 0) { ai.strafe *= -1; ai.strafeT = this.rnd(3, 6); }
       if (this.blindT > 0) { this.drift(dt); mvx = Math.cos(ai.driftA) * 3; mvz = Math.sin(ai.driftA) * 3; }
       else if (this.outsideLeash()) { const hx = this.home.x - this.pos.x, hz = this.home.z - this.pos.z, hl = Math.hypot(hx, hz) || 1; mvx = hx / hl * 6; mvz = hz / hl * 6; }
-      else if (T && this.behavior !== 'hold') {
+      else if (!T) { this.idleWish(5, _iw); mvx = _iw.x; mvz = _iw.z; }
+      else if (this.behavior !== 'hold') {
         if (dist > 180) { mvx = dx / dist * 6; mvz = dz / dist * 6; }
         else if (dist < 60 && dist > 16) { mvx = -dx / dist * 4; mvz = -dz / dist * 4; }
         else { mvx = -dz / dist * ai.strafe * 2.5; mvz = dx / dist * ai.strafe * 2.5; }
@@ -463,7 +478,8 @@ class Artillery extends Unit {
     const T = this.acquire(dt, Math.max(this.aggroRange, 900));
     let mvx = 0, mvz = 0, dist = Infinity, dx = 0, dz = 0;
     if (T) { dx = T.pos.x - this.pos.x; dz = T.pos.z - this.pos.z; dist = Math.hypot(dx, dz) || 1; }
-    if (this.stagT <= 0 && T && this.behavior !== 'hold' && !(this.blindT > 0)) {
+    if (this.stagT <= 0 && !T && !(this.blindT > 0)) { this.idleWish(6, _iw); mvx = _iw.x; mvz = _iw.z; }
+    else if (this.stagT <= 0 && T && this.behavior !== 'hold' && !(this.blindT > 0)) {
       if (dist < 160) { mvx = -dx / dist * 8; mvz = -dz / dist * 8; }        // too close: pull back
       else if (dist > 850) { mvx = dx / dist * 7; mvz = dz / dist * 7; }   // out of range: close in
     }
@@ -514,7 +530,8 @@ class Apc extends Unit {
     const T = this.acquire(dt, Math.max(this.aggroRange, 800));
     let mvx = 0, mvz = 0, dist = Infinity, dx = 0, dz = 0;
     if (T) { dx = T.pos.x - this.pos.x; dz = T.pos.z - this.pos.z; dist = Math.hypot(dx, dz) || 1; }
-    if (this.stagT <= 0 && !(this.blindT > 0) && T && this.behavior !== 'hold') {
+    if (this.stagT <= 0 && !(this.blindT > 0) && !T) { this.idleWish(10, _iw); mvx = _iw.x; mvz = _iw.z; }
+    else if (this.stagT <= 0 && !(this.blindT > 0) && T && this.behavior !== 'hold') {
       if (!ai.deployed && dist > 180) { mvx = dx / dist * 12; mvz = dz / dist * 12; }
       else if (ai.deployed && dist < 120) { mvx = -dx / dist * 6; mvz = -dz / dist * 6; }
     }
@@ -623,7 +640,8 @@ class Dropship extends Unit {
         const opts = { team: this.team, faction: this.faction, ...(g.opts || {}) };
         opts.tags = [...this.tags, ...(g.opts?.tags || [])];
         const u = this.ctx.enemies.spawn(g.kind || 'drone', p, opts);
-        if (!u.flying && u.pos.y > u.groundAt() + 2) { u.dropping = true; u.onGround = false; u.vel.set(0, -4, 0); }
+        // ground units drop out of the bay (their factories snap them to the ground)
+        if (!u.flying && p.y > u.groundAt(p.x, p.z) + 2) { u.pos.y = p.y; u.dropping = true; u.onGround = false; u.vel.set(0, -4, 0); u.syncRoot(); }
       }
     }
     this.ctx.events.emit('dropship:deployed', { unit: this, count: k });

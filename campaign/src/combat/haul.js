@@ -197,6 +197,17 @@ export function installHaul(ctx) {
   }
 
   // ---------------------------------------------------------------- rack
+  let pendingD = null;
+  /** close an open rack choice without racking (level stop/restart); a late answer from the HUD is ignored */
+  function abortChoice() {
+    if (choosing) {
+      choosing = false;
+      if (ctx.timeScale === CHOICE_SCALE) ctx.timeScale = prevScale;
+      pendingD?.resolve(false);
+    }
+    pendingD = null;
+    for (const q of queue.splice(0)) q.d.resolve(false);
+  }
   function finishAdd(part, d, key) {
     const i = typeof key === 'string' && key.startsWith('drop') ? Number(key.slice(4)) : -1;
     if (i >= 0 && i < rack.length) {
@@ -228,7 +239,8 @@ export function installHaul(ctx) {
       return;
     }
     // full rack: the swap choice, with time slowed (no pause)
-    choosing = true;
+    choosing = true; pendingD = d;
+    ctx.player?.endSlowMo?.();   // a blade-hit slow motion must not be what we restore afterwards
     prevScale = ctx.timeScale;
     ctx.timeScale = CHOICE_SCALE;
     const options = rack.map((id, i) => ({ key: 'drop' + i, label: 'Drop ' + name(id) }));
@@ -237,8 +249,8 @@ export function installHaul(ctx) {
     try { pr = ctx.hud?.choice?.({ title: 'RACK FULL. Drop which part?', options, seconds: 8, default: 'leave' }); }
     catch (e) { pr = null; ctx.recordError?.('haul', e); }
     const done = (key) => {
-      if (!choosing) return;   // cleared meanwhile
-      choosing = false;
+      if (!choosing || pendingD !== d) return;   // aborted meanwhile
+      choosing = false; pendingD = null;
       if (ctx.timeScale === CHOICE_SCALE) ctx.timeScale = prevScale;
       finishAdd(part, d, key);
       next();
@@ -276,8 +288,7 @@ export function installHaul(ctx) {
     clear() {
       rack = []; tears = 0; candidate = null; hold = 0; holdTarget = null;
       cancelRip();
-      if (choosing) { choosing = false; if (ctx.timeScale === CHOICE_SCALE) ctx.timeScale = prevScale; }
-      for (const q of queue.splice(0)) q.d.resolve(false);
+      abortChoice();
       for (const t of [...glints.keys()]) removeGlint(t);
     },
     update,
@@ -286,7 +297,7 @@ export function installHaul(ctx) {
   ctx.events.on('level:start', ({ fresh }) => {
     if (fresh) { api.clear(); return; }
     const f = ctx.mission?.flags || {};
-    cancelRip();
+    cancelRip(); abortChoice();
     api.set(f['haul:rack'] ?? [], f['haul:tears'] ?? 0);
   });
   ctx.events.on('level:cleared', () => api.clear());

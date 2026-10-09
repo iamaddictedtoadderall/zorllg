@@ -250,7 +250,7 @@ export function buildUnit(ctx, kind, faction, o = {}) {
       [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz], i) => {
         const leg = parts['leg' + i] = group(body, 'leg' + i, sx * 2.7, -0.6, sz * 3.0);
         mk(leg, KIT.cylinder(0.9, 0.9, 1.3, 12), M.dark, 0, 0, 0, 0, 0, HALF);
-        mk(leg, side([[0.75, 0.4], [0.6, -2.9], [-0.55, -3.1], [-0.85, 0.2]], 1.0, 0.1), M.mid, sx * 0.55, 0, 0, 0, 0, -sx * 0.45);
+        mk(leg, side([[0.75, 0.4], [0.6, -2.9], [-0.55, -3.1], [-0.85, 0.2]], 1.0, 0.1), M.mid, sx * 0.55, 0, 0, 0, 0, sx * 0.45);
         const knee = group(leg, 'knee', sx * 1.85, -2.6, 0);
         mk(knee, KIT.cylinder(0.65, 0.65, 1.1, 12), M.dark, 0, 0, 0, 0, 0, HALF);
         mk(knee, side([[0.6, 0.45], [0.55, -2.6], [0.2, -3.05], [-0.4, -3.0], [-0.6, 0.3]], 0.95, 0.09), M.shell);
@@ -309,8 +309,9 @@ export function buildUnit(ctx, kind, faction, o = {}) {
         mk(t, KIT.cylinder(1.25, 1.35, 2.6, 16), M.dark, 0, 0.3, 0);
         mk(t, KIT.ring(1.36, 0.2, 0.5), M.accent, 0, 1.4, 0);
         mk(t, derived('dsNozzle', () => KIT.nozzle(1.15, 1.2).clone().rotateX(PI)), M.dark, 0, -1.0, 0);
-        const g = mk(t, derived('dsGlow', () => new THREE.ConeGeometry(0.8, 3.2, 12, 1, true).rotateX(PI).translate(0, -1.6, 0)), M.glow, 0, -1.9, 0);
-        g.castShadow = false; g.scale.set(1, 0.6, 1); glows.push(g);
+        const gg = group(t, 'glow', 0, -1.9, 0); gg.scale.set(1, 0.6, 1);
+        const g = mk(gg, derived('dsGlow', () => new THREE.ConeGeometry(0.8, 3.2, 12, 1, true).rotateX(PI).translate(0, -1.6, 0)), M.glow);
+        g.castShadow = false; g.userData.bakeAdditive = true; glows.push(gg);
         mk(body, side([[1.2, 0.5], [-1.2, 0.5], [-1.5, -0.3], [1.5, -0.3]], Math.abs(sx * 6.2) - 4.0, 0.06), M.mid, sx * (4.2 + (6.2 - 4.2) / 2), 1.0, sz * 6.0);
       });
       const bay = parts.bay = group(body, 'bay', 0, -2.0, 2);

@@ -47,7 +47,7 @@ function flareVisual(ctx, s) {
     const M = ctx.materials;
     const glow = (c, o) => M?.glow ? M.glow(c, o) : new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, blending: THREE.AdditiveBlending, depthWrite: false });
     const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.45, 1), glow(0xffe0e6, 1));
-    const halo = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), glow(0xff5a78, 0.28));
+    const halo = new THREE.Mesh(new THREE.SphereGeometry(1.5, 12, 8), glow(0xff5a78, 0.2));
     core.add(halo); core.name = 'flare'; core.frustumCulled = false; halo.frustumCulled = false;
     core.geometry.userData.shared = true; halo.geometry.userData.shared = true;
     ctx.scene.add(core);
@@ -61,7 +61,7 @@ function killFlare(f) {
   f.decoy.alive = false;
   if (f.vis) { f.vis.used = false; f.vis.mesh.visible = false; f.vis = null; }
   f.emitter?.stop?.(); f.emitter = null;
-  if (f.proj?.alive) f.proj.alive = false;
+  if (f.proj?.alive && f.proj.serial === f.serial) f.proj.alive = false;
 }
 
 function updateShared(ctx, s, dt) {
@@ -87,8 +87,8 @@ function updateShared(ctx, s, dt) {
   for (let i = s.flares.length - 1; i >= 0; i--) {
     const f = s.flares[i];
     if (f.state === 'flight') {
-      if (f.proj && f.proj.alive) f.decoy.pos.copy(f.proj.pos);
-      else if (f.state === 'flight') land(ctx, f, f.decoy.pos, null);
+      if (f.proj && f.proj.alive && f.proj.serial === f.serial) f.decoy.pos.copy(f.proj.pos);
+      else { killFlare(f); s.flares.splice(i, 1); continue; }   // cleared without landing (projectiles.clear)
     } else {
       f.burn -= dt;
       if (f.attached) {
@@ -114,7 +114,7 @@ function land(ctx, f, point, target) {
     f.offset = new THREE.Vector3().copy(point).sub(target.pos);
     target.blindT = Math.max(target.blindT || 0, f.blind);
   }
-  ctx.particles?.lights?.flash?.(f.decoy.pos, 0xff6a80, 700, f.lightR, f.lightT);
+  ctx.particles?.lights?.flash?.(f.decoy.pos, 0xff6a80, 420, f.lightR, f.lightT);
   f.emitter = ctx.fx?.emitter?.('fire', f.decoy.pos, { rate: 0.6, scale: 0.35, color: [1, 0.35, 0.45] }) || null;
   ctx.fx?.sparks?.(f.decoy.pos, 16, [1, 0.45, 0.5], 14);
 }
@@ -340,11 +340,14 @@ export function createWeapon(ctx, part, owner) {
       ctx.timers.after(i * (micro ? 0.05 : 0.09), () => {
         if (!owner.active || !owner.alive) return;
         const from = socket(owner, 'S', new THREE.Vector3());
-        const v = new THREE.Vector3(jx, 1.0, jz).normalize().multiplyScalar(micro ? 50 : 45).addScaledVector(dir0, 25);
+        // VM-4: the prototype's upward launch; SW-8 micro-missiles leave flatter, led by the aim (a tighter swarm)
+        const v = micro ? new THREE.Vector3(jx * 0.8, 0.55, jz * 0.8).normalize().multiplyScalar(30).addScaledVector(dir0, 45)
+                        : new THREE.Vector3(jx, 1.0, jz).normalize().multiplyScalar(45).addScaledVector(dir0, 25);
         const live = tgt && tgt.alive ? tgt : null;
         const pr = ctx.projectiles?.fire({ pos: from, vel: v, dmg: st.dmg ?? 620, imp: st.imp ?? 260, team: team(), owner,
                                            kind: micro ? 'micro' : 'missile', target: live, turn: live ? (st.turn ?? 2.6) : 0,
-                                           accel: st.accel ?? 110, maxSpeed: st.maxSpeed ?? 175, life: 5, srcKind: type });
+                                           accel: st.accel ?? 110, maxSpeed: st.maxSpeed ?? 175, life: 5, srcKind: type,
+                                           fuse: micro ? 4 : undefined });
         if (pr && !live) pr.vel.copy(dir0).multiplyScalar(140);
         sfx(ctx, 'missile', from);
       });
@@ -410,6 +413,7 @@ export function createWeapon(ctx, part, owner) {
       onHit: (p, hit) => harpoonHit(hit),
       onExpire: () => { w.state = 'idle'; w.head = null; },
     }) || null;
+    w.headSerial = w.head?.serial;
     sfx(ctx, 'harpoon', from);
     ctx.fx?.muzzle?.(from, _dir, 'rail');
   }
@@ -446,10 +450,10 @@ export function createWeapon(ctx, part, owner) {
     if (w.state === 'idle') { if (cable) cable.visible = false; return; }
     if (!owner.rig || !owner.active) { if (cable) cable.visible = false; return; }
     a = socket(owner, 'L', _c);
-    if (w.state === 'flight') b = w.head && w.head.alive ? w.head.pos : null;
+    if (w.state === 'flight') b = w.head && w.head.alive && w.head.serial === w.headSerial ? w.head.pos : null;
     else if (w.state === 'reel') { const r = S.reels.find(x => x.weapon === w); b = r?.target?.alive ? r.target.center(_c2) : null; }
     else if (w.state === 'pull') b = owner.pull?.weapon === w ? owner.pull.point : null;
-    if (!b) { if (w.state === 'pull' && owner.pull?.weapon !== w) w.state = 'idle'; if (cable) cable.visible = false; return; }
+    if (!b) { w.state = 'idle'; w.head = null; if (cable) cable.visible = false; return; }   // head cleared, reel/pull over
     if (!cable) {
       const g = new THREE.CylinderGeometry(0.07, 0.07, 1, 5, 1, true).rotateX(Math.PI / 2).translate(0, 0, 0.5);
       const m = ctx.materials?.get ? ctx.materials.get('cable') : new THREE.MeshStandardMaterial({ color: 0x1b1a19, roughness: 0.6 });
@@ -492,6 +496,7 @@ export function createWeapon(ctx, part, owner) {
                                      srcKind: 'flares',
                                      onHit: (p, hit) => land(ctx, f, hit.point, hit.target),
                                      onExpire: (p) => land(ctx, f, p.pos, null) }) || null;
+    f.serial = f.proj?.serial;
     S.flares.push(f);
     // hostile homing missiles within decoyR of the owner chase the flare instead
     const n = ctx.projectiles?.retarget?.({ near: owner.pos, r: st.decoyR ?? 30, hostileTo: team() }, decoy) ?? 0;

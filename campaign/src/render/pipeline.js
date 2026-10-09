@@ -84,6 +84,22 @@ void main() {
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
 
+/** The prototype's soft-knee bright pass (threshold subtracted), replacing UnrealBloomPass's hard luminosity cut so
+ *  sunlit white surfaces glow a little and emissives a lot. Same uniform names as LuminosityHighPassShader. */
+const SOFT_KNEE_FS = /* glsl */`
+uniform sampler2D tDiffuse;
+uniform float luminosityThreshold;
+uniform float smoothWidth;
+varying vec2 vUv;
+void main() {
+  vec3 c = min(texture2D(tDiffuse, vUv).rgb, vec3(24.0));
+  float l = max(c.r, max(c.g, c.b));
+  float knee = max(smoothWidth, 1e-3);
+  float s = clamp(l - luminosityThreshold + knee, 0.0, 2.0 * knee);
+  s = s * s / (4.0 * knee);
+  gl_FragColor = vec4(c * (max(s, l - luminosityThreshold) / max(l, 1e-4)), 1.0);
+}`;
+
 class FinalPass extends Pass {
   constructor() {
     super();
@@ -200,7 +216,8 @@ export function install(ctx) {
     }
     if (t.bloom) {
       P.bloom = new UnrealBloomPass(new THREE.Vector2(size.x * pr, size.y * pr), bloom.strength, bloom.radius, bloom.threshold);
-      if (P.bloom.highPassUniforms?.smoothWidth) P.bloom.highPassUniforms.smoothWidth.value = 0.35;   // soft knee (prototype)
+      if (P.bloom.highPassUniforms?.smoothWidth) P.bloom.highPassUniforms.smoothWidth.value = 0.3;
+      if (P.bloom.materialHighPassFilter) { P.bloom.materialHighPassFilter.fragmentShader = SOFT_KNEE_FS; P.bloom.materialHighPassFilter.needsUpdate = true; }
       composer.addPass(P.bloom);
     }
     P.final = new FinalPass();
@@ -272,6 +289,8 @@ export function install(ctx) {
       const scene = view || ctx.scene, cam = viewCam || ctx.camera;
       r.info.reset();
       counters.shadow = 0; counters.shadowTris = 0;
+      const ub = ctx.materials?.uniforms?.uBeat;
+      if (ub) ub.value = ctx.clock.time;
       if (scene === ctx.scene) ctx.atmosphere?.prepare?.(cam);
       ctx.particles?.prepare?.(scene, cam);
       if (composer) {

@@ -21,7 +21,7 @@ import { yawTo, clamp } from '../core/util.js';
 const _t = new THREE.Vector3();
 const GRID = 32;          // closest-point grid cell (m)
 const SUPER = 8;          // grid cells per super cell side (hierarchical build)
-const CHUNK = 8;          // dense segments per chunk
+const CHUNK = 12;         // dense segments per chunk
 const DENSE = 2;          // max dense sample spacing (m)
 
 export class Route {
@@ -214,7 +214,7 @@ export class Route {
     const nx = sx * SUPER, nz = sz * SUPER;
     const offA = new Int32Array(nx * nz), offB = new Int32Array(nx * nz);
     const diag = GRID * Math.SQRT2, diagS = SUP * Math.SQRT2;
-    const BAND = this._hwMax * 1.3 + 800;   // fine cells only where gameplay and terrain shaping query
+    const BAND = this._hwMax + 900;   // fine cells only where gameplay, scatter and terrain shaping query
     let list = new Int32Array(65536), cnt = 0;
     const push = (c) => { if (cnt >= list.length) { const nl = new Int32Array(list.length * 2); nl.set(list); list = nl; } list[cnt++] = c; };
     const sub = new Int32Array(nChunks);

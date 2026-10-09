@@ -37,7 +37,7 @@ function turnToward(a, b, step) {
 export function install(ctx) {
   let hidden = false, lastLock = null, idleReached = false;
   const ST = {};            // reused MechAnimState
-  let overrideExtras = [];
+  let overrideExtras = [], lastOverride = null;
   const aim = { origin: new THREE.Vector3(), point: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1), lock: null, hit: false };
 
   const p = {
@@ -59,7 +59,7 @@ export function install(ctx) {
     },
     onDeath() {
       p.alive = false;
-      p.lunge = null; p.pull = null; p.rip = null; endSlow();
+      p.lunge = null; p.pull = null; p.rip = null; p.tow = null; endSlow();
       const c = p.center(new THREE.Vector3());
       ctx.fx?.explosion?.(c, 2.4);
       ctx.particles?.debris?.spawn?.(c, 12, 1.3, p.rig?.mats?.base);
@@ -91,6 +91,13 @@ export function install(ctx) {
     // ── extras ──
     landT: 0, qbT: 0, enUseT: 0, recoil: 0, bladeT: 0, repairT: 0, repairRate: 3600,
     lunge: null, pull: null, rip: null, slowT: 0, idleT: 0,
+    /**
+     * extra (for level code such as L1's Gaffer harpoon): { to: Vector3 | () => Vector3 | null, speed?: 18, seconds?: 3,
+     * onBreak?(reason) }. Drags the player horizontally toward `to` at up to `speed` m/s on top of its own movement.
+     * Ends after `seconds`, when `to` returns null, on a quick boost ('boost') or a blade lunge ('blade'); emits
+     * 'player:towEnded' { reason }.
+     */
+    tow: null,
     aimHit: false, aimDir: aim.dir, aimOrigin: aim.origin,
 
     setLoadout(lo) {
@@ -118,7 +125,7 @@ export function install(ctx) {
       endSlow();
       Object.assign(p, { alive: true, active: true, imp: 0, stagT: 0, lastHit: -9, overheat: 0, landT: 0, qbT: 0, enUseT: 0,
                          thrust: 0, hover: 0, lock: null, hardLock: false, frozen: false, onGround: true, recoil: 0, bladeT: 0,
-                         repairT: 0, lunge: null, pull: null, rip: null, idleT: 0, autopilot: null });
+                         repairT: 0, lunge: null, pull: null, rip: null, idleT: 0, autopilot: null, tow: null });
       lastLock = null; idleReached = false;
       p.ap = snap?.ap ?? p.apMax; p.en = p.enMax;
       for (const slot of SLOTS) { const w = p.weapons[slot]; if (!w) continue; w.refill(); if (snap?.ammo?.[slot] != null) w.ammo = snap.ammo[slot]; }
@@ -159,6 +166,8 @@ export function install(ctx) {
       if (ctx.timeScale !== 1) return;
       p.slowPrev = ctx.timeScale; p.slowScale = scale; ctx.timeScale = scale; p.slowT = seconds;
     },
+    /** extra: end a running slowMo now (restores the time scale it replaced) */
+    endSlowMo() { endSlow(); },
     /** extra: ability check honouring a partial `abilities` object (missing = allowed) */
     can(k) { const a = p.abilities; return !a || a[k] !== false; },
 
@@ -214,6 +223,7 @@ export function install(ctx) {
         let qx = wx, qz = wz; if (il === 0) { qx = -sy; qz = -cy; }
         p.vel.x += qx * S.qbImpulse; p.vel.z += qz * S.qbImpulse; if (!p.onGround) p.vel.y = Math.max(p.vel.y, 0);
         p.qbT = 0.28; p.pull = null;
+        if (p.tow) endTow('boost');
         ctx.audio?.play?.('qb', null);
         ctx.cameraRig?.addShake?.(0.25);
         if (p.rig?.flames?.[0]) ctx.fx?.boost?.(p.rig.flames[0].getWorldPosition(_t), _t2.set(-qx, 0, -qz));
@@ -261,6 +271,16 @@ export function install(ctx) {
       p.vel.y = Math.max(p.vel.y, -75);
       if (p.frozen && !ap) { p.vel.x *= 0.9; p.vel.z *= 0.9; }
       p.pos.addScaledVector(p.vel, dt);
+      if (p.tow) {
+        const T = p.tow; T.t = (T.t || 0) + dt;
+        const to = typeof T.to === 'function' ? T.to() : T.to;
+        if (p.lunge) endTow('blade');
+        else if (!to || T.t > (T.seconds ?? 3)) endTow(to ? 'time' : 'released');
+        else {
+          const dx = to.x - p.pos.x, dz = to.z - p.pos.z, d = Math.hypot(dx, dz), step = Math.min(d, (T.speed ?? 18) * dt);
+          if (d > 1e-3) { p.pos.x += dx / d * step; p.pos.z += dz / d * step; }
+        }
+      }
       ctx.collision?.resolve(p);
       const g = ground(p.pos.x, p.pos.z, p.pos.y);
       if (p.pos.y <= g) {
@@ -374,8 +394,8 @@ export function install(ctx) {
         }
         if (p.animOverride) {
           Object.assign(ST, p.animOverride);
-          overrideExtras = Object.keys(p.animOverride).filter(k => !ANIM_KEYS.includes(k));
-        } else overrideExtras = [];
+          if (p.animOverride !== lastOverride) { lastOverride = p.animOverride; overrideExtras = Object.keys(lastOverride).filter(k => !ANIM_KEYS.includes(k)); }
+        } else if (lastOverride) { lastOverride = null; }
         animateMech(r, ST, dt);
         // footfall dust while running (cosmetic, prototype)
         const P = ctx.particles;
@@ -412,6 +432,13 @@ export function install(ctx) {
     lastLock = best;
   }
 
+  function endTow(reason) {
+    const T = p.tow;
+    if (!T) return;
+    p.tow = null;
+    T.onBreak?.(reason);
+    ctx.events.emit('player:towEnded', { reason });
+  }
   /** prototype useEN: spend EN; emptying it overheats the frame for 2.4 s */
   function useEN(amt) {
     if (p.overheat > 0 || p.en <= 0) return false;
@@ -439,7 +466,7 @@ export function install(ctx) {
     // level-owned controls reset with the level (they survive spawn and setLoadout within a level)
     p.abilities = { ...DEFAULT_ABILITIES };
     p.hoverCostScale = 1; p.enRegenScale = 1; p.gravityScale = 1;
-    p.hidden = false; p.idleFacing = null; p.animOverride = null; p.autopilot = null; p.invuln = false;
+    p.hidden = false; p.idleFacing = null; p.animOverride = null; p.autopilot = null; p.invuln = false; p.tow = null;
   });
   ctx.addSystem({ name: 'player', phase: 'player', when: 'sim', update: (dt) => p.update(dt) });
   ctx.player = p;

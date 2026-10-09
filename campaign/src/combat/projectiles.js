@@ -3,8 +3,8 @@
 // prototype), gravity arcs, splash, distance falloff, decoys (A5.1 retarget) and ground warnings (artillery).
 //
 // ProjectileSpec extras (optional, beyond §4): srcKind (DamageSource.kind, default the projectile kind), falloff
-// ([full, quarter, max] metres from the muzzle), splashImp, onExpire(p), scale (visual), color-free.
-// Projectile objects are pooled: a reference is valid until `alive` turns false.
+// ([full, quarter, max] metres from the muzzle), splashImp, onExpire(p), scale (visual), fuse (homing proximity, 3.2 m).
+// Projectile objects are pooled: a reference is valid until `alive` turns false (compare `serial` to be sure).
 import * as THREE from 'three';
 import { isHostile } from './combat.js';
 
@@ -52,6 +52,7 @@ export function install(ctx) {
   let flameMesh = null;
   const tlist = [];       // per-step candidate targets
   const warnings = [];    // ground warning rings { mesh, t, dur, r, alive }
+  let serial = 0;         // per-fire id: pooled objects are reused, so holders compare p.serial to the one they got
 
   function mat(def) {
     const M = ctx.materials;
@@ -90,7 +91,7 @@ export function install(ctx) {
   function newProj() {
     return { pos: new THREE.Vector3(), vel: new THREE.Vector3(), origin: new THREE.Vector3(), alive: false, age: 0,
              team: 'enemy', owner: null, kind: 'bullet', dmg: 0, imp: 0, life: 3, target: null, turn: 0, accel: 0, maxSpeed: 0,
-             gravity: 0, splash: 0, splashDmg: 0, splashImp: 0, onHit: null, onExpire: null, srcKind: null, falloff: null, scale: 1 };
+             gravity: 0, splash: 0, splashDmg: 0, splashImp: 0, onHit: null, onExpire: null, srcKind: null, falloff: null, scale: 1, fuse: 3.2 };
   }
 
   function release(p, i) {
@@ -145,8 +146,8 @@ export function install(ctx) {
       p.turn = spec.turn ?? 0; p.accel = spec.accel ?? 0; p.maxSpeed = spec.maxSpeed ?? 0; p.gravity = spec.gravity ?? 0;
       p.splash = spec.splash ?? 0; p.splashDmg = spec.splashDmg ?? 0; p.splashImp = spec.splashImp ?? 0;
       p.onHit = spec.onHit || null; p.onExpire = spec.onExpire || null; p.srcKind = spec.srcKind || null;
-      p.falloff = spec.falloff || null; p.scale = spec.scale ?? 1;
-      p.alive = true; p.age = 0;
+      p.falloff = spec.falloff || null; p.scale = spec.scale ?? 1; p.fuse = spec.fuse ?? 3.2;   // proximity fuse (prototype 3.2 m)
+      p.alive = true; p.age = 0; p.serial = ++serial;
       list.push(p);
       meshFor(p.kind);
       return p;
@@ -211,7 +212,7 @@ export function install(ctx) {
           for (let s = 0; s < steps && !hitT; s++) {
             _q.add(_seg);
             for (let k = 0; k < tlist.length; k++) if (tlist[k].hitTest(_q)) { hitT = tlist[k]; break; }
-            if (!hitT && tg && p.turn > 0 && tg.alive && aimPos(tg, _c).distanceToSquared(_q) < 3.2 * 3.2) {
+            if (!hitT && tg && p.turn > 0 && tg.alive && aimPos(tg, _c).distanceToSquared(_q) < p.fuse * p.fuse) {
               if (decoyProx) { p.pos.copy(_q); detonate(p, p.pos, null, null, 'ground', tg); release(p, i); hitT = 'decoy'; break; }
               if (tg.team === undefined || isHostile(p.team, tg.team)) hitT = tg;
             }

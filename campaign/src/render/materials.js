@@ -187,9 +187,9 @@ export function install(ctx) {
     setTex('panel', TG.genPanel(Math.min(S, 256)), C);
     setTex('grain', TG.genGrain(S, style), D);
     setTex('rock', TG.genRock(S, style), D);
-    setTex('concrete', TG.genConcrete(S), D);
+    setTex('concrete', TG.genConcrete(Math.min(S, 512)), D);
     setTex('metal', TG.genMetal(Math.min(S, 512)), D);
-    setTex('grime', TG.genGrime(S), D);
+    setTex('grime', TG.genGrime(Math.min(S, 512)), D);
     setTex('noise', TG.genNoise(Math.min(S, 512)), D);
     const cw = Math.max(64, Math.min(128, S / 8)) | 0;
     setTex('smokeSprite', TG.genSmokeAtlas(cw), D);
@@ -465,7 +465,7 @@ export function install(ctx) {
     const ceramic = lib.get('ceramic');
     if (ceramic) ceramic.clearcoat = tier.name === 'high' ? 0.6 : 0;
   });
-  ctx.addSystem({ name: 'materials', phase: 'early', when: 'always', order: 50, update: () => { uniforms.uBeat.value = ctx.clock.time; } });
+  ctx.addSystem({ name: 'materials', phase: 'late', when: 'always', order: -50, update: () => { uniforms.uBeat.value = ctx.clock.time; } });
   ctx.materials = api;
   return api;
 }

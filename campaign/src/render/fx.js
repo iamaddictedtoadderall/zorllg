@@ -5,6 +5,7 @@
 // system is over 80% full. Math.random() is fine here: effects are cosmetic (architecture §1.4).
 import * as THREE from 'three';
 import { clamp } from '../core/util.js';
+import { FOG_PARS } from './glsl.js';
 
 const TAU = Math.PI * 2;
 const R = (a, b) => a + Math.random() * (b - a);
@@ -13,10 +14,10 @@ const _q = new THREE.Quaternion(), _up = new THREE.Vector3(0, 1, 0);
 
 // muzzle flashes (AD §6.3): [flash length m, colour, HDR k, sparks, light cd, light distance]
 const MUZZLE = {
-  rifle: [1.8, [1.0, 0.85, 0.63], 4, 3, 400, 12], mg: [1.2, [1.0, 0.89, 0.66], 3, 1, 300, 10],
-  shotgun: [2.4, [1.0, 0.82, 0.63], 4, 8, 600, 14], cannon: [4.0, [1.0, 0.69, 0.44], 5, 6, 1500, 22],
-  plasma: [1.0, [1.0, 0.42, 0.23], 4, 0, 300, 10], turret: [1.4, [1.0, 0.48, 0.25], 4, 2, 300, 10],
-  rail: [3.0, [0.75, 0.96, 1.0], 6, 4, 900, 18],
+  rifle: [1.8, [1.0, 0.85, 0.63], 2.6, 3, 180, 12], mg: [1.2, [1.0, 0.89, 0.66], 2.2, 1, 140, 10],
+  shotgun: [2.4, [1.0, 0.82, 0.63], 2.6, 8, 260, 14], cannon: [4.0, [1.0, 0.69, 0.44], 3.2, 6, 700, 22],
+  plasma: [1.0, [1.0, 0.42, 0.23], 2.6, 0, 140, 10], turret: [1.4, [1.0, 0.48, 0.25], 2.6, 2, 140, 10],
+  rail: [3.0, [0.75, 0.96, 1.0], 3.6, 4, 400, 18],
 };
 // impact surfaces (AD §6.5): dust colour and spark behaviour
 const SURF = {
@@ -52,7 +53,7 @@ export function install(ctx) {
   const groundAt = (x, z) => (ctx.world?.groundHeight ? ctx.world.groundHeight(x, z) : 0);
 
   // ---------------------------------------------------------------- pooled rings (shockwaves) and beams
-  const ringGeo = new THREE.RingGeometry(0.82, 1, 48, 1);
+  const ringGeo = new THREE.RingGeometry(0.9, 1, 64, 1);
   ringGeo.rotateX(-Math.PI / 2);
   const rings = [];
   for (let i = 0; i < 16; i++) {
@@ -68,16 +69,28 @@ export function install(ctx) {
   const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
   beamGeo.translate(0, 0.5, 0);
   const beams = [];
+  const BEAM_VS = `varying vec3 vN; varying vec3 vW;
+    void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vN = normalize(mat3(modelMatrix) * normal); gl_Position = projectionMatrix * viewMatrix * w; }`;
+  const BEAM_FS = `${FOG_PARS}
+    uniform vec3 uCol; uniform float uK;
+    varying vec3 vN; varying vec3 vW;
+    void main() {
+      float e = abs(dot(normalize(vN), normalize(cameraPosition - vW)));
+      vec3 c = uCol * (pow(e, 1.5) * 0.5 + pow(e, 14.0) * 2.5) + vec3(1.0) * pow(e, 40.0) * 2.0;
+      gl_FragColor = vec4(c * uK * (1.0 - cFogAmount(vW) * 0.7), 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`;
   for (let i = 0; i < 16; i++) {
-    const core = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-    const halo = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-    core.userData.shared = halo.userData.shared = true;
+    const mat = new THREE.ShaderMaterial({ uniforms: { ...(ctx.atmosphere?.fogUniforms || {}), uCol: { value: new THREE.Color() }, uK: { value: 0 } },
+      vertexShader: BEAM_VS, fragmentShader: BEAM_FS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    mat.userData.shared = true;
     const g = new THREE.Group();
-    const a = new THREE.Mesh(beamGeo, core), b = new THREE.Mesh(beamGeo, halo);
-    for (const m of [a, b]) { m.frustumCulled = false; m.userData.noAO = true; m.renderOrder = 6; }
-    g.add(a, b); g.visible = false; g.name = 'beam';
+    const a = new THREE.Mesh(beamGeo, mat);
+    a.frustumCulled = false; a.userData.noAO = true; a.renderOrder = 6;
+    g.add(a); g.visible = false; g.name = 'beam';
     ctx.scene.add(g);
-    beams.push({ g, a, b, core, halo, t: 0, dur: 0.15, w: 0.6, col: new THREE.Color(), alive: false });
+    beams.push({ g, a, mat, t: 0, dur: 0.15, w: 0.6, col: new THREE.Color(), alive: false });
   }
   let beamCursor = 0;
 
@@ -128,21 +141,21 @@ export function install(ctx) {
     // flash: pooled light plus a hot core sprite
     ps?.lights?.flash(pos, 0xff9a52, 2000 * s, 45 * sq + 15, 0.45);
     if (add) {
-      add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.25, 7 * s, 16 * s, 4, 3.4, 2.4, 1, 0, 0, 7);
-      add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.12, 10 * s, 18 * s, 3, 2.6, 2.0, 1, 0, 0, 2);
+      add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.16, 6 * s, 14 * s, 2.2, 1.45, 0.75, 1, 0, 0, 7);
+      add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.09, 9 * s, 16 * s, 1.5, 1.05, 0.6, 1, 0, 0, 2);
       // fireball billows inside a sphere of radius 2s, expanding 3s → 9s, cooling over their life
       const nf = Math.max(3, Math.round(R(8, 14) * k));
       for (let i = 0; i < nf; i++) {
         _v.set(R(-1, 1), R(-0.3, 1), R(-1, 1)).normalize();
         const sp = R(3, 12) * sq;
         add.spawn(pos.x + _v.x * 2 * s * Math.random(), pos.y + _v.y * 2 * s * Math.random(), pos.z + _v.z * 2 * s * Math.random(),
-                  _v.x * sp, _v.y * sp + 2, _v.z * sp, R(0.45, 0.8), 3 * s * R(0.8, 1.2), 9 * s * R(0.8, 1.2), 4, 3.2, 2.0, 1, 3, -3, 3);
+                  _v.x * sp, _v.y * sp + 2, _v.z * sp, R(0.45, 0.8), 3 * s * R(0.8, 1.2), 8 * s * R(0.8, 1.2), 1.7, 0.95, 0.4, 1, 3, -3, 3);
       }
       // sparks: 30s streaks, speed 40√s
       const ns = Math.round(30 * s * k);
       for (let i = 0; i < ns; i++) {
         _v.set(R(-1, 1), R(-0.2, 1.2), R(-1, 1)).normalize().multiplyScalar(40 * sq * R(0.4, 1));
-        add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.3, 0.8), R(0.15, 0.35), 0.05, 3, 1.9, 0.8, 1, 2, 30, 1);
+        add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.3, 0.8), R(0.15, 0.35), 0.05, 2.4, 1.4, 0.55, 1, 2, 30, 1);
       }
       // embers rising slowly
       const ne = Math.round(20 * s * k);
@@ -224,22 +237,22 @@ export function install(ctx) {
     const mult = heavy ? 3 : 1;
     if (kind === 'plasma') {
       if (add) {
-        add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.18, 1.4, 3.2, 3.5, 1.2, 0.5, 1, 0, 0, 0);
+        add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.18, 1.2, 2.6, 2.2, 0.7, 0.3, 1, 0, 0, 0);
         for (let i = 0; i < Math.round(10 * k); i++) {
           _v.copy(n).multiplyScalar(R(6, 18)).add(_v2.set(R(-8, 8), R(-4, 8), R(-8, 8)));
           add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.2, 0.5), 0.25, 0.05, 3, 1.1, 0.4, 1, 2, 20, 1);
         }
       }
-      ps?.lights?.flash(pos, 0xff6a3a, 350, 10, 0.12);
+      ps?.lights?.flash(pos, 0xff6a3a, 160, 10, 0.12);
     } else if (kind === 'rail') {
       if (add) {
-        add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.2, 2.5, 5, 1.6, 3.4, 4, 1, 0, 0, 2);
+        add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.2, 2.2, 4.4, 1.0, 2.0, 2.4, 1, 0, 0, 2);
         for (let i = 0; i < Math.round(20 * k); i++) {
           _v.copy(n).multiplyScalar(R(10, 40)).add(_v2.set(R(-12, 12), R(-6, 12), R(-12, 12)));
           add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.2, 0.6), 0.3, 0.05, 1.8, 3.2, 4, 1, 2, 25, 1);
         }
       }
-      ps?.lights?.flash(pos, 0xbff4ff, 900, 18, 0.15);
+      ps?.lights?.flash(pos, 0xbff4ff, 400, 18, 0.15);
     }
     // surface response
     if (add && S.sparks) {
@@ -266,16 +279,16 @@ export function install(ctx) {
     }
     if (heavy) {
       if (kind === 'shell') {
-        ps?.lights?.flash(pos, 0xff9a52, 900, 16, 0.2);
-        if (add) add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.18, 3, 6, 3.5, 2.4, 1.2, 1, 0, 0, 3);
+        ps?.lights?.flash(pos, 0xff9a52, 450, 16, 0.2);
+        if (add) add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.2, 2.5, 5, 1.8, 1.0, 0.45, 1, 0, 0, 3);
         smokePuff(pos, 0.45, Math.max(2, Math.round(4 * k)), 0.14);
         if (surface === 'ground' || surface === 'rock' || surface === 'concrete') ps?.decals?.spawn(pos, n, 2.2, surface === 'concrete' ? 'scorch' : 'crater');
         else ps?.decals?.spawn(pos, n, 1.4, 'scorch');
       } else {
         // blade: a white flare and a burst of sparks
-        if (add) add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.12, 2.5, 4, 3.5, 3.6, 4, 1, 0, 0, 2);
+        if (add) add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.12, 2.2, 3.6, 2.0, 2.2, 2.6, 1, 0, 0, 2);
         sparks(pos, 40 * k, [1, 0.85, 0.6], 30);
-        ps?.lights?.flash(pos, 0xcfe9ff, 600, 14, 0.12);
+        ps?.lights?.flash(pos, 0xcfe9ff, 300, 14, 0.12);
       }
     } else if (kind === 'bullet' && surface !== 'metal' && Math.random() < 0.3) {
       ps?.decals?.spawn(pos, n, 0.35, 'hole');
@@ -332,8 +345,8 @@ export function install(ctx) {
     r.mesh.position.copy(pos);
     r.r = Math.max(0.1, +radius || 1); r.dur = Math.max(0.05, +duration || 0.5); r.t = 0; r.alive = true;
     r.col.set(color ?? '#ffffff');
-    r.mesh.material.color.copy(r.col).multiplyScalar(1.5);
-    r.mesh.material.opacity = 0.9;
+    r.mesh.material.color.copy(r.col);
+    r.mesh.material.opacity = 0.6;
     r.mesh.scale.setScalar(0.01);
     r.mesh.visible = true;
   }
@@ -348,10 +361,9 @@ export function install(ctx) {
     b.g.quaternion.copy(_q);
     b.w = Math.max(0.02, +width || 0.6); b.dur = Math.max(0.02, +duration || 0.15); b.t = 0; b.alive = true;
     b.col.set(color ?? '#bff4ff');
-    b.a.scale.set(b.w * 0.25, len, b.w * 0.25); b.b.scale.set(b.w, len, b.w);
-    b.core.color.setRGB(3, 3, 3).lerp(_c.copy(b.col).multiplyScalar(3), 0.3);
-    b.halo.color.copy(b.col).multiplyScalar(1.6);
-    b.core.opacity = 1; b.halo.opacity = 0.6;
+    b.a.scale.set(b.w, len, b.w);
+    b.mat.uniforms.uCol.value.copy(b.col);
+    b.mat.uniforms.uK.value = 1;
     b.g.visible = true;
     sparks(to, 8, [b.col.r, b.col.g, b.col.b], 18);
     P()?.lights?.flash(to, b.col.getHex(), 500, 12, Math.min(0.2, b.dur));
@@ -371,7 +383,7 @@ export function install(ctx) {
       },
       stop() { h.alive = false; const i = list.indexOf(h); if (i >= 0) list.splice(i, 1); },
     };
-    if (isAmbient) Object.assign(h, o);
+    if (isAmbient) { Object.assign(h, o); const st = h.stop; h.stop = () => { st(); stopAmbient(h); }; }
     return h;
   }
   function emitter(kind, pos, o = {}) {
@@ -386,7 +398,7 @@ export function install(ctx) {
     if (d > (ctx.tier.viewDistance || 1800)) return;
     const k = d > 600 ? 0.35 : d > 300 ? 0.6 : 1;
     const s = h.scale, p = h.pos, c = h.color;
-    const base = { smoke: 9, fire: 22, sparks: 14, steam: 12, dustDevil: 16 }[h.kind];
+    const base = { smoke: 9, fire: 34, sparks: 14, steam: 12, dustDevil: 16 }[h.kind];
     h.acc += base * h.rate * k * dt;
     let n = Math.floor(h.acc); h.acc -= n;
     n = Math.min(n, 12);
@@ -400,9 +412,12 @@ export function install(ctx) {
           break;
         }
         case 'fire': {
-          const fr = c ? c[0] : 1, fg = c ? c[1] : 0.55, fb = c ? c[2] : 0.2;
-          add.spawn(p.x + R(-1, 1) * s, p.y + R(0, 0.6) * s, p.z + R(-1, 1) * s, R(-0.5, 0.5), R(2, 4.5) * s, R(-0.5, 0.5), R(0.5, 0.9),
-                    R(1.2, 2) * s, R(0.4, 0.8) * s, fr * 3.5, fg * 3.5, fb * 3.5, 1, 1, -3, 3);
+          const fr = c ? c[0] : 1, fg = c ? c[1] : 0.5, fb = c ? c[2] : 0.16;
+          const hot = Math.random();
+          add.spawn(p.x + R(-0.9, 0.9) * s, p.y + R(0, 0.4) * s, p.z + R(-0.9, 0.9) * s, R(-0.4, 0.4) + windX() * 0.3, R(3, 6.5) * s, R(-0.4, 0.4) + windZ() * 0.3,
+                    R(0.35, 0.7), R(0.9, 1.5) * s, 0.15 * s, fr * (1.6 + hot), fg * (1.3 + hot * 0.8), fb * (1.1 + hot * 0.5), 1, 1.2, -4, 1);
+          if (Math.random() < 0.35) add.spawn(p.x + R(-0.6, 0.6) * s, p.y + 0.3 * s, p.z + R(-0.6, 0.6) * s, 0, R(0.5, 1.5), 0, R(0.4, 0.7),
+                                              R(1.4, 2.2) * s, R(0.6, 1.0) * s, fr * 1.4, fg * 1.1, fb, 0.8, 1, 0, 3);
           if (Math.random() < 0.3) add.spawn(p.x, p.y + s, p.z, R(-1, 1), R(2, 5), R(-1, 1), R(1, 2.2), 0.2, 0.05, 3, 1.2, 0.3, 1, 0.5, -1, 6);
           if (Math.random() < 0.35) sm.spawn(p.x + R(-0.5, 0.5) * s, p.y + 2 * s, p.z + R(-0.5, 0.5) * s, R(-0.5, 0.5) + windX(), R(3, 5) * s,
                                              R(-0.5, 0.5) + windZ(), R(3, 5), 1.5 * s, R(6, 10) * s, 0.1, 0.09, 0.085, 0.65, 0.1, -0.5, 1);
@@ -475,13 +490,13 @@ export function install(ctx) {
         if (h.timer <= 0) {
           h.timer = R(0.25, 1.4);
           const q = pick(0, 6);
-          add.spawn(q.x, q.y + 4, q.z, 0, 0, 0, R(0.15, 0.35), R(12, 30), R(25, 45), h.col.r * 3, h.col.g * 2.6, h.col.b * 2, 1, 0, 0, 7);
-          add.spawn(q.x, q.y + 4, q.z, 0, 4, 0, R(0.6, 1.2), R(10, 20), R(22, 35), 1.4, 0.5, 0.15, 0.7, 0, 0, 3);
+          add.spawn(q.x, q.y + 4, q.z, 0, 0, 0, R(0.25, 0.6), R(14, 30), R(30, 50), h.col.r * 2.4, h.col.g * 2, h.col.b * 1.5, 1, 0, 0, 7);
+          add.spawn(q.x, q.y + 4, q.z, 0, 5, 0, R(1.0, 1.8), R(14, 24), R(26, 40), 1.3, 0.5, 0.15, 0.8, 0.5, 0, 3);
           if (Math.random() < 0.25) ctx.audio?.play?.('boom', q, { range: 6000, vol: 0.35 });
         }
         if (Math.random() < dt * 6 * h.intensity) {   // tracer arcs
           const q = pick(2, 20), a = Math.random() * TAU, sp = R(250, 400);
-          add.spawn(q.x, q.y, q.z, Math.cos(a) * sp, R(10, 60), Math.sin(a) * sp, R(0.4, 0.9), 2.5, 2.5, 3, 1.4, 0.5, 1, 0, 30, 1);
+          add.spawn(q.x, q.y, q.z, Math.cos(a) * sp, R(10, 60), Math.sin(a) * sp, R(0.4, 0.9), 5, 5, 2.6, 1.2, 0.45, 1, 0, 30, 1);
         }
         break;
       }
@@ -507,9 +522,8 @@ export function install(ctx) {
         if (!h.lights) {
           h.lights = [];
           for (let i = 0; i < 3; i++) {
-            const m = new THREE.MeshBasicMaterial({ color: h.col.clone().multiplyScalar(0.35), transparent: true, opacity: 0.22,
-                                                    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
-            const geo = new THREE.ConeGeometry(28, 900, 16, 1, true); geo.translate(0, -450, 0); geo.rotateX(Math.PI);
+            const m = beamConeMaterial(h.col, 0.14);
+            const geo = new THREE.ConeGeometry(30, 900, 20, 1, true); geo.translate(0, -450, 0); geo.rotateX(Math.PI);
             const mesh = new THREE.Mesh(geo, m);
             mesh.userData.noAO = true; mesh.frustumCulled = false; mesh.renderOrder = 6;
             const q = pick(0, 2);
@@ -520,7 +534,7 @@ export function install(ctx) {
         }
         for (const l of h.lights) {
           l.ph += dt * l.sp;
-          l.mesh.rotation.set(0.35 + 0.25 * Math.sin(l.ph * 0.7), l.ph, 0);
+          l.mesh.rotation.set(0.55 + 0.3 * Math.sin(l.ph * 0.7), l.ph, 0);
         }
         break;
       }
@@ -537,6 +551,28 @@ export function install(ctx) {
   function stopAmbient(h) {
     if (h.lights) for (const l of h.lights) { l.mesh.parent?.remove(l.mesh); l.mesh.geometry.dispose(); l.mesh.material.dispose(); }
     h.lights = null;
+  }
+
+  /** a soft volumetric-looking light cone: bright at the lamp, fading along its length and at grazing edges */
+  function beamConeMaterial(color, strength) {
+    return new THREE.ShaderMaterial({
+      uniforms: { ...(ctx.atmosphere?.fogUniforms || {}), uCol: { value: new THREE.Color(color).multiplyScalar(strength) } },
+      vertexShader: `varying vec3 vW; varying vec3 vN; varying float vT;
+        void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; vN = normalize(mat3(modelMatrix) * normal); vT = uv.y;
+                      gl_Position = projectionMatrix * viewMatrix * w; }`,
+      fragmentShader: `${FOG_PARS}
+        uniform vec3 uCol; varying vec3 vW; varying vec3 vN; varying float vT;
+        void main() {
+          vec3 v = normalize(cameraPosition - vW);
+          float edge = pow(abs(dot(normalize(vN), v)), 1.6);
+          float along = pow(vT, 2.2) * 0.9 + 0.1 * vT;   // uv.y is 1 at the lamp (the cone's tip)
+          float a = edge * along * (1.0 - cFogAmount(vW) * 0.8);
+          gl_FragColor = vec4(uCol * a, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
   }
 
   // ---------------------------------------------------------------- api
@@ -557,16 +593,16 @@ export function install(ctx) {
         if (k >= 1) { r.alive = false; r.mesh.visible = false; continue; }
         const e = 1 - (1 - k) * (1 - k);
         r.mesh.scale.setScalar(Math.max(0.01, r.r * e));
-        r.mesh.material.opacity = 0.9 * (1 - k) * (1 - k);
+        r.mesh.material.opacity = 0.6 * (1 - k) * (1 - k);
       }
       for (const b of beams) {
         if (!b.alive) continue;
         b.t += dt;
         const k = b.t / b.dur;
         if (k >= 1) { b.alive = false; b.g.visible = false; continue; }
-        b.core.opacity = 1 - k; b.halo.opacity = 0.6 * (1 - k);
-        const w = b.w * (1 + k * 0.6);
-        b.b.scale.x = b.b.scale.z = w;
+        b.mat.uniforms.uK.value = (1 - k) * (1 - k);
+        const w = b.w * (1 + k * 0.8);
+        b.a.scale.x = b.a.scale.z = w;
       }
       for (const d of delayed) {
         if (d.t < 0) continue;

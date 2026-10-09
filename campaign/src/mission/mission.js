@@ -24,7 +24,6 @@
 //    tag is left alive, or when the encounter is cleared).
 //  · Triggers with `once: false` fire on each rising edge of their condition. `{ trigger: id }` fires regardless of
 //    `enabled` and `after`.
-//  · A checkpoint earlier in def.checkpoints than the current one is ignored (no regressing on replays of old lists).
 //  · Encounters with `persist: false` are stored as 'pending' in snapshots. Kill tallies of an encounter that is
 //    re-spawned in full on a restart are rolled back with it.
 //  · Without a `complete` block and without any `{ complete: true }` action, the level completes at the route end.
@@ -406,7 +405,7 @@ export function install(ctx) {
   let base = null;                    // { def, structures } — the load-time structure states (fresh restarts)
   let loadedFor = null;               // the world (heightfield) the collectibles and prewarm belong to
   const cacheGlows = new Map();
-  let promptSig = '', progressSig = '';
+  let promptSig = null, progressSig = null;   // null forces the next refresh
   let musicCur = null;
   const musicAuto = { hot: 0, calm: 0, combat: false };
   let held = [];                      // list continuations whose blocking promise settled while the sim was stopped
@@ -577,7 +576,7 @@ export function install(ctx) {
       if (it.flag) m.setFlag(it.flag, true);
       if (it.onDone) m.run(it.onDone);
     }
-    promptSig = '';
+    promptSig = null; progressSig = null;
   }
 
   // ------------------------------------------------------------------------------------ encounters
@@ -801,7 +800,8 @@ export function install(ctx) {
     const mu = m.def.music;
     if (!mu?.combat || !ctx.music) return;
     const baseT = mu.theme ?? 'ambient';
-    if (musicCur !== baseT && musicCur !== mu.combat) return;   // the level chose something else: hands off
+    // hands off unless the base theme plays, or the combat theme that this auto-switch put on
+    if (!(musicCur === baseT || (musicAuto.combat && musicCur === mu.combat))) return;
     const ci = ctx.enemies?.combatIntensity?.() ?? 0;
     if (ci >= 0.5) { musicAuto.hot += dt; musicAuto.calm = 0; } else if (ci < 0.2) { musicAuto.calm += dt; musicAuto.hot = 0; }
     if (!musicAuto.combat && musicAuto.hot > 1.5) { musicAuto.combat = true; musicCur = mu.combat; ctx.music.setTheme(mu.combat, 1.5); }
@@ -856,7 +856,7 @@ export function install(ctx) {
       }
       case 'cinematic': return ctx.cinematics?.play(v);
       case 'flyby': { const f = ctx.cinematics?.flyby(v); return a.wait ? f?.done : undefined; }
-      case 'barrage': return ctx.cinematics?.barrage(v);
+      case 'barrage': ctx.cinematics?.barrage(v); return;   // not blocking (§6.10)
       case 'structure': {
         const inst = ctx.structures?.get(v.id);
         if (!inst) { warnOnce('st:' + v.id, '[mission] unknown structure', v.id); return; }
@@ -1020,7 +1020,7 @@ export function install(ctx) {
       ctx.clock.time = 0; ctx.clock.dt = 0;
       ctx.timeScale = 1;
       elapsed = useSnap?.elapsed ?? 0;
-      completed = false; failed = false; completing = false; trigAcc = 0; running = true; markerSig = ''; promptSig = ''; progressSig = '';
+      completed = false; failed = false; completing = false; trigAcc = 0; running = true; markerSig = ''; promptSig = null; progressSig = null;
       if (fresh) ctx.combat?.resetStats?.();
       resetPlayerExtras();
       ctx.hud?.resetLevel?.();
@@ -1108,7 +1108,7 @@ export function install(ctx) {
       if (ctx.hud?.choosing) ctx.hud.choice(null);
       if (ctx.player) ctx.player.frozen = false;
       ctx.timeScale = 1;
-      markerSig = ''; promptSig = ''; progressSig = '';
+      markerSig = ''; promptSig = null; progressSig = null;
       held = [];   // stale lists only (gen changed above), including any the clears just settled
     },
     /**
@@ -1209,8 +1209,6 @@ export function install(ctx) {
       const cps = m.def?.checkpoints || [];
       const i = cps.findIndex(c => c.id === id);
       if (i < 0) { warnOnce('cp:' + id, '[mission] unknown checkpoint', id); return; }
-      const curI = cps.findIndex(c => c.id === m.checkpoint);
-      if (i < curI) return;   // never regress to an earlier checkpoint
       const cp = cps[i];
       m.checkpoint = id;
       cpSnap = m.snapshot();
@@ -1272,9 +1270,9 @@ export function install(ctx) {
       const pos = typeof at === 'function' ? at : at?.isVector3 ? () => at : () => (at ? res(at, vec) : null);
       interacts.set(o.id, { id: o.id, pos, r: o.r ?? 14, seconds: o.seconds ?? 1.5, label: o.label || 'INTERACT', flag: o.flag,
                             onDone: o.onDone, marker: !!o.marker, ip: 0, started: false });
-      promptSig = ''; markerDirty = true;
+      promptSig = null; markerDirty = true;
     },
-    removeInteract(id) { interacts.delete(id); promptSig = ''; markerDirty = true; },
+    removeInteract(id) { interacts.delete(id); promptSig = null; markerDirty = true; },
     /** extra: spawn one UnitGroup now (flyby deploys); tags are added to the group's own */
     _spawnGroup(g, tags = [], encId = null) { return spawnGroup(g, tags, encId); },
     /** extra: the open interactions (tests) */

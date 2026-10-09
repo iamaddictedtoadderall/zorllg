@@ -72,7 +72,7 @@ void main() {
     float sp = length(vv);
     vec2 d = sp > 1e-4 ? vv / sp : vec2(0.0, 1.0);
     float len = size + sp * 0.045;
-    off = d * c.y * len + vec2(-d.y, d.x) * c.x * size * 0.32;
+    off = d * c.y * len + vec2(d.y, -d.x) * c.x * size * 0.32;
   } else {
     off = vec2(c.x * cs - c.y * sn, c.x * sn + c.y * cs) * size;
   }
@@ -285,7 +285,7 @@ const GLOW_FS = /* glsl */`
 varying vec3 vCol; varying vec2 vUv;
 void main() {
   float a = smoothstep(0.5, 0.0, length(vUv - 0.5));
-  gl_FragColor = vec4(vCol * (a * a * 4.0 + a), 1.0);
+  gl_FragColor = vec4(vCol * (a * a * a * 4.0 + a * a * 0.6), 1.0);   // hot core, soft halo
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;

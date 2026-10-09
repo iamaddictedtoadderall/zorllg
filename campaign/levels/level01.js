@@ -385,7 +385,7 @@ const triggers = [
       { wait: 4 }, { comms: 'c_raid_gully' }, ...add('o_gully') ] },
   { id: 't_raid_hit', when: { custom: 'playerHit' }, after: 't_raid', do: [{ comms: 'c_raid_hit' }] },
   { id: 't_raid_failsafe', when: { all: [{ timer: 25, since: 't_raid' }, { not: { pass: 260 } }] }, after: 't_raid', do: [
-      { call: 'raidTowCutter', args: { to: { s: 312 } } }] },
+      { call: 'raidTowCutter', args: { to: { s: 324 } } }] },          // onto the snow bridge: the collapse follows
   { id: 't_collapse', when: { pass: 318 }, after: 't_raid', do: [{ event: 'collapse' }] },
 
   // Z2 · under the ice
@@ -616,7 +616,7 @@ const def = {
     { id: 'cp_abeyance', at: { s: 1375, l: 0 },  yaw: 'route', label: 'The Abeyance' },
     { id: 'cp_cutline',  at: { s: 1735, l: 0 },  yaw: 'route', label: 'The cut-line' },
     { id: 'cp_harvest',  at: { s: 2200, l: 0 },  yaw: az(90), label: 'The shelf edge' },
-    { id: 'cp_floes',    at: { x: 856, z: 23, y: FLOE_TOP }, yaw: az(100), label: 'The floes' },
+    { id: 'cp_floes',    at: { x: 856, z: 23, y: SEA + 3 }, yaw: az(100), label: 'The floes' },   // the guaranteed Raft fragment
   ],
 
   objectives: [
@@ -662,7 +662,7 @@ const def = {
       { art: ART_UNDER, blend: 0 },
       { call: 'hudPanels', args: { all: false } }, { call: 'vitals', args: { mode: 'hidden' } },
       { comms: 'c_boot', wait: true },                                // over black (A5.2: comms render above the fade)
-      { call: 'vitals', args: { mode: 'live', bpm: 112, spike: 112, decay: 60 } },
+      { call: 'vitals', args: { mode: 'live', bpm: null, spike: 112, decay: 60 } },   // boot 112, decaying over 60 s
       { parallel: [
         [{ cinematic: 'mothWakes' }],
         [{ fade: 0, seconds: 1.5 }, { call: 'visor', args: { on: true } }, { music: { stinger: 'discovery' } },

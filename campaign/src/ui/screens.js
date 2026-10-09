@@ -107,7 +107,7 @@ export function install(ctx) {
     return new Promise(res => { pending = res; });
   }
   function close(value) {
-    cancelAnimationFrame(typer); typing = null;
+    clearTimeout(typer); typing = null;
     for (const id of timers) clearTimeout(id);
     timers.clear();
     const p = pending; pending = null;
@@ -129,27 +129,30 @@ export function install(ctx) {
     const first = root.querySelector('[autofocus]:not([disabled])') || root.querySelector('button:not([disabled])');
     first?.focus({ preventScroll: true });
   }
-  /** real-time typewriter for menus; a click (or Enter/Space via the key handler) completes it */
+  /** real-time typewriter for menus (timer-driven: rAF is not serviced in every headless/background case);
+   *  a click, or Enter/Space via the key handler, completes it */
   function typeInto(el, text, cps = 70, then) {
     if (!el) { then?.(); return; }
     const start = performance.now();
-    let finished = false;
+    let finished = false, shown = -1;
     const finish = () => {
       if (finished) return;
       finished = true; typing = null;
-      cancelAnimationFrame(typer);
-      el.textContent = text;
+      clearTimeout(typer);
+      if (el.isConnected) el.textContent = text;
       then?.();
     };
     const step = () => {
       if (!el.isConnected || finished) return;
       const i = Math.min(text.length, Math.floor((performance.now() - start) / 1000 * cps));
-      el.textContent = text.slice(0, i);
-      if (i < text.length) {
-        const c = document.createElement('span'); c.className = 'cur'; el.appendChild(c);
+      if (i !== shown) {
+        shown = i;
+        el.textContent = text.slice(0, i);
+        if (i < text.length) { const c = document.createElement('span'); c.className = 'cur'; el.appendChild(c); }
         if (Math.random() < 0.3) ctx.audio?.play?.('blip', null);
-        typer = requestAnimationFrame(step);
-      } else finish();
+      }
+      if (i < text.length) typer = setTimeout(step, 16);
+      else finish();
     };
     typing = finish;
     el.addEventListener('click', finish, { once: true });

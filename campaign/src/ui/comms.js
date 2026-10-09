@@ -21,9 +21,9 @@ const FONTS = new Set(['sans', 'monoCaps', 'serif']);
 const NOISE = '▒░▓';
 
 const CSS = `
-#comms{z-index:3;pointer-events:none;overflow:hidden;transform-origin:0 50%}
+#comms{z-index:3;pointer-events:none;overflow:hidden}
 #comms:not([hidden]){animation:commsIn .16s ease-out}
-@keyframes commsIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+@keyframes commsIn{from{opacity:0}to{opacity:1}}
 #comms .who{min-height:16px}
 #comms .who .chan{font:500 10px/1 var(--f-mono);letter-spacing:.14em;padding:2px 5px 1px;border:1px solid currentColor;opacity:.75}
 #comms .who .chan:empty{display:none}

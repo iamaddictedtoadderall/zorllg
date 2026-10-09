@@ -16,6 +16,7 @@ import { isHostile } from '../combat/combat.js';
 const DEFAULT_SCHEME = { design: 'striker', base: '#8f8a80', mid: '#6c6a64', accent: '#3f5a58', visor: '#ff3b2a', flame: '#ff6a4a', blade: '#ff4a3a' };
 const GUN_PART = { rifle: 'rifle_r30', mg: 'mg_r12', shotgun: 'shotgun_s8', cannon: 'cannon_hc90' };
 const _v = new THREE.Vector3(), _c = new THREE.Vector3(), _c2 = new THREE.Vector3(), _m = new THREE.Vector3();
+const IW = { x: 0, z: 0 };
 let shockGeo = null;
 
 class Mech extends Unit {
@@ -31,7 +32,7 @@ class Mech extends Unit {
     this.boomScale = 2.6; this.debris = 14; this.debrisScale = 1.3; this.stagDur = 2.6;
     Object.assign(this.ai, { strafe: 1, strafeT: 2, hoverT: 0, qbCd: 2, qbT: 0, burst: 0, bt: 0, msCd: 6, bladeCd: 4, bladeWind: 0,
                              lungeT: 0, bladeT: 0, shockCd: 9, shockWind: 0, landT: 0, recoil: 0, thrust: 0, hover: 0, dangerT: 0,
-                             aggr: this.baseAggr, prefer: cfg.preferRange ?? 72, returning: false,
+                             aggr: this.baseAggr, prefer: cfg.preferRange ?? (this.behavior === 'sniper' ? 160 : 72), returning: false,
                              used: { rifle: 0, mg: 0, shotgun: 0, cannon: 0, missiles: 0, blade: 0, dodge: 0, shock: 0, hop: 0 } });
     this.yaw = this.ai.yaw0 ?? 0;
     // shock sphere: a private additive material (its opacity animates)
@@ -55,7 +56,7 @@ class Mech extends Unit {
       const ph = this.phases[this.phaseIdx++];
       if (ph.aggression != null) this.ai.aggr = ph.aggression;
       for (const a of ph.add || []) this.abil.add(a);
-      this.ai.prefer = ph.preferRange ?? (this.cfg.preferRange ?? 72) * 0.67;
+      this.ai.prefer = ph.preferRange ?? (this.cfg.preferRange ?? (this.behavior === 'sniper' ? 160 : 72)) * 0.67;
       this.ai.qbFast = true;
       this.ctx.events.emit('unit:phase', { unit: this, phase: this.phaseIdx + 1 });
       this.cfg.onPhase?.(this, this.phaseIdx + 1);
@@ -70,15 +71,15 @@ class Mech extends Unit {
     const aggr = ai.aggr, dodgeK = cfg.dodge ?? 1;
     // leash (R14): beyond `leash` from home, disengage and walk back; resume inside half the leash
     if (this.outsideLeash()) ai.returning = true;
-    else if (ai.returning && Math.hypot(this.pos.x - this.home.x, this.pos.z - this.home.z) < this.leash * 0.5) ai.returning = false;
+    else if (ai.returning && Math.hypot(this.pos.x - this.home.x, this.pos.z - this.home.z) < this.effLeash() * 0.5) ai.returning = false;
     const T = ai.returning ? null : this.acquire(dt, Math.max(this.aggroRange, 420));
     if (ai.returning) this.target = null;
     let P = T ? T.pos : null;
-    if (!P && cfg.follow === 'player' && ctx.player?.active) P = ctx.player.pos;
-    if (!P && ai.returning) P = this.home;
+    let idle = null;
+    if (!P) { idle = this.idleWish(1, IW); P = idle; }   // patrol, escort (config.follow 'player'), home
     const dx = P ? P.x - this.pos.x : 0, dz = P ? P.z - this.pos.z : 0, dist = P ? Math.hypot(dx, dz) || 1 : Infinity;
     const dirx = P ? dx / dist : 0, dirz = P ? dz / dist : 0;
-    if (P) this.yaw = dampAng(this.yaw, yawTo(dx, dz), 6, dt);
+    if (P && (T || dist > 3)) this.yaw = dampAng(this.yaw, yawTo(dx, dz), 6, dt);
     ai.qbT -= dt; ai.qbCd -= dt; ai.msCd -= dt; ai.bladeCd -= dt; ai.shockCd -= dt; ai.landT = Math.max(0, ai.landT - dt * 2.5);
     ai.recoil = damp(ai.recoil, 0, 10, dt);
     let wishx = 0, wishz = 0, speed = 30 * aggr, ascend = false;
@@ -117,8 +118,9 @@ class Mech extends Unit {
       } else if (ai.lungeT <= 0) { ai.bladeT = 0.4; ai.bladeCd = this.rnd(4, 6) / aggr; }
     } else if (P) {
       ai.strafeT -= dt;
-      if (ai.strafeT <= 0) { ai.strafe = ctx.random() < 0.6 ? -ai.strafe : ai.strafe; ai.strafeT = this.rnd(1.4, 3.2); }
-      const prefer = T ? ai.prefer : (ai.returning ? 0 : 40);
+      if (ai.strafeT <= 0) { if (this.behavior !== 'flank') ai.strafe = ctx.random() < 0.6 ? -ai.strafe : ai.strafe; ai.strafeT = this.rnd(1.4, 3.2); }
+      const escort = this.behavior === 'escort' || cfg.follow === 'player';
+      const prefer = T ? ai.prefer : (escort && !ai.returning ? 35 : 3);
       const radial = clamp((dist - prefer) / 30, -1, 1);
       const side = T ? 0.9 : 0;
       wishx = dirx * radial - dirz * ai.strafe * side; wishz = dirz * radial + dirx * ai.strafe * side;

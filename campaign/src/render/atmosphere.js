@@ -349,7 +349,7 @@ export function install(ctx) {
   const envGround = new THREE.Mesh(new THREE.CircleGeometry(60, 32), groundMat);
   envGround.rotation.x = -Math.PI / 2; envGround.position.y = -4;
   envScene.add(envSky, envGround);
-  let pmrem = null, envRT = null;
+  let pmrem = null, envRT = null, cubeRT = null, cubeCam = null;
 
   function buildEnv() {
     try {
@@ -358,8 +358,15 @@ export function install(ctx) {
       const sunK = R.lSun * Math.max(0.05, Math.sin(Math.max(R.minEl, R.sunEl) * DEG)) / Math.PI;
       _c.copy(R.hemiSky).multiplyScalar(R.hemi * 0.35 / Math.PI).add(_c2.copy(R.lSunColor).multiplyScalar(sunK));
       groundMat.color.copy(R.ground).multiply(_c).lerp(R.fogColor, 0.25);
+      // render the sky into a small HDR cube, then prefilter it (a 128² cube is plenty for blurred reflections)
+      if (!cubeRT) {
+        cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType, generateMipmaps: false });
+        cubeCam = new THREE.CubeCamera(0.1, 100, cubeRT);
+        envScene.add(cubeCam);
+      }
       const flash = skyU.uFlash.value; skyU.uFlash.value = 0;
-      const rt = pmrem.fromScene(envScene, 0.04, 0.1, 100);
+      cubeCam.update(renderer, envScene);
+      const rt = pmrem.fromCubemap(cubeRT.texture);
       skyU.uFlash.value = flash;
       if (envRT) envRT.dispose();
       envRT = rt;
@@ -528,8 +535,8 @@ export function install(ctx) {
       if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
     }
     const texel = (2 * e) / s;
-    sun.shadow.normalBias = Math.max(0.12, texel * 2.2);
-    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = Math.max(0.4, texel * 4);
+    sun.shadow.bias = -0.0005;
     sun.shadow.radius = ctx.tier.name === 'low' ? 1 : 2;
   }
   const _right = new THREE.Vector3(), _up = new THREE.Vector3(), _ctr = new THREE.Vector3();

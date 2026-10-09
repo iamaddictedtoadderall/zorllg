@@ -36,7 +36,14 @@ const fp = (shape, a, b, exclude = 3) => (shape === 'circle' ? { shape, r: a, fl
 function part(ctx, key, make, o = {}) { const b = cached(ctx, key, make, o); const r = instance(ctx, b, o); r.extra = b.extra; return r; }
 function setColliders(inst, on) { for (const c of inst.colliders || []) c.enabled = !!on; }
 function unsquash(inst) { if (inst.root && inst.root.scale.y !== 1) { inst.root.scale.y = 1; inst.root.updateMatrix(); } }
-const partsOf = (inst) => inst.root?.userData?.l01 || {};
+/** the runtime parts of a realised structure (the root may be a THREE.LOD wrapping the built root as its level 0) */
+export function l01Of(root) {
+  if (!root) return null;
+  if (root.userData?.l01) return root.userData.l01;
+  for (const c of root.children || []) if (c.userData?.l01) return c.userData.l01;
+  return null;
+}
+const partsOf = (inst) => l01Of(inst.root) || {};
 
 // sign textures are canvas textures: cache them per ctx and text
 const SIGNS = new WeakMap();
@@ -47,7 +54,7 @@ function sign(ctx, text, o = {}) {
   return m.get(k);
 }
 const DECALS = new WeakMap();
-function signMesh(ctx, text, w, h, o = {}) {
+export function signMesh(ctx, text, w, h, o = {}) {
   const tex = sign(ctx, text, o);
   if (!tex) return null;
   let m = DECALS.get(ctx); if (!m) { m = new Map(); DECALS.set(ctx, m); }
@@ -464,11 +471,12 @@ export function coneGeo(rt, rb, h) {
   return g;
 }
 const CONE_MATS = new WeakMap();
-/** additive, double-sided, fog-free light volume material (shared per colour) */
+/** additive, fog-free light volume material: P1's library glow (shared per colour and opacity; no extra program) */
 export function coneMat(ctx, color, opacity) {
+  if (ctx.materials?.glow) return ctx.materials.glow(color, opacity);
   let m = CONE_MATS.get(ctx); if (!m) { m = new Map(); CONE_MATS.set(ctx, m); }
   const k = color + '|' + opacity;
-  if (!m.has(k)) m.set(k, shared(new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false })));
+  if (!m.has(k)) m.set(k, shared(new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })));
   return m.get(k);
 }
 
@@ -735,6 +743,8 @@ type('abeyance', abeyanceType);
 
 // ════════════════════════════════════════════════════════════════════════════ registration
 export const L1_STRUCTURE_TYPES = Object.keys(TYPES);
+/** tests and tools: the raw type definitions (params defaults in `params`) */
+export const L1_TYPE_DEFS = TYPES;
 const REGISTERED = new WeakSet();
 /** wraps a definition so every hook sees params merged with the type's defaults */
 function wrapped(name) {

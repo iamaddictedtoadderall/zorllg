@@ -179,8 +179,62 @@ export class Unit {
     this.ai.driftA = a;
     return a;
   }
-  /** home/leash: true when the unit is farther than `leash` from home (it should disengage and walk back) */
-  outsideLeash() { return Number.isFinite(this.leash) && Math.hypot(this.pos.x - this.home.x, this.pos.z - this.home.z) > this.leash; }
+  /**
+   * A circle collider that follows this unit (turrets, beacons). `top`/`bottom` are relative to pos.y. The collider
+   * is re-hashed when the unit has moved (an Icebreaker carrying its deck turrets), and owned by the unit, so a shot
+   * that hits it damages the unit.
+   */
+  addBodyCollider(r, top, bottom = -0.5) {
+    const C = this.ctx.collision;
+    if (!C?.circle) return null;
+    const c = C.circle(this.pos.x, this.pos.z, r, this.pos.y + top, this.pos.y + bottom, { owner: this, surface: 'metal', tag: 'unit' });
+    c._body = { r, top, bottom };
+    this.colliders.push(c);
+    return c;
+  }
+  /** re-place body colliders that no longer sit under the unit */
+  syncColliders() {
+    const C = this.ctx.collision;
+    if (!C) return;
+    for (let i = 0; i < this.colliders.length; i++) {
+      const c = this.colliders[i], b = c._body;
+      if (!b) continue;
+      if (Math.abs(c.x - this.pos.x) < 0.25 && Math.abs(c.z - this.pos.z) < 0.25 && Math.abs(c.top - (this.pos.y + b.top)) < 0.25) continue;
+      const en = c.enabled;
+      C.remove(c);
+      const n = C.circle(this.pos.x, this.pos.z, b.r, this.pos.y + b.top, this.pos.y + b.bottom, { owner: this, surface: 'metal', tag: 'unit' });
+      n._body = b; n.enabled = en;
+      this.colliders[i] = n;
+    }
+  }
+  /** the leash in force: `leash`, or 200 m for 'guard' units without one */
+  effLeash() { return Number.isFinite(this.leash) ? this.leash : (this.behavior === 'guard' ? 200 : Infinity); }
+  /** home/leash: true when the unit is farther than its leash from home (it should disengage and walk back) */
+  outsideLeash() { const L = this.effLeash(); return Number.isFinite(L) && Math.hypot(this.pos.x - this.home.x, this.pos.z - this.home.z) > L; }
+  /**
+   * Movement wish without a target, by behaviour: 'patrol' loops through `patrol` points, 'escort' (or config.follow
+   * 'player') keeps 35 m from the player, 'hold' and 'scripted' stay put, everything else returns home.
+   * Writes a velocity (m/s) into out.x / out.z and returns the point it heads for (or null).
+   */
+  idleWish(speed, out) {
+    out.x = 0; out.z = 0;
+    const b = this.behavior;
+    let tx = null, tz = null, stop = 10;
+    if (b === 'hold' || b === 'scripted') return null;
+    if (b === 'patrol' && this.patrol?.length) {
+      const i = (this.ai.patrolI ?? 0) % this.patrol.length, p = this.patrol[i];
+      if (Math.hypot(p.x - this.pos.x, p.z - this.pos.z) < 8) this.ai.patrolI = i + 1;
+      tx = p.x; tz = p.z; stop = 0;
+    } else if (b === 'escort' || this.config?.follow === 'player') {
+      const pl = this.ctx.player;
+      if (pl?.active && this.team !== 'enemy') { tx = pl.pos.x; tz = pl.pos.z; stop = 35; }
+    }
+    if (tx === null) { tx = this.home.x; tz = this.home.z; }
+    const dx = tx - this.pos.x, dz = tz - this.pos.z, d = Math.hypot(dx, dz);
+    if (d > stop + 0.5) { out.x = dx / d * speed; out.z = dz / d * speed; }
+    _w.set(tx, 0, tz);
+    return _w;
+  }
   /** turn `yaw` toward a world direction */
   faceTo(dt, dx, dz, k = 5) { this.yaw = dampAng(this.yaw, yawTo(dx, dz), k, dt); }
 }
@@ -205,7 +259,7 @@ export function install(ctx) {
     for (let i = 0; i < n; i++) {
       const u = units[i];
       if (!u.alive || u.asleep || u.dropping || u.ghost) continue;
-      if (plOn && !pl.hidden) {
+      if (plOn) {
         const dx = u.pos.x - pl.pos.x, dz = u.pos.z - pl.pos.z, d = Math.hypot(dx, dz), min = (u.rad || 2) + (pl.rad || 2.6) + 0.3;
         if (d < min && d > 1e-3 && overlapY(u, pl)) {
           if (u.immovable || u.heldT > 0) { pl.pos.x = u.pos.x - dx / d * min; pl.pos.z = u.pos.z - dz / d * min; }

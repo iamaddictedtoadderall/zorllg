@@ -548,11 +548,14 @@ export function pipe(points, radius, radial = 8) {
 // ------------------------------------------------------------------ trusses (AD §2.5)
 /** Truss along x (length), height along y (base at y = 0), two faces `width` apart in z (0 = a single face).
  *  bays: number of bays. bar: member size; a 5th-argument object is read as { bar, pattern: 'warren'|'pratt'|'k' }. */
+function gussetGeo(B) {
+  return cached(keyOf('gusset', B), () => kitFinalize(new THREE.BoxGeometry(B * 2.4, B * 2.0, B * 0.3), { edgeAll: 1 }));
+}
 export function truss(length, width, height, bays, barSize = 0.25) {
   const o = typeof barSize === 'object' && barSize ? barSize : { bar: barSize };
   const B = o.bar ?? 0.25, pattern = o.pattern || 'warren';
   bays = Math.max(1, Math.round(bays));
-  return cached(keyOf('truss', length, width, height, bays, B, pattern), () => {
+  return cached(keyOf('truss', length, width, height, bays, B, pattern, o.gussets !== false), () => {
     const parts = [], L = length, H = height, bw = B * 0.75;
     const faces = width > 0 ? [-width / 2, width / 2] : [0];
     const xs = []; for (let i = 0; i <= bays; i++) xs.push(-L / 2 + L * i / bays);
@@ -561,8 +564,8 @@ export function truss(length, width, height, bays, barSize = 0.25) {
       parts.push([bar(L, B, B), { pos: [0, yb, z] }], [bar(L, B, B), { pos: [0, yt, z] }]);
       for (const x of xs) {
         parts.push(barBetween([x, yb, z], [x, yt, z], bw, bw));
-        for (const y of [yb, yt]) parts.push([plateBox(B * 2.4, B * 2.0, B * 0.3, B * 0.08), { pos: [x, y + (y === yb ? B * 0.4 : -B * 0.4), z + B * 0.55] }],
-          [plateBox(B * 2.4, B * 2.0, B * 0.3, B * 0.08), { pos: [x, y + (y === yb ? B * 0.4 : -B * 0.4), z - B * 0.55] }]);
+        // gusset plates on the outer face only (plain boxes: at truss scale a bevel is sub-pixel)
+        if (o.gussets !== false) for (const y of [yb, yt]) parts.push([gussetGeo(B), { pos: [x, y + (y === yb ? B * 0.4 : -B * 0.4), z + (z < 0 || faces.length === 1 ? -1 : 1) * B * 0.55] }]);
       }
       for (let i = 0; i < bays; i++) {
         const x0 = xs[i], x1 = xs[i + 1], xm = (x0 + x1) / 2;
@@ -814,8 +817,8 @@ export function icicles(edge, n = 8, o = {}) {
  *  mesh (LOD1, far silhouettes). Inputs without the kit attribute set are normalised (kitFinalize on a copy). */
 export class GeoBuilder {
   constructor(seed = 1) { this.entries = []; this.rng = mulberry32((seed >>> 0) || 1); }
-  /** t: Matrix4 or { pos, rot, scale, tint, lod0 }. o: { tint (number: value jitter ±, or [r,g,b] / Color), lod0 (skip in
-   *  buildSingle), shadow } */
+  /** t: Matrix4 or { pos, rot, scale, tint, lod0, lod1 }. o: { tint (number: value jitter ±, or [r,g,b] / Color),
+   *  lod0 (detail: skipped by buildSingle), lod1 (a simplified stand-in: only in buildSingle) } */
   add(g, m, t, o) {
     if (!g || !m) return this;
     if (!isKit(g)) g = kitFinalize(g.clone(), { flat: !g.attributes.normal });
@@ -824,7 +827,8 @@ export class GeoBuilder {
     if (typeof tint === 'number' && tint) { const f = 1 + (this.rng() * 2 - 1) * tint; col = [f, f, f]; }
     else if (tint && tint.isColor) col = [tint.r, tint.g, tint.b];
     else if (Array.isArray(tint)) col = tint.slice(0, 3);
-    this.entries.push({ g, m, mat: toMatrix(t, new THREE.Matrix4()), col, lod0: !!(o?.lod0 ?? (t && !t.isMatrix4 && t.lod0)) });
+    this.entries.push({ g, m, mat: toMatrix(t, new THREE.Matrix4()), col, lod0: !!(o?.lod0 ?? (t && !t.isMatrix4 && t.lod0)),
+                        lod1: !!(o?.lod1 ?? (t && !t.isMatrix4 && t.lod1)) });
     return this;
   }
   /** Adds every descendant mesh of `o`, with its transform relative to `o`. */
@@ -842,9 +846,24 @@ export class GeoBuilder {
   }
   get count() { return this.entries.length; }
   triangles(filter) { let n = 0; for (const e of this.entries) if (!filter || filter(e)) n += e.g.attributes.position.count / 3; return n; }
+  /** A builder view that applies `base` (Matrix4) before every transform (compose sub-assemblies). */
+  under(base) {
+    const B = this, M4 = new THREE.Matrix4();
+    return {
+      rng: B.rng, entries: B.entries,
+      add(g, m, t, o) {
+        const tt = toMatrix(t, M4.clone()).premultiply(base);
+        const tint = o?.tint ?? (t && !t.isMatrix4 ? t.tint : undefined);
+        const lod0 = o?.lod0 ?? (t && !t.isMatrix4 ? t.lod0 : undefined), lod1 = o?.lod1 ?? (t && !t.isMatrix4 ? t.lod1 : undefined);
+        B.add(g, m, tt, { tint, lod0, lod1 });
+        return this;
+      },
+      under(b2) { return B.under(base.clone().multiply(b2)); },
+    };
+  }
   /** Merged geometry of every entry using material m (or all entries when m is null). */
   mergedFor(m, single = null) {
-    const list = this.entries.filter(e => (m ? e.m === m : true) && (!single || !e.lod0));
+    const list = this.entries.filter(e => (m ? e.m === m : true) && (single ? !e.lod0 : !e.lod1));
     let n = 0; for (const e of list) n += e.g.attributes.position.count;
     const P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), E = new Float32Array(n);
     let o = 0;
@@ -864,7 +883,7 @@ export class GeoBuilder {
     const root = new THREE.Group();
     if (o.name) root.name = o.name;
     const mats = [];
-    for (const e of this.entries) if (!mats.includes(e.m)) mats.push(e.m);
+    for (const e of this.entries) if (!e.lod1 && !mats.includes(e.m)) mats.push(e.m);
     let tris = 0;
     for (const m of mats) {
       const g = this.mergedFor(m);
@@ -907,7 +926,8 @@ function singleMaterial() {
 /** Converts a hierarchy of bone groups with attached plate meshes into one SkinnedMesh per material (rigid weights:
  *  skinIndex = owning bone, weight 1). The bone objects keep their names and references, so animation that rotates
  *  bones still works. Additive or transparent meshes, invisible meshes, and meshes flagged userData.noBake stay as they
- *  are. Sets a generous manual boundingSphere. Returns root; root.userData.rigidBake holds the sources (unbakeRigid).
+ *  are (unless flagged userData.bakeAdditive: then they bake too, one mesh per material, no shadows). Sets a generous
+ *  manual boundingSphere. Returns root; root.userData.rigidBake holds the sources (unbakeRigid).
  *  o: { sphere: { center: [x,y,z], r }, castShadow } */
 export function bakeRigid(root, o = {}) {
   if (root.userData.rigidBake) unbakeRigid(root);
@@ -917,7 +937,8 @@ export function bakeRigid(root, o = {}) {
   root.traverse(c => {
     if (!c.isMesh || c.isSkinnedMesh || c.isInstancedMesh || c.userData.noBake) return;
     const m = c.material;
-    if (!m || Array.isArray(m) || m.transparent || m.blending !== THREE.NormalBlending) return;
+    if (!m || Array.isArray(m)) return;
+    if ((m.transparent || m.blending !== THREE.NormalBlending) && !c.userData.bakeAdditive) return;
     for (let p = c; p && p !== root; p = p.parent) if (!p.visible) return;
     list.push(c);
   });
@@ -952,7 +973,8 @@ export function bakeRigid(root, o = {}) {
     g.computeBoundingBox(); g.computeBoundingSphere();
     const sm = new THREE.SkinnedMesh(g, mat);
     sm.name = 'baked:' + (mat.name || meshes.length);
-    sm.castShadow = o.castShadow ?? shadow; sm.receiveShadow = true;
+    const additive = mat.transparent || mat.blending !== THREE.NormalBlending;
+    sm.castShadow = additive ? false : (o.castShadow ?? shadow); sm.receiveShadow = !additive;
     sm.userData.noBake = true;
     root.add(sm);
     sm.updateMatrixWorld(true);
