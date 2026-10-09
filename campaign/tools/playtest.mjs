@@ -197,6 +197,17 @@ try {
     page, args, out: args.out,
     async startLevel(id, cp, opts) { return ev(([id, cp, opts]) => window.__game.startLevel(id, cp, opts), [id, cp, opts || {}]); },
     async step(n = 1, dt = 1 / 60) { return ev(([n, dt]) => window.__game.step(n, dt), [n, dt]); },
+    /** extra: n single ticks with a macrotask between them, as rAF play runs (microtasks drain after every tick).
+     *  step(n) MUST give the same snapshot (§1.4); scenarios compare the two to catch await-driven sim sequencing. */
+    async stepFrames(n = 1, dt = 1 / 60) {
+      return ev(async ([n, dt]) => {
+        const mc = new MessageChannel(), next = () => new Promise(r => { mc.port1.onmessage = () => r(); mc.port2.postMessage(0); });
+        let s = window.__game.getState();
+        for (let i = 0; i < n; i++) { s = window.__game.step(1, dt); await next(); }
+        mc.port1.close();
+        return s;
+      }, [n, dt]);
+    },
     async state() { return ev(() => window.__game.getState()); },
     async input(o = {}) {
       return ev((o) => {

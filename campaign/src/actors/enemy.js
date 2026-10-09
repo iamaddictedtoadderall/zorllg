@@ -102,7 +102,7 @@ export function install(ctx) {
       return n;
     },
     despawn(u) { u.despawn(); u.alive = false; units = units.filter(x => x !== u); },
-    clear() { for (const u of units) u.despawn(); units = []; ctx.combat?.rewindIds?.(); },
+    clear() { for (const u of units) u.despawn(); units = []; },
     prewarm(list) { /* stub */ },
     combatIntensity() { return 0; },
     update(dt) {

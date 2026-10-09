@@ -57,6 +57,7 @@ export function install(ctx) {
 
   document.addEventListener('keydown', (e) => {
     if (!pending || root.hidden) return;
+    if (e.repeat && (e.code === 'Escape' || e.code === 'KeyP')) return;   // a held Esc must not toggle pause on and off
     if (e.code === 'Escape' && escValue !== undefined) { e.preventDefault(); done(escValue); return; }
     if (e.code === 'KeyP' && api.current === 'pause') { e.preventDefault(); done('resume'); return; }
     if (e.code.startsWith('Arrow')) {

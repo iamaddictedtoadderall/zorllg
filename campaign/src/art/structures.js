@@ -248,6 +248,7 @@ export function install(ctx) {
         for (const c of inst.colliders) ctx.collision?.remove(c);
       }
       insts.clear();
+      autoId = 0;   // generated ids ('wall#1') are the same on every load of a level (checkpoint states key on them)
     },
     update(dt) {
       if (!insts.size) return;

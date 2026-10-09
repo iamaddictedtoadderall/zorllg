@@ -1,7 +1,10 @@
 // ui/hud.js (P5) — P0 STUB: show/hide; AP/EN numbers and bars; objectives list; hint/warn text; mission timer;
 // weapon readouts (+ touch labels); zone card and checkpoint toast text; fade and letterbox work. Lock box, markers,
 // compass, radar, boss bar, choice and glitch are no-ops.
-import { formatTime, esc } from '../core/util.js';
+// choice() and fade() return simDeferred() promises (core/util.js) because mission lists block on them (§1.4): fade
+// completes on the 'hud' system's dt (real dt in play, the step dt under __game.step), never on a setTimeout, and the real
+// choice() MUST settle inside the tick that reads INTERACT/ALT or runs out of time.
+import { formatTime, esc, simDeferred, simResolved } from '../core/util.js';
 
 const SLOT4 = ['R', 'L', 'S', 'U'];
 const SLOT_TOUCH = { R: 'fire', L: 'blade', S: 'msl', U: 'kit' };
@@ -18,7 +21,7 @@ export function install(ctx) {
   };
   const warnings = new Map();
   let hintT = 0, killT = 0, hitT = 0, hurtLevel = 0, zoneT = 0, toastT = 0, lastWarnHTML = '', lastWeapons = null;
-  let fadeTimer = 0;
+  let fadeLeft = 0, fadeDone = null;
   const setText = (e, t) => { if (e && e.textContent !== t) e.textContent = t; };
   const setW = (e, f) => { if (e) e.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(2) + '%'; };
 
@@ -57,7 +60,7 @@ export function install(ctx) {
       if (el.prompt) { el.prompt.hidden = !text; setText(el.prompt.querySelector('span'), text || ''); }
       ctx.input?.showTouchButton?.('interact', !!text);
     },
-    choice(def) { return Promise.resolve(null); },
+    choice(def) { return simResolved(null); },
     bossBar(t, title) { /* stub */ },
     setCallsign(name, sub, frame) {
       if (name != null) setText(el.callsign, name);
@@ -71,13 +74,19 @@ export function install(ctx) {
       el.letterbox.classList.toggle('on', !!on);
     },
     fade(to, seconds = 1) {
-      if (!el.fade) return Promise.resolve();
-      el.fade.style.transitionDuration = `${Math.max(0, seconds)}s`;
-      el.fade.style.opacity = String(to);
-      clearTimeout(fadeTimer);
-      return new Promise(res => { fadeTimer = setTimeout(res, Math.max(0, seconds) * 1000); });
+      const prev = fadeDone; fadeDone = null;
+      if (el.fade) {
+        el.fade.style.transitionDuration = `${Math.max(0, seconds)}s`;
+        el.fade.style.opacity = String(to);
+      }
+      prev?.();   // a superseded fade counts as finished
+      if (!el.fade || !(seconds > 0)) return simResolved();
+      const d = simDeferred();
+      fadeDone = d.resolve; fadeLeft = seconds;
+      return d.promise;
     },
     update(dt) {
+      if (fadeDone) { fadeLeft -= dt; if (fadeLeft <= 0) { const f = fadeDone; fadeDone = null; f(); } }
       hintT -= dt; killT -= dt; hitT -= dt; zoneT -= dt; toastT -= dt;
       hurtLevel = Math.max(0, hurtLevel - dt * 2.2);
       if (ctx.pipeline?.grade) ctx.pipeline.grade.hurt = hurtLevel;

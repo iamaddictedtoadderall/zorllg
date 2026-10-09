@@ -126,6 +126,11 @@ export function createEngine(opts = {}) {
       if (sim) { clock.time += simDt; clock.dt = simDt; }
       ctx.perf.simMs = performance.now() - t0;
     },
+    /**
+     * n × tick(dt), synchronously. No microtask checkpoint runs between these ticks (rAF play runs one after every
+     * frame), so anything that sequences the sim MUST settle synchronously inside a tick (ctx.timers, simDeferred() in
+     * core/util.js), never through `await`. Then step(n) gives the same state however the n ticks are split (§1.4).
+     */
     step(n = 1, dt = 1 / 60) {
       n = Math.max(0, Math.floor(n));
       for (let i = 0; i < n; i++) ctx.tick(dt);

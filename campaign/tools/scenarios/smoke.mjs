@@ -1,4 +1,5 @@
-// tools/scenarios/smoke.mjs (P0): boot → title → test level → move → screenshots → determinism (§9.4).
+// tools/scenarios/smoke.mjs (P0): boot → title → test level → move → screenshots → determinism (§9.4): checkpoint
+// replays, fresh loads (unit ids included) and step() chunking with blocking mission actions.
 // Every package runs this before hand-off; it MUST keep passing.
 
 async function canvasStats(g) {
@@ -66,6 +67,53 @@ export default async function (g) {
   g.assert(a.units.length > 0, `replay spawned the encounter (${a.units.length} units)`);
   g.assert(JSON.stringify(a.player.pos) === JSON.stringify(b.player.pos), `deterministic (${a.player.pos.map(v => v.toFixed(3))} vs ${b.player.pos.map(v => v.toFixed(3))})`);
   g.assert(JSON.stringify(a.units) === JSON.stringify(b.units) && a.time === b.time, 'deterministic units and mission time');
+
+  // determinism across world loads (§1.4): two fresh loads of the same checkpoint with the same inputs give the same
+  // getState() as each other and as the checkpoint restart above, unit and target ids included. Streaming stats
+  // (world) may differ (§5.6), frame and perf always do.
+  const strip = (s) => { const o = JSON.parse(JSON.stringify(s)); delete o.frame; delete o.perf; delete o.world; return o; };
+  const diff = (x, y) => Object.keys({ ...x, ...y }).filter(k => JSON.stringify(x[k]) !== JSON.stringify(y[k]));
+  const fresh = async () => {
+    await g.startLevel('test', 'cp_start');
+    await g.input({ clear: true, move: [0, 1] });
+    const s = await g.step(1200);
+    await g.input({ clear: true });
+    return strip(s);
+  };
+  const f1 = await fresh(), f2 = await fresh(), rp = strip(a);
+  g.assert(diff(f1, f2).length === 0, `two fresh loads give the same state (differs: ${diff(f1, f2).join(', ') || 'nothing'}; unit ids ${f1.units.map(u => u.id)} / ${f2.units.map(u => u.id)})`);
+  g.assert(diff(f1, rp).length === 0, `a fresh load gives the same state as a checkpoint restart (differs: ${diff(f1, rp).join(', ') || 'nothing'})`);
+
+  // determinism across step() chunking (§1.4): no microtask checkpoint runs inside step(n), so blocking mission actions
+  // (wait, comms, fade, parallel, the level's complete.do) must resume inside the tick. One step(n), several step()
+  // calls and n rAF-like single ticks must agree. Walking on from s 2330 reaches o_reach (s 2450, r 80) after ~1.3 s and
+  // completes the test level about 1 s later (complete.do waits 1 s); the inline list finishes at ~1.1 s.
+  const chunked = async (mode) => {
+    await g.startLevel('test', 'cp_start');
+    await g.teleport({ s: 2330 });
+    await g.step(7);   // the 0.1 s trigger check fires t_drones and t_mid (passed by the teleport)
+    await g.eval(() => {
+      const m = window.__game.ctx.mission;
+      window.__game.ctx.comms.clear();   // drop the queued lines so the scripted one plays first
+      m.def.comms = { ...(m.def.comms || {}), smokeWait: [{ who: 'SYS', text: 'Hold.', hold: 0.1 }, { wait: 0.2 }] };
+      m.run([{ wait: 0.3 }, { flag: ['w1', 1] }, { comms: 'smokeWait', wait: true }, { flag: ['w2', 1] },
+             { parallel: [[{ wait: 0.2 }, { flag: ['p1', 1] }], [{ fade: 0.5, seconds: 0.2 }, { fade: 0, seconds: 0.1 }]] },
+             { flag: ['w3', 1] }]);
+    });
+    await g.input({ clear: true, move: [0, 1] });
+    let s;
+    if (mode === 'single') s = await g.step(240);
+    else if (mode === 'chunks') for (let i = 0; i < 8; i++) s = await g.step(30);
+    else s = await g.stepFrames(240);
+    await g.input({ clear: true });
+    return strip(s);
+  };
+  const c1 = await chunked('single'), c2 = await chunked('chunks'), c3 = await chunked('frames');
+  await g.eval(() => { delete window.__game.ctx.mission.def?.comms?.smokeWait; });   // the def is the cached module object
+  g.log('chunking:', ['single', 'chunks', 'frames'].map((k, i) => { const c = [c1, c2, c3][i]; return `${k} ${c.state} t=${c.time.toFixed(3)} flags=${JSON.stringify(c.flags)}`; }).join(' | '));
+  g.assert(['w1', 'w2', 'p1', 'w3'].every(k => c1.flags[k] === 1) && c1.state === 'debrief', `blocking actions and level completion resolve inside one step(240) (${c1.state}, ${JSON.stringify(c1.flags)})`);
+  g.assert(diff(c1, c2).length === 0 && diff(c1, c3).length === 0,
+    `state independent of step() chunking (1×240 vs 8×30: ${diff(c1, c2).join(', ') || 'same'}; vs 240 frames: ${diff(c1, c3).join(', ') || 'same'})`);
 
   const errs = await g.eval(() => window.__game.errors());
   g.assert(errs.length === 0, `no game errors (${errs.map(e => e.system + ': ' + e.message).join('; ')})`);

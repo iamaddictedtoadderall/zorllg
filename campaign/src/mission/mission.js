@@ -8,8 +8,17 @@
 //    custom. Objectives: 'reach' (and kill/destroy by tag) complete automatically.
 //  · Zones: card + art blend + music + onEnter. Completes at the route end when def.complete is missing.
 //  validateLevel() returns [] (P5 implements the static checks).
+//
+//  Determinism (§1.4): action lists are run by a synchronous interpreter, never by `await`. Microtasks don't run inside
+//  ctx.step(n), so an awaited list would only advance between step() calls. A non-blocking action continues the list at
+//  once; a blocking one returns a simDeferred() promise (core/util.js) that resumes the list synchronously, inside the
+//  tick that settles it. Services that block an action list on sim time or ticks (comms.play, cinematics.play,
+//  flyby().done, barrage, hud.choice, hud.fade) return simDeferred() promises too. A custom action ({ call } or
+//  registerAction) that blocks MUST return one as well (or the promise of m.run(list)): a plain Promise still works but
+//  resumes on a microtask, which makes the outcome depend on step() chunking; with ?debug=1 that warns once per action.
+//  Only menu-driven waits (flow.interstitial) may stay plain Promises: the sim is stopped while the menu is up.
 import * as THREE from 'three';
-import { hashString, clone, clamp } from '../core/util.js';
+import { hashString, clone, clamp, simDeferred, simAll, whenSettled, isSettled, isSimPromise } from '../core/util.js';
 
 export function validateLevel(def, ctx) { return []; }
 
@@ -29,7 +38,17 @@ export function install(ctx) {
   const res = (p) => W().resolve(p, new THREE.Vector3());
   const playerXZ = () => ctx.player?.active ? ctx.player.pos : null;
   const routeS = () => { const p = playerXZ(); return p && W()?.route ? W().playArea(p.x, p.z).s : 0; };
-  const waitSim = (sec) => new Promise(r => ctx.timers.after(Math.max(0, sec), r));
+  const waitSim = (sec) => { const d = simDeferred(); ctx.timers.after(Math.max(0, sec), () => d.resolve()); return d.promise; };
+  /** polls `test` every 0.1 s of sim time (timers run inside the tick); resolves when it returns true */
+  const pollSim = (g, test) => {
+    const d = simDeferred();
+    if (test()) { d.resolve(); return d.promise; }
+    ctx.timers.every(0.1, () => {
+      if (g !== gen) return false;
+      if (test()) { d.resolve(); return false; }
+    });
+    return d.promise;
+  };
 
   function pushObjectives() { ctx.hud?.setObjectives?.(m.objectives()); }
   function setObjective(id, state) {
@@ -75,18 +94,8 @@ export function install(ctx) {
       }
       case 'comms': { const p = ctx.comms?.play(m.def.comms?.[v] || []); return a.wait ? p : undefined; }
       case 'wait': return waitSim(+v || 0);
-      case 'waitFor': return new Promise(r => {
-        const t0 = elapsed;
-        const id = ctx.timers.every(0.1, () => {
-          if (g !== gen) return false;
-          if (m.check(v) || (a.timeout && elapsed - t0 >= a.timeout)) { r(); return false; }
-        });
-        if (m.check(v)) { ctx.timers.cancel(id); r(); }
-      });
-      case 'waitComms': return new Promise(r => {
-        if (!ctx.comms?.busy) return r();
-        ctx.timers.every(0.1, () => { if (g !== gen) return false; if (!ctx.comms?.busy) { r(); return false; } });
-      });
+      case 'waitFor': { const t0 = elapsed; return pollSim(g, () => m.check(v) || (a.timeout && elapsed - t0 >= a.timeout)); }
+      case 'waitComms': return pollSim(g, () => !ctx.comms?.busy);
       case 'objective': {
         if (v.add) setObjective(v.add, 'active');
         if (v.complete) setObjective(v.complete, 'done');
@@ -130,10 +139,14 @@ export function install(ctx) {
         if (v.teleport) { const q = res(v.teleport); p.teleport(q, v.yaw !== undefined ? W().resolveYaw(v.yaw, q) : undefined); }
         return;
       }
-      case 'choice': return ctx.hud?.choice({ title: v.title, options: v.options, seconds: v.seconds }).then(k => {
-        const opt = v.options.find(o => o.key === k) || v.options.find(o => o.key === v.default) || v.options[0];
-        return opt ? m.run(opt.do || [], g) : undefined;
-      });
+      case 'choice': {
+        const d = simDeferred();
+        whenSettled(ctx.hud?.choice({ title: v.title, options: v.options, seconds: v.seconds }), (k) => {
+          const opt = v.options.find(o => o.key === k) || v.options.find(o => o.key === v.default) || v.options[0];
+          whenSettled(opt ? m.run(opt.do || [], g) : undefined, () => d.resolve());
+        });
+        return d.promise;
+      }
       case 'interstitial': return ctx.flow?.interstitial(v);
       case 'fade': return ctx.hud?.fade(+v, a.seconds ?? 1);
       case 'letterbox': ctx.hud?.letterbox(!!v); return;
@@ -141,12 +154,19 @@ export function install(ctx) {
       case 'unlock': ctx.save?.unlockPart(v); return;
       case 'complete': m.complete(); return;
       case 'fail': m.fail(v); return;
-      case 'parallel': return Promise.all(v.map(list => m.run(list, g)));
+      case 'parallel': return simAll(v.map(list => m.run(list, g)));
       case 'if': return m.run(m.check(v) ? a.then : (a.else || []), g);
       case 'call': { const fn = actions.get(v); if (!fn) { console.warn('[mission] unknown custom action', v); return; } return fn(a.args, m, ctx); }
       default:
         if (!warned.has(key)) { warned.add(key); console.warn('[mission stub] action not implemented:', key); }
     }
+  }
+  /** debug builds: a blocking action that returned a plain Promise resumes on a microtask (step-chunking dependent) */
+  function warnPlain(a) {
+    const key = a && typeof a === 'object' ? (a.call ? 'call:' + a.call : Object.keys(a)[0]) : String(a);
+    if (key === 'interstitial' || warned.has('plain:' + key)) return;   // menu-driven: the sim is stopped meanwhile
+    warned.add('plain:' + key);
+    console.warn(`[mission] action "${key}" returned a plain Promise; it resumes the list on a microtask, so the result depends on how step() is chunked (§1.4). Return a simDeferred() promise from core/util.js.`);
   }
   function runAction(a, g) {
     if (!a || typeof a !== 'object') return;
@@ -264,12 +284,31 @@ export function install(ctx) {
       ctx.comms?.clear();
       if (ctx.player) ctx.player.frozen = false;
     },
-    async run(list, g = gen) {
-      for (const a of list || []) {
-        if (g !== gen) return;
-        try { await runAction(a, g); }
-        catch (e) { ctx.recordError?.('mission', e); }
-      }
+    /**
+     * Runs the list synchronously up to the first action that is still pending, and resumes it the moment that action
+     * settles (inside the tick for simDeferred() promises). Returns a simDeferred() promise for the whole list. A list
+     * whose generation is stale (mission.stop/start ran) stops before its next action.
+     */
+    run(list, g = gen) {
+      const d = simDeferred();
+      const items = Array.isArray(list) ? list : [];
+      let i = 0;
+      const next = () => {
+        while (i < items.length) {
+          if (g !== gen) break;
+          const a = items[i++];
+          let r;
+          try { r = runAction(a, g); }
+          catch (e) { ctx.recordError?.('mission', e); continue; }
+          if (isSettled(r)) continue;
+          if (ctx.debug && !isSimPromise(r)) warnPlain(a);
+          whenSettled(r, next, (e) => { ctx.recordError?.('mission', e); next(); });
+          return;
+        }
+        d.resolve();
+      };
+      next();
+      return d.promise;
     },
     registerAction(name, fn) { actions.set(name, fn); },
     registerCondition(name, fn) { conditions.set(name, fn); },
@@ -366,7 +405,7 @@ export function install(ctx) {
           if (m.check(m.def.complete.when) && !m._completing) {
             m._completing = true;
             const g = gen;
-            m.run(m.def.complete.do || [], g).then(() => { m._completing = false; if (g === gen) m.complete(); });
+            whenSettled(m.run(m.def.complete.do || [], g), () => { m._completing = false; if (g === gen) m.complete(); });
           }
         } else if (W()?.route && ctx.player?.active && routeS() >= W().route.length - 40) m.complete();
       }

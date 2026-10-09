@@ -37,6 +37,7 @@ export function install(ctx) {
 
   const keys = Object.create(null);       // raw state by code (keyboard codes and Mouse0..2)
   const latched = Object.create(null);    // went down since the last endFrame
+  const swallowed = Object.create(null);  // held through a state change: ignored by actions until released
   const injDown = Object.create(null), injPress = Object.create(null);
   const touchDown = Object.create(null), touchPress = Object.create(null);
   const padDown = Object.create(null), padPress = Object.create(null), padPrev = Object.create(null);
@@ -77,7 +78,12 @@ export function install(ctx) {
         let raw = !!(injDown[a] || touchDown[a] || padDown[a]);
         let latch = !!(injPress[a] || touchPress[a] || padPress[a]);
         const b = fc && a !== ACT.PAUSE ? NO_BINDINGS : (api.bindings[a] || NO_BINDINGS);
-        for (let i = 0; i < b.length; i++) { if (keys[b[i]]) raw = true; if (latched[b[i]]) latch = true; }
+        for (let i = 0; i < b.length; i++) {
+          const c = b[i];
+          if (swallowed[c]) continue;
+          if (keys[c]) raw = true;
+          if (latched[c]) latch = true;
+        }
         const d = raw || latch;
         st.pressed[a] = latch || (d && !prevDown[a]);
         st.released[a] = !d && prevDown[a];
@@ -172,6 +178,7 @@ export function install(ctx) {
     /** extra: forget every held key/button/touch (used on focus loss and state changes) */
     releaseAll() {
       for (const k in keys) keys[k] = false;
+      for (const k in swallowed) delete swallowed[k];
       releaseTouches();
     },
   };
@@ -217,14 +224,22 @@ export function install(ctx) {
 
   // ---------------------------------------------------------------- keyboard / mouse
   if (typeof window !== 'undefined') {
+    // Capture phase on window: input records every key before any menu handler (screens listen on document) reacts to
+    // it, and before the microtask checkpoint that follows that handler. So when a key closes a menu (Esc or P resumes
+    // the pause menu → state:changed), the press is already latched and the state change below drops it, instead of
+    // the press landing after the change and re-pausing on the next tick.
     window.addEventListener('keydown', e => {
       if (e.code === 'Tab') e.preventDefault();
       if ((e.code === 'Space' || e.code.startsWith('Arrow')) && ctx.flow?.state === 'playing') e.preventDefault();
-      if (!keys[e.code]) latched[e.code] = true;
+      if (!keys[e.code]) {
+        if (e.repeat) swallowed[e.code] = true;   // auto-repeat of a key we forgot (releaseAll, focus): not a new press
+        else latched[e.code] = true;
+      }
       keys[e.code] = true;
-    });
-    window.addEventListener('keyup', e => { keys[e.code] = false; });
+    }, true);
+    window.addEventListener('keyup', e => { keys[e.code] = false; delete swallowed[e.code]; }, true);
     window.addEventListener('blur', () => {
+      for (const k in swallowed) delete swallowed[k];
       for (const k in keys) keys[k] = false;
       releaseTouches();
       ctx.events.emit('input:focuslost', { reason: 'blur' });
@@ -341,9 +356,12 @@ export function install(ctx) {
   };
   api.setTouchMode(resolveTouchMode());
   ctx.events.on('settings:changed', ({ key }) => { if (key === 'touch') api.setTouchMode(resolveTouchMode()); });
-  // a state change drops held mouse buttons and every unconsumed press (an Esc that closed a menu must not re-pause)
+  // A state change drops held mouse buttons and every unconsumed press, and swallows keys still held until they are
+  // released: the key that closed a menu (Esc/P on pause, Enter on Deploy, Space on a button) belongs to that menu and
+  // must not read as a fresh gameplay press (re-pause, jump, skip) on the next tick. Movement and look read raw keys.
   ctx.events.on('state:changed', () => {
     for (const k in keys) if (k.startsWith('Mouse')) keys[k] = false;
+    for (const k in keys) if (keys[k]) swallowed[k] = true;
     for (const k in latched) delete latched[k];
     for (const k in touchPress) delete touchPress[k];
     updateTouchLayer();   // show/hide #touch right away, not on the next tick (matters while debug-paused)

@@ -1,5 +1,13 @@
 // combat/combat.js (P4) — P0 STUB: working register/query/damage/kill (port of the prototype's damage and killEnemy rules).
 // Visual and audio consequences belong to the targets' onDamage/onDeath (actors), not here.
+//
+// Target ids are deterministic per level (§1.4: same level, checkpoint and inputs → same getState(), unit ids included):
+//  · the player, one Target reused across levels, always gets PLAYER_ID;
+//  · 'level:cleared' (ctx.clearLevel) unregisters every level target and restarts the counter, so the destructible
+//    structures placed by World.load get the same ids on every load of a level;
+//  · 'player:spawned' (mission.start, after mission.stop cleared the units) rewinds the counter to the highest id still
+//    registered (structures, the player), so units spawned after a checkpoint restart get the same ids as after a fresh
+//    load of that checkpoint. Ids still registered are never reused.
 import * as THREE from 'three';
 
 export const TEAMS = ['player', 'ally', 'enemy', 'neutral'];
@@ -9,10 +17,14 @@ export function isHostile(a, b) {
 }
 
 const _c = new THREE.Vector3();
+/** extra: the player's fixed target id; level targets are numbered from PLAYER_ID + 1 */
+export const PLAYER_ID = 1;
+const isPlayer = (t) => t.team === 'player' && t.kind === 'player';
 
 export function install(ctx) {
   const targets = new Set();
-  let nextId = 0;
+  let nextId = PLAYER_ID;   // the last id handed out
+  const rewindIds = () => { let m = PLAYER_ID; for (const t of targets) if (t.id > m) m = t.id; nextId = m; };
   const newStats = () => ({ kills: 0, damageTaken: 0, damageDealt: 0, shots: 0, missiles: 0, blades: 0, kits: 0, staggers: 0 });
 
   const matches = (t, f) => {
@@ -30,7 +42,7 @@ export function install(ctx) {
     god: ctx.params.get('god') === '1',
     stats: newStats(),
     register(t) {
-      if (t.id == null) t.id = ++nextId;
+      if (t.id == null) t.id = isPlayer(t) ? PLAYER_ID : ++nextId;
       if (!t.tags) t.tags = new Set();
       if (targets.has(t)) return;
       targets.add(t);
@@ -56,17 +68,17 @@ export function install(ctx) {
     damage(t, amount, imp = 0, source) {
       const info = { amount: 0, imp, source, staggered: false, killed: false };
       if (!t || !t.alive || t.invuln) return info;
-      const isPlayer = t.team === 'player' && t.kind === 'player';
-      if (t.stagT > 0) amount *= isPlayer ? 1.25 : 1.6;
-      if (isPlayer && api.god) amount = 0;
+      const pl = isPlayer(t);
+      if (t.stagT > 0) amount *= pl ? 1.25 : 1.6;
+      if (pl && api.god) amount = 0;
       t.ap -= amount; t.imp = (t.imp || 0) + imp; t.lastHit = ctx.clock.time;
       info.amount = amount;
-      if (isPlayer) api.stats.damageTaken += amount;
+      if (pl) api.stats.damageTaken += amount;
       else if (source?.team === 'player') api.stats.damageDealt += amount;
       const impMax = t.impMax ?? Infinity;
       if (t.imp >= impMax && !(t.stagT > 0) && impMax < 1e8) {
-        t.stagT = t.stagDur || (isPlayer ? 1.0 : 2.2); t.imp = 0; info.staggered = true;
-        if (!isPlayer) api.stats.staggers++;
+        t.stagT = t.stagDur || (pl ? 1.0 : 2.2); t.imp = 0; info.staggered = true;
+        if (!pl) api.stats.staggers++;
       }
       if (t.ap <= 0) { t.ap = 0; info.killed = true; }
       t.onDamage?.(info);
@@ -97,11 +109,10 @@ export function install(ctx) {
       ctx.events.emit('target:killed', { target: t, source });
     },
     resetStats() { api.stats = newStats(); },
-    /** extra: restart ids after the highest id still registered, so a checkpoint restart hands out the same unit ids
-     *  (getState() determinism). enemies.clear() calls it. */
-    rewindIds() { let m = 0; for (const t of targets) if (t.id > m) m = t.id; nextId = m; },
-    clear() { for (const t of [...targets]) if (!(t.kind === 'player' && t.team === 'player')) targets.delete(t); },
+    clear() { for (const t of [...targets]) if (!isPlayer(t)) targets.delete(t); },
   };
+  ctx.events.on('level:cleared', () => { api.clear(); rewindIds(); });
+  ctx.events.on('player:spawned', rewindIds);
   ctx.combat = api;
   return api;
 }

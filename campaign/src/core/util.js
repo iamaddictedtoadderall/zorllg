@@ -164,6 +164,72 @@ export class TimerQueue {
   get size() { return this._list.length; }
 }
 
+// ---------------------------------------------------------------- sim-synchronous promises (§1.4)
+// Sim-driven sequencing MUST NOT continue on microtasks. No microtask checkpoint runs inside a synchronous
+// ctx.step(n), so an `await` chain advances only between step() calls, and the state after N ticks would depend on how
+// the N ticks were split (rAF play drains microtasks after every frame; step(n) never does).
+// A simDeferred() promise is a real Promise, so `await` and `.then` keep working for UI code. It ALSO calls the
+// callbacks registered through whenSettled() synchronously, at the moment resolve() runs (inside the tick).
+// Rule: a promise that settles because of sim time or a tick (timers, comms typing, cinematic shots, a choice read from
+// input, a fade driven by a system's dt) is created with simDeferred(). A promise that settles because of a DOM event
+// (a menu click) may stay a plain Promise: the sim is stopped while such a menu is up.
+const SIM = Symbol.for('campaign.simPromise');
+
+/** { promise, resolve, reject }: resolve/reject run whenSettled() callbacks synchronously, then settle the Promise. */
+export function simDeferred() {
+  let res, rej;
+  const promise = new Promise((a, b) => { res = a; rej = b; });
+  const rec = { done: false, ok: true, value: undefined, subs: [] };
+  promise[SIM] = rec;
+  const settle = (ok, value) => {
+    if (rec.done) return;
+    rec.done = true; rec.ok = ok; rec.value = value;
+    const subs = rec.subs; rec.subs = null;
+    if (ok) res(value);
+    else {
+      if (subs.some(s => s[1])) promise.catch(() => {});   // handled by a sync subscriber: not an unhandled rejection
+      rej(value);
+    }
+    let err = null;
+    for (const [onOk, onErr] of subs) {
+      try { if (ok) onOk(value); else if (onErr) onErr(value); else onOk(undefined); } catch (e) { if (!err) err = e; }
+    }
+    if (err) throw err;
+  };
+  return { promise, resolve: (v) => settle(true, v), reject: (e) => settle(false, e) };
+}
+/** an already-resolved simDeferred() promise */
+export function simResolved(value) { const d = simDeferred(); d.resolve(value); return d.promise; }
+/** true for a simDeferred() promise */
+export function isSimPromise(p) { return !!(p && p[SIM]); }
+/** true when `x` is not a thenable, or is a simDeferred() promise that has already settled */
+export function isSettled(x) {
+  if (!x || typeof x.then !== 'function') return true;
+  const rec = x[SIM];
+  return !!(rec && rec.done);
+}
+/**
+ * Calls onOk(value) when `x` settles: synchronously (now, or at the moment it settles) when `x` is a plain value or a
+ * simDeferred() promise; on a microtask for any other thenable. onErr(error) runs on rejection (onOk(undefined) when
+ * onErr is missing). Returns true when the callback already ran.
+ */
+export function whenSettled(x, onOk, onErr) {
+  if (!x || typeof x.then !== 'function') { onOk(x); return true; }
+  const rec = x[SIM];
+  if (!rec) { x.then(onOk, onErr || (() => onOk(undefined))); return false; }
+  if (!rec.done) { rec.subs.push([onOk, onErr]); return false; }
+  if (rec.ok) onOk(rec.value); else if (onErr) onErr(rec.value); else onOk(undefined);
+  return true;
+}
+/** a simDeferred() promise that resolves once every entry of `list` has settled (values, sim or plain promises) */
+export function simAll(list) {
+  const d = simDeferred(), items = [...(list || [])], out = new Array(items.length);
+  let left = items.length;
+  if (!left) { d.resolve(out); return d.promise; }
+  items.forEach((x, i) => whenSettled(x, (v) => { out[i] = v; if (--left === 0) d.resolve(out); }));
+  return d.promise;
+}
+
 export class Pool {
   constructor(create, reset) { this._create = create; this._reset = reset; this._free = []; }
   get() { return this._free.length ? this._free.pop() : this._create(); }

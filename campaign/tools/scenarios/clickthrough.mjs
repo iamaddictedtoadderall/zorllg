@@ -1,5 +1,6 @@
 // tools/scenarios/clickthrough.mjs (P0): the full menu flow driven by real clicks and keys (§10.3 acceptance 4):
-// title → New game → briefing → Deploy → playing → Esc → paused → Resume → walk the whole route → debrief → Title.
+// title → New game → briefing → Deploy → playing → Esc → paused → Resume → Esc/P pause and resume by keyboard →
+// walk the whole route → debrief → Title.
 // Walking uses injected stick input and injected mouse-look steering toward a point 80 m ahead on the route.
 
 const state = (g) => g.eval(() => window.__game.state());
@@ -42,6 +43,16 @@ export default async function (g) {
 
   await click(g, '#bRes');
   g.assert(await state(g) === 'playing', 'Resume → playing');
+
+  // the keyboard loop: Esc/P pause, and Esc/P on the pause menu resume and stay resumed (the key that closes the menu
+  // must not re-pause on the next tick)
+  for (const [k1, k2] of [['Escape', 'Escape'], ['KeyP', 'KeyP'], ['Escape', 'KeyP']]) {
+    await g.page.keyboard.press(k1);
+    const a = await g.step(1);
+    await g.page.keyboard.press(k2);
+    const b = await g.step(30);
+    g.assert(a.state === 'paused' && b.state === 'playing', `${k1} pauses, ${k2} resumes and stays resumed (${a.state} → ${b.state})`);
+  }
 
   // walk the route: steer with injected look toward a point ahead, push the stick forward
   const total = await g.eval(() => window.__game.ctx.world.route.length);

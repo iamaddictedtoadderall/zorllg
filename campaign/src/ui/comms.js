@@ -1,5 +1,8 @@
 // ui/comms.js (P5) — P0 STUB: a working minimal port of the prototype's comms typewriter (42 chars/s × commsSpeed,
 // hold = 1.4 + 0.032 × length), speakers with colour via the --spk CSS variable, a log, and the waveform canvas.
+// say() and play() return simDeferred() promises (core/util.js): they settle inside the 'comms' tick, so a mission list
+// waiting on them resumes in the same tick whatever the step() chunking (§1.4).
+import { simDeferred, simResolved } from '../core/util.js';
 
 export function install(ctx) {
   const $ = (s) => document.querySelector(s);
@@ -18,17 +21,20 @@ export function install(ctx) {
     log: [],
     defineSpeakers(map) { Object.assign(speakers, map || {}); },
     say(who, text, o = {}) {
-      return new Promise(resolve => {
-        const item = { who, text: String(text ?? ''), hold: o.hold, resolve };
-        if (o.priority === 'high') { if (cur && !cur.wait) finish(); queue.unshift(item); }
-        else queue.push(item);
-      });
+      const d = simDeferred();
+      const item = { who, text: String(text ?? ''), hold: o.hold, resolve: d.resolve };
+      if (o.priority === 'high') { if (cur && !cur.wait) finish(); queue.unshift(item); }
+      else queue.push(item);
+      return d.promise;
     },
     play(lines = []) {
-      let last = Promise.resolve();
+      let last = simResolved();
       for (const l of lines) {
-        if (l && 'wait' in l && !('text' in l)) last = new Promise(resolve => queue.push({ wait: Math.max(0, +l.wait || 0), resolve }));
-        else if (l) last = api.say(l.who, l.text, { hold: l.hold });
+        if (l && 'wait' in l && !('text' in l)) {
+          const d = simDeferred();
+          queue.push({ wait: Math.max(0, +l.wait || 0), resolve: d.resolve });
+          last = d.promise;
+        } else if (l) last = api.say(l.who, l.text, { hold: l.hold });
       }
       return last;
     },

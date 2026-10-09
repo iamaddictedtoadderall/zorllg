@@ -161,6 +161,6 @@ export class Collision {
     return out.set(i === 0 ? -1 : i === 1 ? 1 : 0, 0, i === 2 ? -1 : i === 3 ? 1 : 0);
   }
   lineOfSight(a, b) { return !this.segment(a, b, _losHit); }
-  clear() { this._list.length = 0; this._grid.clear(); }
+  clear() { this._list.length = 0; this._grid.clear(); this._id = 0; }
 }
 const _losHit = { t: 0, point: new THREE.Vector3(), normal: new THREE.Vector3(), collider: null, ground: false, surface: '' };
