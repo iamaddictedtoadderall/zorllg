@@ -8,7 +8,6 @@ import { clamp } from '../core/util.js';
 const CG = 32;
 const NONE = [];
 const ckey = (i, j) => i * 100003 + j;
-const _n = new THREE.Vector3();
 
 export class Collision {
   constructor(ctx) {

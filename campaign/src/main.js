@@ -46,7 +46,7 @@ ctx.start();
 try {
   await ctx.flow.boot();
 } catch (e) {
-  ctx.recordError('boot', e);
+  if (!e?._recorded) ctx.recordError('boot', e);
 } finally {
   window.__game?._markReady?.();
 }

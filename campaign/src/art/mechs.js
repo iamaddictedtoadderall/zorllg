@@ -229,7 +229,7 @@ export function buildMech(ctx, scheme, o = {}) {
   for (const side of [-1, 1]) {
     const nz = new THREE.Mesh(nozzleGeo, M.dark); nz.position.set(side * 0.72, 1.3, 2.5); nz.castShadow = nz.receiveShadow = true;
     nz.rotation.x = Math.PI / 2; torso.add(nz);
-    const f = new THREE.Mesh(flameGeo, M.flame); f.position.set(side * 0.72, 1.3, 2.85); torso.add(f);
+    const f = new THREE.Mesh(flameGeo, M.flame); f.position.set(side * 0.72, 1.3, 2.85); f.visible = false; torso.add(f);   // hidden until animateMech
     const c = new THREE.Mesh(coreGeo, coreMat); f.add(c);
     flames.push(f);
   }

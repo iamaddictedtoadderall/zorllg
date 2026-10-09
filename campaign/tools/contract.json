@@ -1,76 +1,211 @@
 {
-  "$comment": "Interface manifest derived mechanically from architecture.md §3.6, §4 and §9.2 (P0). tools/scenarios/contract.mjs checks it in the page. 'modules': export name → typeof. 'classes': prototype methods. 'services': ctx.<name> methods (dotted names reach into sub-objects). 'fields': ctx.<name> members that must exist (any value). 'events': the §3.5 catalogue.",
+  "$comment": "Interface manifest derived mechanically from architecture.md \u00a73.6, \u00a74 and \u00a79.2 (P0). tools/scenarios/contract.mjs checks it in the page. 'modules': export name \u2192 typeof. 'classes': prototype methods. 'services': ctx.<name> methods (dotted names reach into sub-objects). 'fields': ctx.<name> members that must exist (any value). 'events': the \u00a73.5 catalogue.",
   "modules": {
-    "src/core/engine.js": { "exports": { "createEngine": "function" } },
-    "src/core/util.js": { "exports": {
-      "TAU": "number", "clamp": "function", "lerp": "function", "invLerp": "function", "smooth": "function", "damp": "function",
-      "dampAng": "function", "angWrap": "function", "yawTo": "function", "aimDir": "function", "rand": "function",
-      "mulberry32": "function", "hashString": "function", "pick": "function", "formatTime": "function", "injectCSS": "function",
-      "V3": "function", "EventBus": "function", "TimerQueue": "function", "Pool": "function" } },
-    "src/core/noise.js": { "exports": {
-      "createNoise2D": "function", "createValueNoise2D": "function", "fbm2": "function", "ridged2": "function",
-      "warp2": "function", "tileable2": "function" } },
-    "src/core/settings.js": { "exports": {
-      "TIERS": "object", "DEFAULT_SETTINGS": "object", "detectTouch": "function", "resolveTier": "function", "SettingsStore": "function" } },
-    "src/core/save.js": { "exports": { "SAVE_VERSION": "number", "SaveStore": "function" } },
-    "src/core/input.js": { "exports": { "ACT": "object", "DEFAULT_BINDINGS": "object", "install": "function" } },
-    "src/core/camera.js": { "exports": { "install": "function" } },
-    "src/debug/debug.js": { "exports": { "install": "function" } },
-    "src/render/pipeline.js": { "exports": { "install": "function" } },
-    "src/render/atmosphere.js": { "exports": { "DEFAULT_ART": "object", "install": "function" } },
-    "src/render/materials.js": { "exports": { "install": "function" } },
-    "src/render/particles.js": { "exports": { "ParticleSystem": "function", "install": "function" } },
-    "src/render/fx.js": { "exports": { "install": "function" } },
-    "src/render/weather.js": { "exports": { "install": "function" } },
-    "src/audio/audio.js": { "exports": { "SFX": "object", "install": "function" } },
-    "src/audio/music.js": { "exports": { "THEMES": "object", "install": "function" } },
-    "src/world/route.js": { "exports": { "Route": "function" } },
-    "src/world/heightfield.js": { "exports": { "Heightfield": "function" } },
-    "src/world/terrain.js": { "exports": { "TerrainRenderer": "function" } },
-    "src/world/collision.js": { "exports": { "Collision": "function" } },
-    "src/world/scatter.js": { "exports": { "registerProp": "function", "propNames": "function", "Scatter": "function" } },
-    "src/world/world.js": { "exports": { "install": "function" } },
-    "src/art/kit.js": { "exports": {
-      "plateGeo": "function", "acKit": "function", "bevelBox": "function", "panelBox": "function", "cylinder": "function",
-      "pipe": "function", "truss": "function", "greebles": "function", "GeoBuilder": "function", "bakeRigid": "function" } },
-    "src/art/mechs.js": { "exports": {
-      "DESIGNS": "object", "PART_VISUALS": "object", "buildMech": "function", "animateMech": "function", "buildMechWreck": "function" } },
-    "src/art/units.js": { "exports": { "UNIT_MODELS": "object", "buildUnit": "function", "animateUnit": "function" } },
-    "src/art/structures.js": { "exports": { "STRUCTURE_TYPES": "object", "install": "function" } },
-    "src/ui/garage.js": { "exports": { "install": "function" } },
-    "src/combat/combat.js": { "exports": { "TEAMS": "object", "isHostile": "function", "install": "function" } },
-    "src/combat/projectiles.js": { "exports": { "install": "function" } },
-    "src/combat/loadout.js": { "exports": {
-      "SLOTS": "object", "FRAMES": "object", "PARTS": "object", "PAINT_PRESETS": "object", "DEFAULT_LOADOUT": "object",
-      "startingUnlocks": "function", "computeStats": "function", "validate": "function" } },
-    "src/combat/weapons.js": { "exports": { "createWeapon": "function" } },
-    "src/actors/player.js": { "exports": { "install": "function" } },
-    "src/actors/enemy.js": { "exports": { "Unit": "function", "install": "function" } },
-    "src/actors/enemytypes.js": { "exports": { "install": "function" } },
-    "src/actors/mechai.js": { "exports": { "install": "function" } },
-    "src/mission/mission.js": { "exports": { "install": "function", "validateLevel": "function" } },
-    "src/mission/cinematics.js": { "exports": { "install": "function" } },
-    "src/ui/hud.js": { "exports": { "install": "function" } },
-    "src/ui/comms.js": { "exports": { "install": "function" } },
-    "src/ui/screens.js": { "exports": { "install": "function" } },
-    "src/ui/flow.js": { "exports": { "install": "function" } },
-    "levels/index.js": { "exports": { "LEVELS": "object", "loadLevel": "function", "nextLevel": "function" } }
+    "src/core/engine.js": {
+      "exports": {"createEngine": "function"}
+    },
+    "src/core/util.js": {
+      "exports": {
+        "TAU": "number",
+        "clamp": "function",
+        "lerp": "function",
+        "invLerp": "function",
+        "smooth": "function",
+        "damp": "function",
+        "dampAng": "function",
+        "angWrap": "function",
+        "yawTo": "function",
+        "aimDir": "function",
+        "rand": "function",
+        "mulberry32": "function",
+        "hashString": "function",
+        "pick": "function",
+        "formatTime": "function",
+        "injectCSS": "function",
+        "V3": "function",
+        "EventBus": "function",
+        "TimerQueue": "function",
+        "Pool": "function"
+      }
+    },
+    "src/core/noise.js": {
+      "exports": {
+        "createNoise2D": "function",
+        "createValueNoise2D": "function",
+        "fbm2": "function",
+        "ridged2": "function",
+        "warp2": "function",
+        "tileable2": "function"
+      }
+    },
+    "src/core/settings.js": {
+      "exports": {
+        "TIERS": "object",
+        "DEFAULT_SETTINGS": "object",
+        "detectTouch": "function",
+        "resolveTier": "function",
+        "SettingsStore": "function"
+      }
+    },
+    "src/core/save.js": {
+      "exports": {"SAVE_VERSION": "number", "SaveStore": "function"}
+    },
+    "src/core/input.js": {
+      "exports": {"ACT": "object", "DEFAULT_BINDINGS": "object", "install": "function"}
+    },
+    "src/core/camera.js": {
+      "exports": {"install": "function"}
+    },
+    "src/debug/debug.js": {
+      "exports": {"install": "function"}
+    },
+    "src/render/pipeline.js": {
+      "exports": {"install": "function"}
+    },
+    "src/render/atmosphere.js": {
+      "exports": {"DEFAULT_ART": "object", "install": "function"}
+    },
+    "src/render/materials.js": {
+      "exports": {"install": "function"}
+    },
+    "src/render/particles.js": {
+      "exports": {"ParticleSystem": "function", "install": "function"}
+    },
+    "src/render/fx.js": {
+      "exports": {"install": "function"}
+    },
+    "src/render/weather.js": {
+      "exports": {"install": "function"}
+    },
+    "src/audio/audio.js": {
+      "exports": {"SFX": "object", "install": "function"}
+    },
+    "src/audio/music.js": {
+      "exports": {"THEMES": "object", "install": "function"}
+    },
+    "src/world/route.js": {
+      "exports": {"Route": "function"}
+    },
+    "src/world/heightfield.js": {
+      "exports": {"Heightfield": "function"}
+    },
+    "src/world/terrain.js": {
+      "exports": {"TerrainRenderer": "function"}
+    },
+    "src/world/collision.js": {
+      "exports": {"Collision": "function"}
+    },
+    "src/world/scatter.js": {
+      "exports": {"registerProp": "function", "propNames": "function", "Scatter": "function"}
+    },
+    "src/world/world.js": {
+      "exports": {"install": "function"}
+    },
+    "src/art/kit.js": {
+      "exports": {
+        "plateGeo": "function",
+        "acKit": "function",
+        "bevelBox": "function",
+        "panelBox": "function",
+        "cylinder": "function",
+        "pipe": "function",
+        "truss": "function",
+        "greebles": "function",
+        "GeoBuilder": "function",
+        "bakeRigid": "function"
+      }
+    },
+    "src/art/mechs.js": {
+      "exports": {
+        "DESIGNS": "object",
+        "PART_VISUALS": "object",
+        "buildMech": "function",
+        "animateMech": "function",
+        "buildMechWreck": "function"
+      }
+    },
+    "src/art/units.js": {
+      "exports": {"UNIT_MODELS": "object", "buildUnit": "function", "animateUnit": "function"}
+    },
+    "src/art/structures.js": {
+      "exports": {"STRUCTURE_TYPES": "object", "install": "function"}
+    },
+    "src/ui/garage.js": {
+      "exports": {"install": "function"}
+    },
+    "src/combat/combat.js": {
+      "exports": {"TEAMS": "object", "isHostile": "function", "install": "function"}
+    },
+    "src/combat/projectiles.js": {
+      "exports": {"install": "function"}
+    },
+    "src/combat/loadout.js": {
+      "exports": {
+        "SLOTS": "object",
+        "FRAMES": "object",
+        "PARTS": "object",
+        "PAINT_PRESETS": "object",
+        "DEFAULT_LOADOUT": "object",
+        "startingUnlocks": "function",
+        "computeStats": "function",
+        "validate": "function"
+      }
+    },
+    "src/combat/weapons.js": {
+      "exports": {"createWeapon": "function"}
+    },
+    "src/actors/player.js": {
+      "exports": {"install": "function"}
+    },
+    "src/actors/enemy.js": {
+      "exports": {"Unit": "function", "install": "function"}
+    },
+    "src/actors/enemytypes.js": {
+      "exports": {"install": "function"}
+    },
+    "src/actors/mechai.js": {
+      "exports": {"install": "function"}
+    },
+    "src/mission/mission.js": {
+      "exports": {"install": "function", "validateLevel": "function"}
+    },
+    "src/mission/cinematics.js": {
+      "exports": {"install": "function"}
+    },
+    "src/ui/hud.js": {
+      "exports": {"install": "function"}
+    },
+    "src/ui/comms.js": {
+      "exports": {"install": "function"}
+    },
+    "src/ui/screens.js": {
+      "exports": {"install": "function"}
+    },
+    "src/ui/flow.js": {
+      "exports": {"install": "function"}
+    },
+    "levels/index.js": {
+      "exports": {"LEVELS": "object", "loadLevel": "function", "nextLevel": "function"}
+    }
   },
   "classes": {
     "src/core/util.js#EventBus": ["on", "once", "off", "emit", "clear"],
     "src/core/util.js#TimerQueue": ["after", "every", "cancel", "update", "clear"],
     "src/core/util.js#Pool": ["get", "release"],
     "src/core/settings.js#SettingsStore": ["get", "set", "onChange"],
-    "src/core/save.js#SaveStore": ["load", "write", "reset", "hasProgress", "unlockLevel", "completeLevel", "setCheckpoint",
-      "getCheckpoint", "setFlag", "getFlag", "addCodex", "setLoadout", "getLoadout", "unlockPart", "unlockedParts",
-      "addPlayTime", "exportJSON", "importJSON"],
+    "src/core/save.js#SaveStore": [
+        "load", "write", "reset", "hasProgress", "unlockLevel", "completeLevel", "setCheckpoint", "getCheckpoint", "setFlag",
+        "getFlag", "addCodex", "setLoadout", "getLoadout", "unlockPart", "unlockedParts", "addPlayTime", "exportJSON",
+        "importJSON"
+      ],
     "src/render/particles.js#ParticleSystem": ["spawn", "update", "clear"],
     "src/world/route.js#Route": ["pointAt", "tangentAt", "yawAt", "halfWidthAt", "toWorld", "closest", "sample"],
-    "src/world/heightfield.js#Heightfield": ["build", "heightAt", "groundHeight", "normalAt", "slopeAt", "surfaceAt", "lightAt",
-      "raycast", "renderMap", "dispose"],
+    "src/world/heightfield.js#Heightfield": ["build", "heightAt", "groundHeight", "normalAt", "slopeAt", "surfaceAt", "lightAt", "raycast", "renderMap", "dispose"],
     "src/world/terrain.js#TerrainRenderer": ["update", "prewarm", "settle", "setTier", "stats", "dispose"],
-    "src/world/collision.js#Collision": ["add", "remove", "box", "obox", "circle", "groundHeight", "supportHeight", "resolve",
-      "pointInSolid", "segment", "lineOfSight", "near", "clear"],
+    "src/world/collision.js#Collision": [
+        "add", "remove", "box", "obox", "circle", "groundHeight", "supportHeight", "resolve", "pointInSolid", "segment",
+        "lineOfSight", "near", "clear"
+      ],
     "src/world/scatter.js#Scatter": ["generate", "update", "settle", "setTier", "stats", "dispose"],
     "src/art/kit.js#GeoBuilder": ["add", "addObject", "build", "buildSingle"],
     "src/actors/enemy.js#Unit": ["center", "hitTest", "baseUpdate", "update", "despawn"]
@@ -85,24 +220,37 @@
     "events": ["on", "once", "off", "emit", "clear"],
     "timers": ["after", "every", "cancel", "update", "clear"],
     "settings": ["get", "set", "onChange"],
-    "save": ["load", "write", "reset", "hasProgress", "unlockLevel", "completeLevel", "setCheckpoint", "getCheckpoint", "setFlag",
-      "getFlag", "addCodex", "setLoadout", "getLoadout", "unlockPart", "unlockedParts", "addPlayTime", "exportJSON", "importJSON"],
-    "input": ["down", "pressed", "released", "heldFor", "key", "beginFrame", "endFrame", "requestPointerLock", "exitPointerLock",
-      "setTouchMode", "showTouchButton", "setTouchLabel", "inject", "injectMove", "injectLook", "clearInjected"],
+    "save": [
+        "load", "write", "reset", "hasProgress", "unlockLevel", "completeLevel", "setCheckpoint", "getCheckpoint", "setFlag",
+        "getFlag", "addCodex", "setLoadout", "getLoadout", "unlockPart", "unlockedParts", "addPlayTime", "exportJSON",
+        "importJSON"
+      ],
+    "input": [
+        "down", "pressed", "released", "heldFor", "key", "beginFrame", "endFrame", "requestPointerLock", "exitPointerLock",
+        "setTouchMode", "showTouchButton", "setTouchLabel", "inject", "injectMove", "injectLook", "clearInjected"
+      ],
     "pipeline": ["setTier", "setGrade", "setBloom", "setView", "clearView", "render", "warmup", "stats"],
     "atmosphere": ["apply", "set", "patchMaterial", "fogAmount", "lightning", "rebuildEnvironment", "clear", "update"],
     "materials": ["get", "standard", "glow", "emissive", "mechSet", "setFactions", "factionSet", "applyPalette", "sign", "dispose"],
-    "particles": ["clear", "update", "add.spawn", "add.update", "add.clear", "smoke.spawn", "smoke.update", "smoke.clear",
-      "lights.flash", "debris.spawn", "debris.clear", "decals.spawn", "decals.clear"],
-    "fx": ["sparks", "dust", "explosion", "muzzle", "impact", "missileTrail", "boost", "landing", "shockwave", "beam", "emitter",
-      "ambient", "clearEmitters", "update"],
+    "particles": [
+        "clear", "update", "add.spawn", "add.update", "add.clear", "smoke.spawn", "smoke.update", "smoke.clear", "lights.flash",
+        "debris.spawn", "debris.clear", "decals.spawn", "decals.clear"
+      ],
+    "fx": [
+        "sparks", "dust", "explosion", "muzzle", "impact", "missileTrail", "boost", "landing", "shockwave", "beam", "emitter",
+        "ambient", "clearEmitters", "update"
+      ],
     "weather": ["set", "update"],
     "audio": ["unlock", "setVolumes", "play", "loop", "blip", "duck", "update"],
     "music": ["setTheme", "setIntensity", "stinger", "stop", "update"],
-    "world": ["load", "unload", "groundHeight", "normalAt", "surfaceAt", "resolve", "resolveYaw", "playArea", "raycast", "settle",
-      "stats", "update"],
-    "collision": ["add", "remove", "box", "obox", "circle", "groundHeight", "supportHeight", "resolve", "pointInSolid", "segment",
-      "lineOfSight", "near", "clear"],
+    "world": [
+        "load", "unload", "groundHeight", "normalAt", "surfaceAt", "resolve", "resolveYaw", "playArea", "raycast", "settle",
+        "stats", "update"
+      ],
+    "collision": [
+        "add", "remove", "box", "obox", "circle", "groundHeight", "supportHeight", "resolve", "pointInSolid", "segment",
+        "lineOfSight", "near", "clear"
+      ],
     "structures": ["register", "has", "footprint", "place", "get", "all", "settle", "states", "reset", "clear", "update"],
     "garage": ["open", "close", "showcase", "update"],
     "combat": ["register", "unregister", "all", "query", "nearestHostile", "damage", "radial", "kill", "resetStats", "clear"],
@@ -110,23 +258,30 @@
     "player": ["setLoadout", "spawn", "despawn", "teleport", "snapshot", "heal", "refill", "update", "center", "hitTest"],
     "enemies": ["register", "kinds", "spawn", "all", "alive", "count", "killAll", "despawn", "clear", "prewarm", "combatIntensity", "update"],
     "cameraRig": ["addShake", "follow", "orbit", "setPose", "blendTo", "release", "setFree", "setFov", "aimRay", "worldToScreen", "update"],
-    "mission": ["start", "restart", "stop", "run", "registerAction", "registerCondition", "check", "objective", "objectives", "fire",
-      "setFlag", "reachCheckpoint", "snapshot", "complete", "fail", "update"],
+    "mission": [
+        "start", "restart", "stop", "run", "registerAction", "registerCondition", "check", "objective", "objectives", "fire",
+        "setFlag", "reachCheckpoint", "snapshot", "complete", "fail", "update"
+      ],
     "cinematics": ["play", "skip", "flyby", "barrage", "update"],
     "comms": ["defineSpeakers", "say", "play", "clear", "update"],
-    "hud": ["show", "setMission", "setObjectives", "hint", "warn", "killfeed", "hitmark", "hurt", "zoneCard", "checkpointToast",
-      "setMarkers", "progress", "prompt", "choice", "bossBar", "setCallsign", "glitch", "letterbox", "fade", "update"],
-    "screens": ["hide", "showTitle", "showLevelSelect", "showBriefing", "showLoading", "showPause", "showSettings", "showDeath",
-      "showDebrief", "showInterstitial", "showCredits"],
+    "hud": [
+        "show", "setMission", "setObjectives", "hint", "warn", "killfeed", "hitmark", "hurt", "zoneCard", "checkpointToast",
+        "setMarkers", "progress", "prompt", "choice", "bossBar", "setCallsign", "glitch", "letterbox", "fade", "update"
+      ],
+    "screens": [
+        "hide", "showTitle", "showLevelSelect", "showBriefing", "showLoading", "showPause", "showSettings", "showDeath",
+        "showDebrief", "showInterstitial", "showCredits"
+      ],
     "flow": ["boot", "toTitle", "startLevel", "restartCheckpoint", "pause", "resume", "interstitial", "quitToTitle"]
   },
   "fields": {
-    "ctx": ["THREE", "canvas", "renderer", "scene", "levelRoot", "camera", "params", "debug", "clock", "events", "timers", "settings",
-      "tier", "save", "input", "random", "reseed", "errors", "simRunning", "debugPaused", "timeScale", "addSystem", "removeSystem",
-      "start", "tick", "step", "renderFrame", "clearLevel", "setTier", "resize",
-      "materials", "atmosphere", "pipeline", "particles", "fx", "weather", "audio", "music", "world", "collision", "structures",
-      "garage", "combat", "projectiles", "player", "enemies", "cameraRig", "mission", "cinematics", "comms", "hud", "screens",
-      "flow", "debugApi"],
+    "ctx": [
+        "THREE", "canvas", "renderer", "scene", "levelRoot", "camera", "params", "debug", "clock", "events", "timers",
+        "settings", "tier", "save", "input", "random", "reseed", "errors", "simRunning", "debugPaused", "timeScale", "addSystem",
+        "removeSystem", "start", "tick", "step", "renderFrame", "clearLevel", "setTier", "resize", "materials", "atmosphere",
+        "pipeline", "particles", "fx", "weather", "audio", "music", "world", "collision", "structures", "garage", "combat",
+        "projectiles", "player", "enemies", "cameraRig", "mission", "cinematics", "comms", "hud", "screens", "flow", "debugApi"
+      ],
     "clock": ["time", "dt", "realTime", "realDt", "frame"],
     "settings": ["data"],
     "save": ["data"],
@@ -142,9 +297,11 @@
     "garage": ["isOpen", "scene", "camera"],
     "combat": ["god", "stats"],
     "projectiles": ["count"],
-    "player": ["id", "name", "kind", "team", "tags", "alive", "targetable", "pos", "vel", "ap", "apMax", "imp", "impMax", "stagT",
-      "stagDur", "lastHit", "invuln", "hitR", "active", "rig", "loadout", "stats", "weapons", "yaw", "pitch", "bodyYaw", "en", "enMax",
-      "overheat", "onGround", "thrust", "hover", "rad", "hgt", "lock", "hardLock", "aimPoint", "frozen"],
+    "player": [
+        "id", "name", "kind", "team", "tags", "alive", "targetable", "pos", "vel", "ap", "apMax", "imp", "impMax", "stagT",
+        "stagDur", "lastHit", "invuln", "hitR", "active", "rig", "loadout", "stats", "weapons", "yaw", "pitch", "bodyYaw", "en",
+        "enMax", "overheat", "onGround", "thrust", "hover", "rad", "hgt", "lock", "hardLock", "aimPoint", "frozen"
+      ],
     "enemies": ["activeRadius"],
     "cameraRig": ["mode", "focus", "lookTarget", "shake"],
     "mission": ["def", "checkpoint", "elapsed", "flags"],
@@ -153,47 +310,112 @@
     "screens": ["current"],
     "flow": ["state", "levelId"]
   },
-  "gameApi": ["ctx", "ready", "version", "state", "pause", "resume", "step", "render", "settle", "startLevel", "teleport", "setGod",
-    "killAll", "spawn", "trigger", "setFlag", "completeObjective", "checkpoint", "restart", "skipCinematic", "input.move", "input.look",
-    "input.hold", "input.press", "input.clear", "freeCam", "setCamera", "hud", "setTier", "setTimeScale", "seed", "perf", "getState",
-    "errors", "levels", "save.reset", "save.get", "save.set"],
-  "events": ["resize", "input:focuslost", "tier:changed", "settings:changed", "state:changed", "level:loading", "level:ready",
-    "level:start", "level:complete", "level:failed", "level:cleared", "checkpoint:reached", "objective:changed", "zone:entered",
-    "zone:exited", "trigger:fired", "encounter:started", "encounter:cleared", "comms:line", "player:spawned", "player:damaged",
-    "player:staggered", "player:died", "player:landed", "target:registered", "target:killed", "target:damaged", "unit:spawned",
-    "structure:state", "pickup", "cinematic:start", "cinematic:end", "fx:explosion"],
+  "gameApi": [
+      "ctx", "ready", "version", "state", "pause", "resume", "step", "render", "settle", "startLevel", "teleport", "setGod",
+      "killAll", "spawn", "trigger", "setFlag", "completeObjective", "checkpoint", "restart", "skipCinematic", "input.move",
+      "input.look", "input.hold", "input.press", "input.clear", "freeCam", "setCamera", "hud", "setTier", "setTimeScale",
+      "seed", "perf", "getState", "errors", "levels", "save.reset", "save.get", "save.set"
+    ],
+  "events": [
+      "resize", "input:focuslost", "tier:changed", "settings:changed", "state:changed", "level:loading", "level:ready",
+      "level:start", "level:complete", "level:failed", "level:cleared", "checkpoint:reached", "objective:changed",
+      "zone:entered", "zone:exited", "trigger:fired", "encounter:started", "encounter:cleared", "comms:line", "player:spawned",
+      "player:damaged", "player:staggered", "player:died", "player:landed", "target:registered", "target:killed",
+      "target:damaged", "unit:spawned", "structure:state", "pickup", "cinematic:start", "cinematic:end", "fx:explosion"
+    ],
   "registries": {
-    "sfx": ["rifle", "erifle", "plasma", "cannon", "turret", "explode", "boom", "qb", "blade", "bladeHit", "missile", "lock", "blip", "hit",
-      "hurt", "alarm", "land", "stagger", "repair", "empty", "charge", "door", "confirm", "glitch", "mg", "shotgun", "mortar", "rail",
-      "step", "stepHeavy", "servo", "rotor", "dropship", "flyby", "thunder", "collapse", "metalGroan", "klaxon", "static", "pickup",
-      "objective", "checkpoint", "uiMove", "uiSelect", "uiBack", "interact", "shockwave", "warn"],
+    "sfx": [
+        "rifle", "erifle", "plasma", "cannon", "turret", "explode", "boom", "qb", "blade", "bladeHit", "missile", "lock", "blip",
+        "hit", "hurt", "alarm", "land", "stagger", "repair", "empty", "charge", "door", "confirm", "glitch", "mg", "shotgun",
+        "mortar", "rail", "step", "stepHeavy", "servo", "rotor", "dropship", "flyby", "thunder", "collapse", "metalGroan",
+        "klaxon", "static", "pickup", "objective", "checkpoint", "uiMove", "uiSelect", "uiBack", "interact", "shockwave", "warn"
+      ],
     "unitModels": ["drone", "tank", "tank_heavy", "turret", "gunship", "walker", "artillery", "apc", "dropship", "beacon"],
     "enemyKinds": ["drone", "tank", "tank_heavy", "turret", "gunship", "walker", "artillery", "apc", "beacon", "dropship", "mech"],
-    "structureTypes": ["bunker", "watchtower", "wall", "gate", "bridge", "relay_pylon", "comm_array", "tank_farm", "refinery", "hangar",
-      "landing_pad", "container_stack", "barricade", "outpost", "ruin_block", "monolith", "pipeline", "crashed_ship",
-      "megastructure_leg", "mech_wreck", "vehicle_wreck", "salvage_cache", "checkpoint_beacon"],
-    "manmadeProps": ["container", "barrel_cluster", "barricade_small", "tank_trap", "girder", "concrete_chunk", "pipe_piece",
-      "wreck_debris", "cable_spool", "sign_post", "sandbags"],
+    "structureTypes": [
+        "bunker", "watchtower", "wall", "gate", "bridge", "relay_pylon", "comm_array", "tank_farm", "refinery", "hangar",
+        "landing_pad", "container_stack", "barricade", "outpost", "ruin_block", "monolith", "pipeline", "crashed_ship",
+        "megastructure_leg", "mech_wreck", "vehicle_wreck", "salvage_cache", "checkpoint_beacon"
+      ],
+    "manmadeProps": [
+        "container", "barrel_cluster", "barricade_small", "tank_trap", "girder", "concrete_chunk", "pipe_piece", "wreck_debris",
+        "cable_spool", "sign_post", "sandbags"
+      ],
     "designs": ["vanguard", "striker", "bastion"],
     "frames": ["vanguard", "striker", "bastion"],
     "startingParts": ["rifle_r30", "blade_pb2", "msl_vm4", "kit_rk3"],
     "texNames": ["panel", "grain", "rock", "concrete", "metal", "grime", "noise", "smokeSprite", "sparkSprite"],
-    "libNames": ["concrete", "concreteDark", "steel", "steelDark", "rust", "stripe", "dark", "rock", "debris", "glass", "lightRed",
-      "lightAmber", "lightCyan", "lightWhite", "cable", "canvas", "scorch", "rubber"],
+    "libNames": [
+        "concrete", "concreteDark", "steel", "steelDark", "rust", "stripe", "dark", "rock", "debris", "glass", "lightRed",
+        "lightAmber", "lightCyan", "lightWhite", "cable", "canvas", "scorch", "rubber"
+      ],
     "themes": ["menu", "garage", "debrief", "ambient", "combat"],
-    "tierKeys": ["pixelRatioMax", "post", "msaa", "smaa", "bloom", "ao", "shadowMapSize", "shadowExtent", "terrainCastsShadow",
-      "viewDistance", "terrainSegments", "terrainSplit", "terrainBuildMs", "erosionScale", "scatterDensity", "scatterDistance",
-      "groundCover", "structureLodDist", "particlesAdd", "particlesAlpha", "weatherParticles", "pointLights", "debrisMax",
-      "maxDecals", "textureSize", "anisotropy"],
+    "tierKeys": [
+        "pixelRatioMax", "post", "msaa", "smaa", "bloom", "ao", "shadowMapSize", "shadowExtent", "terrainCastsShadow",
+        "viewDistance", "terrainSegments", "terrainSplit", "terrainBuildMs", "erosionScale", "scatterDensity", "scatterDistance",
+        "groundCover", "structureLodDist", "particlesAdd", "particlesAlpha", "weatherParticles", "pointLights", "debrisMax",
+        "maxDecals", "textureSize", "anisotropy"
+      ],
     "actions": ["fire", "blade", "boost", "jump", "missile", "lock", "kit", "interact", "alt", "pause", "skip", "map"],
     "levels": ["test", "l01"]
   },
   "systems": {
-    "input": ["input", "always"], "input-end": ["late", "always"], "timers": ["early", "sim"], "flow": ["early", "always"],
-    "debug-keys": ["early", "always"], "player": ["player", "sim"], "enemies": ["ai", "sim"], "projectiles": ["physics", "sim"],
-    "mission": ["mission", "sim"], "cinematics": ["mission", "sim"], "world": ["world", "always"], "structures": ["world", "always"],
-    "cameraRig": ["camera", "always"], "atmosphere": ["fx", "always"], "weather": ["fx", "always"], "particles": ["fx", "sim"],
-    "fx": ["fx", "sim"], "comms": ["ui", "sim"], "hud": ["ui", "always"], "garage": ["ui", "always"], "audio": ["audio", "always"],
+    "input": ["input", "always"],
+    "input-end": ["late", "always"],
+    "timers": ["early", "sim"],
+    "flow": ["early", "always"],
+    "debug-keys": ["early", "always"],
+    "player": ["player", "sim"],
+    "enemies": ["ai", "sim"],
+    "projectiles": ["physics", "sim"],
+    "mission": ["mission", "sim"],
+    "cinematics": ["mission", "sim"],
+    "world": ["world", "always"],
+    "structures": ["world", "always"],
+    "cameraRig": ["camera", "always"],
+    "atmosphere": ["fx", "always"],
+    "weather": ["fx", "always"],
+    "particles": ["fx", "sim"],
+    "fx": ["fx", "sim"],
+    "comms": ["ui", "sim"],
+    "hud": ["ui", "always"],
+    "garage": ["ui", "always"],
+    "audio": ["audio", "always"],
     "music": ["audio", "always"]
-  }
+  },
+  "unitParts": {
+    "drone": [["body", "ring"], 1],
+    "tank": [["chassis", "turret", "barrelPivot"], 1],
+    "tank_heavy": [["chassis", "turret", "barrelPivot"], 2],
+    "turret": [["base", "head"], 2],
+    "gunship": [["body", "rotorL", "rotorR", "turret", "podL", "podR"], 2],
+    "walker": [["body", "turret", "leg0", "leg1", "leg2", "leg3"], 2],
+    "artillery": [["chassis", "turret", "barrelPivot"], 1],
+    "apc": [["chassis", "hatch"], 0],
+    "dropship": [["body", "bay", "thrust0", "thrust1", "thrust2", "thrust3"], 0],
+    "beacon": [["body", "spire", "beam"], 0]
+  },
+  "unitRig": ["kind", "root", "parts", "muzzles", "eyes", "hit", "rad", "hgt", "dispose"],
+  "mechRig": [
+      "root", "body", "pelvis", "legs", "torso", "head", "arms", "pod", "muzzle", "muzzleL", "blade", "flames", "vents",
+      "mounts", "mats", "scheme", "design", "setParts", "dispose"
+    ],
+  "mechMaterials": ["base", "mid", "acc", "dark", "visor", "flame", "blade"],
+  "factionMaterials": ["shell", "mid", "accent", "dark", "eye", "glow"],
+  "target": [
+      "id", "name", "kind", "team", "tags", "alive", "targetable", "pos", "vel", "ap", "apMax", "imp", "impMax", "stagT",
+      "stagDur", "lastHit", "invuln", "hitR", "center", "hitTest"
+    ],
+  "unit": [
+      "rig", "root", "faction", "behavior", "home", "leash", "aggroRange", "asleep", "ai", "cd", "rad", "hgt", "onGround",
+      "baseUpdate", "update", "despawn"
+    ],
+  "structureInstance": ["id", "type", "params", "pos", "yaw", "root", "colliders", "anchors", "state", "target", "setState", "destroy"],
+  "footprint": ["shape", "flatten", "pad", "exclude"],
+  "weapon": ["part", "slot", "ammo", "ammoMax", "cd", "update", "trigger", "readout", "refill"],
+  "loadoutStats": [
+      "id", "name", "design", "ap", "en", "enRegen", "enRegenAir", "speed", "qbImpulse", "qbCost", "hoverAccel", "hoverCost",
+      "jump", "impMax", "load", "power", "rad", "hgt", "hitR", "weight", "powerDraw", "overweight", "overpower", "speedMul",
+      "warnings"
+    ]
 }

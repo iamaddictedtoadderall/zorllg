@@ -160,13 +160,12 @@ export function install(ctx) {
     toggle(on = !overlay.visible) { overlay.visible = on; if (dbg) dbg.hidden = !on; },
   };
   if (ctx.debug && ctx.params.get('overlay') === '1') overlay.toggle(true);
+  window.addEventListener('keydown', (e) => { if (ctx.debug && e.code === 'Backquote' && !e.repeat) { overlay.toggle(); acc = 1; } });
   ctx.addSystem({
     name: 'debug-keys', phase: 'early', when: 'always',
     update(dt) {
-      if (!ctx.debug && !ctx.settings.get('showFps')) return;
-      if (ctx.debug && ctx.input.key('Backquote') && !overlay._held) { overlay._held = true; overlay.toggle(); }
-      if (!ctx.input.key('Backquote')) overlay._held = false;
-      if (!ctx.debug && ctx.settings.get('showFps') && !overlay.visible) overlay.toggle(true);
+      if (!ctx.debug && !ctx.settings.get('showFps')) { if (overlay.visible) overlay.toggle(false); return; }
+      if (!ctx.debug && !overlay.visible) overlay.toggle(true);
       acc += dt;
       if (!overlay.visible || !dbg || acc < 0.25) return;
       acc = 0;

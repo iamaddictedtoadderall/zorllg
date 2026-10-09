@@ -239,6 +239,10 @@ body{font-family:var(--f-display);-webkit-font-smoothing:antialiased;user-select
   .title-wrap .actions,.controls{margin-top:16px}
   .doc{padding-top:16px}
   .doc h2{margin-top:8px}
+  .center-card{padding-block:8px}
+  .center-card h2{font-size:clamp(36px,7vw,56px)}
+  .center-card .actions{margin-top:14px}
+  .center-card canvas#pMap,.center-card .commslog{display:none}
 }
 
 /* ---------- TOUCH ---------- */

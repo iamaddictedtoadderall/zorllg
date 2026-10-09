@@ -2,7 +2,7 @@
 // gravity to supportHeight, collision push-out, play-area warning/pushback, cameraRig.follow, buildMech + animateMech.
 // No weapons fire, no EN use, no lock-on. P4 ports the prototype's updatePlayer.
 import * as THREE from 'three';
-import { clamp, damp, dampAng, aimDir, angWrap, yawTo } from '../core/util.js';
+import { clamp, damp, dampAng, angWrap, yawTo } from '../core/util.js';
 import { ACT, LOOK_RAD_PER_PX } from '../core/input.js';
 import { buildMech, animateMech } from '../art/mechs.js';
 import { computeStats, PARTS, SLOTS, DEFAULT_LOADOUT } from '../combat/loadout.js';
@@ -141,7 +141,7 @@ export function install(ctx) {
           p.pos.x += dx / dl * push; p.pos.z += dz / dl * push;
         }
       }
-      for (const w of Object.values(p.weapons)) w.update(dt);
+      for (let i = 0; i < SLOTS.length; i++) p.weapons[SLOTS[i]]?.update(dt);
       // aim point along the camera ray (P4: lock-on, aim march)
       if (ctx.cameraRig) {
         ctx.cameraRig.aimRay(_o, _d);

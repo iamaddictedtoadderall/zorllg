@@ -97,6 +97,9 @@ export function install(ctx) {
       ctx.events.emit('target:killed', { target: t, source });
     },
     resetStats() { api.stats = newStats(); },
+    /** extra: restart ids after the highest id still registered, so a checkpoint restart hands out the same unit ids
+     *  (getState() determinism). enemies.clear() calls it. */
+    rewindIds() { let m = 0; for (const t of targets) if (t.id > m) m = t.id; nextId = m; },
     clear() { for (const t of [...targets]) if (!(t.kind === 'player' && t.team === 'player')) targets.delete(t); },
   };
   ctx.combat = api;

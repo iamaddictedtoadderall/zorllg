@@ -15,6 +15,11 @@ export function install(ctx) {
       r.setPixelRatio(Math.min(window.devicePixelRatio || 1, t.pixelRatioMax));
       r.shadowMap.type = t.name === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
       r.shadowMap.needsUpdate = true;
+      const sun = ctx.atmosphere?.sun;
+      if (sun && sun.shadow.mapSize.x !== t.shadowMapSize) {
+        sun.shadow.mapSize.set(t.shadowMapSize, t.shadowMapSize);
+        if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+      }
       ctx.resize();
     },
     setGrade(p = {}) { Object.assign(api.grade, p); },

@@ -40,6 +40,7 @@ export class Unit {
   syncRoot() { this.root.position.copy(this.pos); this.root.rotation.y = this.yaw; }
   despawn() {
     this.root.parent?.remove(this.root);
+    this.rig?.dispose?.();
     this.ctx.combat?.unregister(this);
   }
   onDeath() {
@@ -101,7 +102,7 @@ export function install(ctx) {
       return n;
     },
     despawn(u) { u.despawn(); u.alive = false; units = units.filter(x => x !== u); },
-    clear() { for (const u of units) u.despawn(); units = []; },
+    clear() { for (const u of units) u.despawn(); units = []; ctx.combat?.rewindIds?.(); },
     prewarm(list) { /* stub */ },
     combatIntensity() { return 0; },
     update(dt) {

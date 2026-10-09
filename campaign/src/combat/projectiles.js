@@ -1,6 +1,5 @@
 // combat/projectiles.js (P4) — P0 STUB: fire() moves projectiles in straight lines until `life` runs out. No hits,
 // no rendering.
-import * as THREE from 'three';
 
 export function install(ctx) {
   const list = [];

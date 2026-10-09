@@ -178,13 +178,14 @@ try {
   });
 
   // open the game
-  harnessStage = 'boot';
+  harnessStage = 'goto';
   const q = new URLSearchParams({ debug: '1', mute: '1', tier: args.tier });
   if (args.touch) q.set('touch', '1');
   for (const p of args.params) { const [k, ...v] = p.split('='); q.set(k, v.join('=')); }
   const url = `${base}/index.html?${q}`;
   console.log('[playtest] open', url);
   await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+  harnessStage = 'boot';
   await page.waitForFunction(() => window.__game && window.__game.ready, null, { timeout: 90000 });
   await page.evaluate(() => Promise.race([window.__game.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('__game.ready timeout')), 90000))]));
   await page.evaluate(() => { window.__game.pause(); window.__game.ctx.pausedRender = false; });

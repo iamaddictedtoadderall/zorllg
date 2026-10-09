@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { clamp, damp, smooth, aimDir, lerp, hashString } from './util.js';
 
 const _aim = new THREE.Vector3(), _pivot = new THREE.Vector3(), _pos = new THREE.Vector3(), _look = new THREE.Vector3();
-const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _dir = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
+const _a = new THREE.Vector3(), _dir = new THREE.Vector3(), _fwd = new THREE.Vector3(), _right = new THREE.Vector3();
 const _proj = new THREE.Vector3();
 const _hit = { t: 0, point: new THREE.Vector3(), normal: new THREE.Vector3(), collider: null, ground: false, surface: '' };
 const _segOpts = { ground: true, colliders: true, radius: 0.6 };

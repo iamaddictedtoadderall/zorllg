@@ -8,6 +8,7 @@ export const ACT = Object.freeze({
   KIT: 'kit', INTERACT: 'interact', ALT: 'alt', PAUSE: 'pause', SKIP: 'skip', MAP: 'map',
 });
 const ACTIONS = Object.values(ACT);
+const NO_BINDINGS = [];
 /** Actions that still read while input.enabled is false (menus, cinematics). */
 const ALWAYS = new Set([ACT.PAUSE, ACT.SKIP, ACT.MAP]);
 
@@ -69,11 +70,13 @@ export function install(ctx) {
 
     beginFrame() {
       const dt = ctx.clock.realDt || 0;
+      // the debug free camera borrows the keyboard and mouse, so those don't drive gameplay while it flies
+      const fc = ctx.cameraRig?.mode === 'free';
       pollPad();
       for (const a of ACTIONS) {
         let raw = !!(injDown[a] || touchDown[a] || padDown[a]);
         let latch = !!(injPress[a] || touchPress[a] || padPress[a]);
-        const b = api.bindings[a] || [];
+        const b = fc && a !== ACT.PAUSE ? NO_BINDINGS : (api.bindings[a] || NO_BINDINGS);
         for (let i = 0; i < b.length; i++) { if (keys[b[i]]) raw = true; if (latched[b[i]]) latch = true; }
         const d = raw || latch;
         st.pressed[a] = latch || (d && !prevDown[a]);
@@ -84,8 +87,6 @@ export function install(ctx) {
       if (touchSkipTap) { held.skip = Math.max(held.skip, 1); st.down.skip = true; }
 
       // movement: keys, else injected, else touch stick, else gamepad
-      // the debug free camera borrows the keyboard and mouse, so those don't drive gameplay while it flies
-      const fc = ctx.cameraRig?.mode === 'free';
       let mx = fc ? 0 : (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), my = fc ? 0 : (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
       if (mx || my) { const l = Math.hypot(mx, my); mx /= l; my /= l; }
       else if (injMove.x || injMove.y) { mx = injMove.x; my = injMove.y; }
@@ -107,7 +108,7 @@ export function install(ctx) {
         if (keys.ArrowDown) ly += KEY_PITCH_PX * dt;
       }
       lx += pad.rx * PAD_YAW_PX * dt; ly += pad.ry * PAD_PITCH_PX * dt;
-      if (api.freeMouse && mouse.moved && !api.pointerLocked && typeof innerWidth === 'number') {
+      if (!fc && api.freeMouse && mouse.moved && !api.pointerLocked && typeof innerWidth === 'number') {
         // prototype edge-push turning while the pointer isn't captured
         const nx = (mouse.x / innerWidth) * 2 - 1, ny = (mouse.y / innerHeight) * 2 - 1;
         const ex = Math.sign(nx) * Math.max(0, Math.abs(nx) - 0.35) / 0.65, ey = Math.sign(ny) * Math.max(0, Math.abs(ny) - 0.4) / 0.6;
@@ -345,6 +346,7 @@ export function install(ctx) {
     for (const k in keys) if (k.startsWith('Mouse')) keys[k] = false;
     for (const k in latched) delete latched[k];
     for (const k in touchPress) delete touchPress[k];
+    updateTouchLayer();   // show/hide #touch right away, not on the next tick (matters while debug-paused)
   });
 
   ctx.addSystem({ name: 'input', phase: 'input', when: 'always', update: () => { api.beginFrame(); updateTouchLayer(); } });

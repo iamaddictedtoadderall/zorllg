@@ -3,6 +3,9 @@
 // compass, radar, boss bar, choice and glitch are no-ops.
 import { formatTime, esc } from '../core/util.js';
 
+const SLOT4 = ['R', 'L', 'S', 'U'];
+const SLOT_TOUCH = { R: 'fire', L: 'blade', S: 'msl', U: 'kit' };
+
 export function install(ctx) {
   const $ = (s) => document.querySelector(s);
   const el = {
@@ -14,7 +17,7 @@ export function install(ctx) {
     w: { R: $('#wR'), L: $('#wL'), S: $('#wS'), U: $('#wK') },
   };
   const warnings = new Map();
-  let hintT = 0, killT = 0, hitT = 0, hurtLevel = 0, zoneT = 0, toastT = 0, lastWarnHTML = '', weaponNames = '';
+  let hintT = 0, killT = 0, hitT = 0, hurtLevel = 0, zoneT = 0, toastT = 0, lastWarnHTML = '', lastWeapons = null;
   let fadeTimer = 0;
   const setText = (e, t) => { if (e && e.textContent !== t) e.textContent = t; };
   const setW = (e, f) => { if (e) e.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(2) + '%'; };
@@ -90,21 +93,23 @@ export function install(ctx) {
         setText(el.enTxt, p.overheat > 0 ? 'RECHARGING' : '');
         setW(el.stFill, p.stagT > 0 ? 1 : (p.imp || 0) / (p.impMax || 1));
         // weapons
-        const names = ['R', 'L', 'S', 'U'].map(s => p.weapons?.[s]?.part?.name || '').join('|');
-        if (names !== weaponNames) {
-          weaponNames = names;
-          for (const s of ['R', 'L', 'S', 'U']) {
+        if (p.weapons !== lastWeapons) {   // the player replaces the weapons object on every setLoadout
+          lastWeapons = p.weapons;
+          setText(el.frameName, `Frame · ${p.stats?.name || ''}`);
+          for (const s of SLOT4) {
             const wn = el.w[s]?.querySelector('.wn'), w = p.weapons?.[s];
             if (wn && wn.firstChild && w) wn.firstChild.textContent = w.part.name;
           }
         }
-        for (const s of ['R', 'L', 'S', 'U']) {
+        for (const s of SLOT4) {
           const w = p.weapons?.[s]; if (!w || !el.w[s]) continue;
           const r = w.readout();
           setText(el.w[s].querySelector('.wv'), r.label);
           el.w[s].classList.toggle('cool', r.cooling);
-          const act = { R: 'fire', L: 'blade', S: 'msl', U: 'kit' }[s];
-          ctx.input?.setTouchLabel?.(act, s === 'L' ? (r.cooling ? r.label : '') : r.label, r.cooling || r.empty);
+          const act = SLOT_TOUCH[s];
+          // prototype touch labels: ammo, blade cooldown only, missile cooldown or count, kit count
+          const tl = s === 'L' ? (r.cooling ? r.label : '') : s === 'S' ? (r.cooling ? r.label : String(w.ammo)) : String(w.ammo);
+          ctx.input?.setTouchLabel?.(act, tl, r.cooling || r.empty);
         }
         if (p.ap < p.apMax * 0.25 && p.alive) api.warn(ctx.input?.isTouch ? 'AP CRITICAL · TAP KIT' : 'AP CRITICAL · R TO REPAIR', 0.2, true);
       }

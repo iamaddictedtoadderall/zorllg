@@ -22,7 +22,7 @@ const CATALOG = {
   tank_farm: { params: { tanks: 4 }, states: ['intact', 'destroyed'], dims: () => [40, 40, 12], mat: 'rust' },
   refinery: { params: { size: 60 }, states: ['intact', 'burning', 'destroyed'], dims: p => [p.size, p.size, 30], mat: 'rust' },
   hangar: { params: { w: 60, d: 40, h: 22 }, states: ['closed', 'open'], dims: p => [p.w, p.d, p.h], mat: 'steelDark' },
-  landing_pad: { params: { r: 30 }, states: ['idle', 'lit'], dims: p => [p.r * 2, p.r * 2, 1], circle: true, mat: 'concrete' },
+  landing_pad: { params: { r: 30 }, states: ['idle', 'lit'], dims: p => [p.r * 2, p.r * 2, 1], mat: 'concrete' },
   container_stack: { params: { n: 3, layers: 2 }, states: [], dims: p => [12, 5 * p.n, 6 * p.layers], mat: 'rust' },
   barricade: { params: { length: 20 }, states: ['intact', 'destroyed'], dims: p => [p.length, 2, 3], mat: 'concrete' },
   outpost: { params: { size: 80 }, states: [], dims: () => [20, 14, 8], foot: p => [p.size, p.size], mat: 'concreteDark' },

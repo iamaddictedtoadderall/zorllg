@@ -149,8 +149,8 @@ export function install(ctx) {
       const p = open('pause', `<div class="center-card pause">
           <div class="eyebrow">${esc(m.title || '')}</div><h2>Paused</h2>
           ${objs ? `<ul class="objlist">${objs}</ul>` : ''}
-          ${m.drawMap ? '<canvas id="pMap" width="320" height="200"></canvas>' : ''}
           <div class="actions">${btn('bRes', 'Resume', false, 'autofocus')}${btn('bRetry', 'Restart from checkpoint', true)}${btn('bSet', 'Settings', true)}${btn('bQuit', 'Quit to title', true)}</div>
+          ${m.drawMap ? '<canvas id="pMap" width="320" height="200"></canvas>' : ''}
           ${log ? `<div class="commslog">${log}</div>` : ''}</div>`, 'dim', 'resume');
       bind({ bRes: 'resume', bRetry: 'restart', bSet: 'settings', bQuit: 'quit' });
       const c = root.querySelector('#pMap');

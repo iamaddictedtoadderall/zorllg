@@ -4,7 +4,7 @@ import { ACT } from '../core/input.js';
 import { LEVELS, loadLevel, nextLevel } from '../../levels/index.js';
 
 const SIM = { playing: true, dead: true, complete: true };
-const DEATH_LINES = ['Signal lost.', 'Frame down. Recovery beacon active.', 'AP depleted.'];
+const DEATH_LINES = ['Frame down. Recovery beacon active.', 'AP depleted. Systems offline.', 'Contact lost with the frame.'];
 const CREDITS = ['DAWNWAKE', 'Follow the thaw. Carry what you can.', 'Built with three.js', 'Every model, texture and sound is generated in code.'];
 
 export function install(ctx) {
@@ -96,6 +96,54 @@ export function install(ctx) {
     else if (r === 'quit') await flow.quitToTitle();
   }
 
+  async function loadAndPlay(level, checkpointId, o, token) {
+    ctx.audio?.unlock?.();
+    set('loading');
+    H()?.show(false);
+    ctx.garage?.showcase(false);
+    ctx.garage?.isOpen && ctx.garage.close();
+    const loader = S().showLoading({ title: typeof level === 'string' ? (LEVELS.find(l => l.id === level)?.title || level) : level.title });
+    const def = typeof level === 'string' ? await loadLevel(level) : level;
+    if (token !== menuToken) return;
+    teardown();
+    ctx.pipeline?.clearView();
+    ctx.materials?.setFactions(def.factions || {});
+    ctx.materials?.applyPalette(def.art?.palette || {});
+    ctx.atmosphere?.apply(def.art || {});
+    ctx.comms?.defineSpeakers(def.speakers || {});
+    ctx.music?.setTheme(def.music?.theme ?? 'ambient');
+    const cp = (def.checkpoints || []).find(c => c.id === checkpointId) || def.checkpoints?.[0];
+    await ctx.world.load(def, { onProgress: (p, label) => loader.set(p * 0.9, label), spawnAt: cp?.at });
+    if (token !== menuToken) return;
+    def.custom?.install?.(ctx, ctx.mission);
+    ctx.player.setLoadout(ctx.save.getLoadout());
+    const snap = ctx.save.getCheckpoint(def.id);
+    const fresh = !(snap && snap.checkpoint === cp?.id) && (!checkpointId || checkpointId === def.checkpoints?.[0]?.id);
+    ctx.mission.start(def, cp?.id, snap);
+    flow.levelId = def.id; flow.def = def;
+    loader.set(0.95, 'Shaders');
+    await ctx.pipeline?.warmup();
+    await ctx.world.settle();
+    loader.set(1, 'Ready');
+    loader.close();
+    if (token !== menuToken) return;
+    if (fresh && !o.skipIntro && def.intro?.length) {
+      set('interstitial');
+      await S().showInterstitial(def.intro, { skippable: true });
+      if (token !== menuToken) return;
+    }
+    S().hide();
+    H()?.show(true);
+    set('playing');
+    ctx.simRunning = true;
+    ctx.input.requestPointerLock();
+    ctx.events.emit('level:ready', { levelId: def.id });
+    if (ctx.input.isTouch && !navigator.webdriver && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen({ navigationUI: 'hide' })
+        .then(() => screen.orientation?.lock?.('landscape').catch(() => {})).catch(() => {});
+    }
+  }
+
   const flow = {
     state: 'boot',
     levelId: null,
@@ -112,54 +160,15 @@ export function install(ctx) {
       H()?.letterbox(false, 0);
       H()?.fade(0, 0);
       const token = ++menuToken;
-      titleLoop(token).catch(e => ctx.recordError('flow', e));
+      titleLoop(token).catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
     },
     async startLevel(level, checkpointId, o = {}) {
       const token = ++menuToken;
-      ctx.audio?.unlock?.();
-      set('loading');
-      H()?.show(false);
-      ctx.garage?.showcase(false);
-      ctx.garage?.isOpen && ctx.garage.close();
-      const loader = S().showLoading({ title: typeof level === 'string' ? (LEVELS.find(l => l.id === level)?.title || level) : level.title });
-      const def = typeof level === 'string' ? await loadLevel(level) : level;
-      if (token !== menuToken) return;
-      teardown();
-      ctx.pipeline?.clearView();
-      ctx.materials?.setFactions(def.factions || {});
-      ctx.materials?.applyPalette(def.art?.palette || {});
-      ctx.atmosphere?.apply(def.art || {});
-      ctx.comms?.defineSpeakers(def.speakers || {});
-      ctx.music?.setTheme(def.music?.theme ?? 'ambient');
-      const cp = (def.checkpoints || []).find(c => c.id === checkpointId) || def.checkpoints?.[0];
-      await ctx.world.load(def, { onProgress: (p, label) => loader.set(p * 0.9, label), spawnAt: cp?.at });
-      if (token !== menuToken) return;
-      def.custom?.install?.(ctx, ctx.mission);
-      ctx.player.setLoadout(ctx.save.getLoadout());
-      const snap = ctx.save.getCheckpoint(def.id);
-      const fresh = !(snap && snap.checkpoint === cp?.id) && (!checkpointId || checkpointId === def.checkpoints?.[0]?.id);
-      ctx.mission.start(def, cp?.id, snap);
-      flow.levelId = def.id; flow.def = def;
-      loader.set(0.95, 'Shaders');
-      await ctx.pipeline?.warmup();
-      await ctx.world.settle();
-      loader.set(1, 'Ready');
-      loader.close();
-      if (token !== menuToken) return;
-      if (fresh && !o.skipIntro && def.intro?.length) {
-        set('interstitial');
-        await S().showInterstitial(def.intro, { skippable: true });
-        if (token !== menuToken) return;
-      }
-      S().hide();
-      H()?.show(true);
-      set('playing');
-      ctx.simRunning = true;
-      ctx.input.requestPointerLock();
-      ctx.events.emit('level:ready', { levelId: def.id });
-      if (ctx.input.isTouch && !navigator.webdriver && !document.fullscreenElement && document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen({ navigationUI: 'hide' })
-          .then(() => screen.orientation?.lock?.('landscape').catch(() => {})).catch(() => {});
+      try { await loadAndPlay(level, checkpointId, o, token); }
+      catch (e) {
+        ctx.recordError('flow', e); e._recorded = true;
+        if (token === menuToken) await flow.toTitle();
+        throw e;
       }
     },
     async restartCheckpoint() {
@@ -194,7 +203,7 @@ export function install(ctx) {
           if (r === 'settings') await S().showSettings();
           else if (r == null) return;
         }
-      })().catch(e => ctx.recordError('flow', e));
+      })().catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
     },
     resume() {
       if (flow.state !== 'paused') return;
@@ -226,12 +235,12 @@ export function install(ctx) {
     set('dead');
     ctx.save.data.stats.deaths++;
     const line = DEATH_LINES[Math.floor(Math.random() * DEATH_LINES.length)];
-    ctx.timers.after(2.6, () => { if (flow.state === 'dead') onDeathScreen(line).catch(e => ctx.recordError('flow', e)); });
+    ctx.timers.after(2.6, () => { if (flow.state === 'dead') onDeathScreen(line).catch(e => { if (!e?._recorded) ctx.recordError('flow', e); }); });
   });
   ctx.events.on('level:failed', ({ reason }) => {
     if (flow.state !== 'playing') return;
     set('dead');
-    onDeathScreen(reason || 'Mission failed.').catch(e => ctx.recordError('flow', e));
+    onDeathScreen(reason || 'Mission failed.').catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
   });
   ctx.events.on('level:complete', ({ levelId, result }) => {
     if (flow.state !== 'playing') return;
@@ -257,7 +266,7 @@ export function install(ctx) {
         else { set('credits'); titleView(); await S().showCredits({ lines: CREDITS }); }
       } else if (r === 'garage') { set('garage'); titleView(); await ctx.garage.open({ context: 'title' }); }
       await flow.toTitle();
-    })().catch(e => ctx.recordError('flow', e));
+    })().catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
   });
   ctx.addSystem({ name: 'flow', phase: 'early', when: 'always', update: () => flow.update() });
   ctx.flow = flow;
