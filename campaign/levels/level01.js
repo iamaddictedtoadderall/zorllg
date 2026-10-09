@@ -210,7 +210,7 @@ const ZONES = [
       ...Array.from({ length: 10 }, (_, i) => [-1, 1].map(sd => ({ type: 'ice_wall', at: { s: 345 + i * 30, l: sd * (i < 3 ? 48 : 33) },
                                                                     yaw: 'route', params: { length: 32, h: 22, seed: 60 + i * 2 + (sd > 0 ? 1 : 0) } }))).flat(),
       { id: 'cutterWreck', type: 'cutter_wreck', at: { s: 345, l: 12 }, yaw: az(150) },
-      { id: 'alcove', type: 'moth_alcove', at: { s: 375, l: -30 }, yaw: az(63), state: 'sealed' },
+      { id: 'alcove', type: 'moth_alcove', at: { s: 377, l: -26 }, yaw: az(63), state: 'sealed' },
       { type: 'founders_pod', at: { s: 430, l: 26 }, yaw: az(200), params: { size: 1 } },
       { type: 'founders_pod', at: { s: 540, l: -26 }, yaw: az(40), params: { size: 1.2 } },
       ...[[505, -14], [515, 12], [528, -4], [540, 18]].map(([s, l], i) => ({ type: 'ice_pillar', at: { s, l }, params: { h: 18, r: 4, seed: 80 + i } })),
