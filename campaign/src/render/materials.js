@@ -42,6 +42,8 @@ const LIGHTS = {
 };
 const BARE = { 0: '#8a8d90', 1: '#5d3424', 2: '#8a8d90', 3: '#9a9384' };
 const STYLE_VEC = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]];
+/** optional StdOpts.wearStyle (AD §4.4): neutral (default: grime, warm rust streaks, steel chips), or a faction's wear */
+const WEAR_STYLE = { none: 0, neutral: 0, wake: 1, dredge: 2, founders: 3 };
 /** built-in faction palettes for the AD ids when a level doesn't define them (unknown ids still get neutral grey) */
 const DEFAULT_FACTIONS = {
   wake: { shell: '#4f8a86', mid: '#7a4128', accent: '#d9cba8', dark: '#1a1918', eye: '#ffb36b', wear: 0.8 },
@@ -149,7 +151,10 @@ function wearKey() { return 'cwear1'; }
 
 export function install(ctx) {
   const textures = {};
-  const uniforms = { uBeat: { value: 0 } };
+  // uBeat (A5.4) is the shared beat clock: always exactly ctx.clock.time (sim seconds since the level started), read
+  // live by every shader that binds it and by the HUD's vitals trace. Writing it sets an offset (debug/tests only).
+  let beatOffset = 0;
+  const uniforms = { uBeat: { get value() { return ctx.clock.time + beatOffset; }, set value(v) { beatOffset = (+v || 0) - ctx.clock.time; } } };
   const lib = new Map(), stdCache = new Map(), glowCache = new Map(), emCache = new Map(), mechCache = new Map(),
         factionCache = new Map(), signCache = new Map();
   const all = new Set();            // every lit material created here (env scale, dispose)
@@ -185,8 +190,10 @@ export function install(ctx) {
     texSize = S;
     const D = THREE.NoColorSpace, C = THREE.SRGBColorSpace;
     setTex('panel', TG.genPanel(Math.min(S, 256)), C);
-    setTex('grain', TG.genGrain(S, style), D);
-    setTex('rock', TG.genRock(S, style), D);
+    // grain and rock serve StdOpts.map and the rock/concrete detail here (the terrain bakes its own detail maps), so
+    // 512² is plenty and keeps install inside the AD §4.6 budget on High
+    setTex('grain', TG.genGrain(Math.min(S, 512), style), D);
+    setTex('rock', TG.genRock(Math.min(S, 512), style), D);
     setTex('concrete', TG.genConcrete(Math.min(S, 512)), D);
     setTex('metal', TG.genMetal(Math.min(S, 512)), D);
     setTex('grime', TG.genGrime(Math.min(S, 512)), D);
@@ -283,7 +290,7 @@ export function install(ctx) {
     m = kitMaterial({
       color: o.color ?? 0x808080, roughness: o.roughness ?? 0.7, metalness: o.metalness ?? 0.3, env: o.envMapIntensity ?? 0.6,
       emissive: o.emissive, emissiveIntensity: o.emissiveIntensity, flatShading: o.flatShading, vertexColors: o.vertexColors,
-      wear: o.wear ?? 0, style: o.wear ? 2 : 0, side: o.side, transparent: o.transparent, opacity: o.opacity,
+      wear: o.wear ?? 0, style: WEAR_STYLE[o.wearStyle] ?? 0, bare: o.bare, side: o.side, transparent: o.transparent, opacity: o.opacity,
       detail: o.map && !panel ? o.map : null, mapRepeat: o.mapRepeat, bump: o.bump ? o.bump * 0.6 : 0,
     });
     if (panel) {
@@ -444,8 +451,8 @@ export function install(ctx) {
       const want = s === 'snow' || s === 'ash' ? s : 'grit';
       if (want === style) return false;
       style = want;
-      setTex('grain', TG.genGrain(texSize, style), THREE.NoColorSpace);
-      setTex('rock', TG.genRock(texSize, style), THREE.NoColorSpace);
+      setTex('grain', TG.genGrain(Math.min(texSize, 512), style), THREE.NoColorSpace);
+      setTex('rock', TG.genRock(Math.min(texSize, 512), style), THREE.NoColorSpace);
       ctx.events.emit('materials:textures', { size: texSize, style });
       return true;
     },
@@ -465,7 +472,7 @@ export function install(ctx) {
     const ceramic = lib.get('ceramic');
     if (ceramic) ceramic.clearcoat = tier.name === 'high' ? 0.6 : 0;
   });
-  ctx.addSystem({ name: 'materials', phase: 'late', when: 'always', order: -50, update: () => { uniforms.uBeat.value = ctx.clock.time; } });
+  ctx.events.on('level:cleared', () => { beatOffset = 0; });
   ctx.materials = api;
   return api;
 }

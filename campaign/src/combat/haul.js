@@ -124,7 +124,7 @@ export function installHaul(ctx) {
     p.invuln = true;
     p.lunge = null;
     const rig = ctx.cameraRig;
-    if (rig?.setFov) { rip.baseFov = rig.baseFov ?? ctx.camera.fov; rig.setFov(rip.baseFov - 8, 0.15); }
+    if (rig?.setFov && (!rig.mode || rig.mode === 'follow')) { rip.baseFov = rig.baseFov ?? ctx.camera.fov; rig.setFov(rip.baseFov - 8, 0.15); }
     sfx('servo', p.center(_pc));
     ctx.events.emit('haul:tearStart', { target: t, part: rip.part });
   }
@@ -162,15 +162,24 @@ export function installHaul(ctx) {
     const p = ctx.player;
     if (!rip) return;
     if (p) { p.invuln = rip.prevInvuln; if (p.rip === rip) p.rip = null; }
-    const rig = ctx.cameraRig;
-    if (rig?.setFov && rip.baseFov) rig.setFov(rig.baseFov ?? rip.baseFov, 0.3);
+    restoreFov(0.3);
     rip = null;
   }
 
+  /** undo startRip()'s FOV narrowing. Only in follow mode: a cinematic or orbit shot (say one a TEAR kill set off)
+   *  owns the FOV, and the rig's release()/dropShot() restore baseFov after it; free fly (debug) keeps its pose FOV.
+   *  The stub rig has no mode, so it counts as follow. */
+  function restoreFov(seconds) {
+    const rig = ctx.cameraRig;
+    if (rig?.setFov && rip?.baseFov && (!rig.mode || rig.mode === 'follow')) rig.setFov(rig.baseFov ?? rip.baseFov, seconds);
+  }
+
+  /** a rip cut short (restart, death, level change): undo everything startRip() set, at once */
   function cancelRip() {
     if (!rip) return;
     const p = ctx.player;
     if (p) { p.invuln = rip.prevInvuln; if (p.rip === rip) p.rip = null; }
+    restoreFov(0);   // at once: a restart must not open on the narrowed view
     rip = null;
   }
 

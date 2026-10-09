@@ -9,11 +9,12 @@
 // follow the level palette (ctx.atmosphere.art) and share the terrain's world-space detail and snow mask.
 //
 // Scatter: generate() places every layer for the whole level, deterministically from the level seed and the layer:
-// a jittered grid sized from density × tier.scatterDensity, rejected by range, route band, avoidRoute, slope, height,
-// surface and exclusion discs, with an extra preference for slope breaks and gullies for rocks (AD §3.8). Instances
-// (matrix + tint) are stored in 64 m cells. Instances with scale ≥ collideMinScale on `collide` layers register a
-// circle collider (radius × scale × 0.85, top = ground + height × scale × 0.7). Ground-cover layers (maxDist ≤ 150 m,
-// no collide) exist only when tier.groundCover.
+// a jittered grid sized from the layer density, rejected by range, route band, avoidRoute, slope, height, surface and
+// exclusion discs, with an extra preference for slope breaks and gullies for rocks (AD §3.8). Instances with scale ≥
+// collideMinScale on `collide` layers register a circle collider (radius × scale × 0.85, top = ground + height ×
+// scale × 0.7) and are kept on every tier, so gameplay is identical on every tier; the purely visual instances are
+// thinned by tier.scatterDensity. Instances (matrix + tint) are stored in 64 m cells. Route coordinates come from the
+// heightfield's lattice (routeCoord). Ground-cover layers (maxDist ≤ 150 m, no collide) exist only when tier.groundCover.
 // update(focus) refills one InstancedMesh per prop type (per variant) from the cells within maxDist ×
 // tier.scatterDistance, nearest cells first, every 8 m of movement or 15 calls. Layers with castShadow get a second
 // small mesh for the instances inside the shadow box (High/Medium only); nothing else casts.
@@ -428,109 +429,129 @@ export class Scatter {
     this.meshes.set(key, M);
     return M;
   }
+  /** per-layer placement context (everything tryPlace needs, resolved once) */
+  _layerCtx(li, L) {
+    const tier = this.tier, hf = this.hf, route = this.route;
+    const keys = this._types(L.prop);
+    if (!keys.length) { console.warn(`[scatter] unknown prop "${L.prop}"`); return null; }
+    const spec = this._mesh(keys[0]).type;
+    const maxDist0 = L.maxDist ?? spec.maxDist ?? (spec.cover ? 140 : 650);
+    const cover = maxDist0 <= 150 && !L.collide;
+    if (cover && !tier.groundCover) return null;
+    const density = Number(L.density) || 0;
+    if (density <= 0) return null;
+    const hw0 = route.maxHalfWidth ?? 400;
+    const sc = L.scale || [1, 1];
+    const maxDist = maxDist0 * (tier.scatterDistance ?? 1);
+    const LC = {
+      li, L, keys, spec, cover, density, maxDist, hw0,
+      seed: this.seed ^ hashString(`${li}:${L.prop}`) ^ ((L.seed ?? 0) * 2654435761),
+      sc, slope: L.slope || [0, 1], hr: L.height || [-Infinity, Infinity],
+      align: L.align ?? spec.align ?? 0.5, sink: L.sink ?? spec.sink ?? 0.15, isRock: !!spec.rock,
+      margin: cover ? 30 : Math.min(maxDist0, 0.35 * hw0 + 120),
+      collideMin: L.collideMinScale ?? sc[0],
+      surfMode: L.surface && L.surface !== 'any' ? L.surface : null,
+      band0: L.routeBand ? L.routeBand[0] : 0, band1: L.routeBand ? L.routeBand[1] : Infinity,
+      avoid: L.avoidRoute ? (hf.P?.carve?.bedWidth ?? 60) / 2 + 14 : -1,
+      tierDens: tier.scatterDensity ?? 1,
+      batchByKey: new Map(),
+    };
+    for (const k of keys) {
+      const M = this._mesh(k);
+      const B = { layer: L, maxDist, maxDist2: maxDist * maxDist, cells: new Map(), count: 0, collide: !!L.collide,
+                  castShadow: !!(L.castShadow ?? false), lazy: null };
+      M.batches.push(B); LC.batchByKey.set(k, B);
+      if (B.castShadow && tier.name !== 'low' && M.type.castShadow !== false) M.shadow = true;
+    }
+    return LC;
+  }
+  /** one placement candidate (consumes exactly six random numbers); pushes into `out` (cell arrays) */
+  _tryPlace(LC, rng, x, z) {
+    const r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng(), r5 = rng(), r6 = rng();
+    const hf = this.hf, route = this.route, L = LC.L, spec = LC.spec;
+    if (hf.routeCoord) hf.routeCoord(x, z, _rc); else route.closestInto(x, z, _rc);
+    const dist = _rc.dist, lim = LC.cover ? 1.0 : 1.1;
+    if (dist > LC.hw0 * lim + LC.margin) return;
+    const s = _rc.s;
+    if (L.range && (s < L.range[0] || s > L.range[1])) return;
+    if (dist < LC.band0 || dist > LC.band1 || dist < LC.avoid) return;
+    if (dist > route.halfWidthAt(s) * lim + LC.margin) return;
+    hf.bakeAt(x, z, _bk);
+    const sl = _bk.slope >= 0 ? _bk.slope : hf.slopeAt(x, z);
+    if (sl < LC.slope[0] || sl > LC.slope[1]) return;
+    if (LC.surfMode) {
+      const rock = smooth(0.2, 0.42, sl);
+      if (LC.surfMode === 'rock' && rock < 0.5) return;
+      if (LC.surfMode === 'sediment' && smooth(0.15, 0.6, _bk.flow) * (1 - rock) < 0.35) return;
+      if (LC.surfMode === 'flat' && sl > 0.06) return;
+    }
+    // rocks gather at slope breaks, in gullies and on steep ground; they thin out on open flats (AD §3.8)
+    if (LC.isRock && !LC.cover && r6 > clamp(0.3 + sl * 2.2 + _bk.flow * 0.8, 0, 1)) return;
+    // power-law scale for rocks (many small, few big)
+    const t = LC.isRock ? r1 * r1 * r1 : r1;
+    const sz = lerp(LC.sc[0], LC.sc[1], t);
+    const collides = L.collide && sz >= LC.collideMin && !!spec.collider;
+    if (!collides && r5 >= LC.tierDens) return;
+    const r = spec.radius * sz;
+    if (this._excluded(x, z, r)) return;
+    const gy = hf.heightAt(x, z);
+    if (gy < LC.hr[0] || gy > LC.hr[1]) return;
+    hf.normalAt(x, z, _n);
+    _q2.setFromUnitVectors(_up, _n);
+    _q2.slerp(_q.identity(), 1 - LC.align);
+    _q.setFromAxisAngle(_up, r2 * TAU);
+    _q.premultiply(_q2);
+    _p.set(x, gy - LC.sink * spec.height * sz, z); _s.set(sz, sz, sz);
+    _m.compose(_p, _q, _s);
+    const B = LC.batchByKey.get(LC.keys[Math.floor(r3 * LC.keys.length) % LC.keys.length]);
+    const ck = ckey(Math.floor(x / CELL), Math.floor(z / CELL));
+    let arr = B.cells.get(ck);
+    if (!arr) { arr = []; B.cells.set(ck, arr); }
+    else if (!Array.isArray(arr)) { arr = Array.from(arr); B.cells.set(ck, arr); }
+    const e = _m.elements;
+    for (let q = 0; q < 16; q++) arr.push(e[q]);
+    arr.push(0.86 + 0.28 * r4, x, z);
+    B.count++;
+    if (collides && this.ctx.collision) {
+      const col = this.ctx.collision, top = gy + spec.height * sz * 0.7;
+      const surface = LC.isRock ? 'rock' : (spec.kind === 'wood' ? 'wood' : 'concrete');
+      const c = spec.collider === 'box'
+        ? col.obox(x, z, r * 1.7, r * 1.7, r2 * TAU, top, undefined, { surface, tag: 'prop', owner: this })
+        : col.circle(x, z, r * 0.85, top, undefined, { surface, tag: 'prop', owner: this });
+      this.colliders.push(c);
+    }
+  }
   async generate(onProgress) {
     const t0 = performance.now();
-    const tier = this.tier;
     let tLast = performance.now();
-    const hw0 = this.route.maxHalfWidth ?? 400;
+    this._lazy = [];
     for (let li = 0; li < this.layers.length; li++) {
-      const L = this.layers[li];
-      const keys = this._types(L.prop);
-      if (!keys.length) { console.warn(`[scatter] unknown prop "${L.prop}"`); continue; }
-      const spec = this._mesh(keys[0]).type;
-      const maxDist0 = L.maxDist ?? spec.maxDist ?? (spec.cover ? 140 : 650);
-      const cover = maxDist0 <= 150 && !L.collide;
-      if (cover && !tier.groundCover) continue;
-      const density = (Number(L.density) || 0) * (tier.scatterDensity ?? 1);
-      if (density <= 0) continue;
-      const cl = L.cluster && L.cluster.count > 1 ? { size: Math.max(1, L.cluster.size || 10), count: Math.round(L.cluster.count) } : null;
-      const seedDens = cl ? density / cl.count : density;
-      const cs = Math.sqrt(10000 / seedDens);                  // jittered grid cell (m)
-      const rng = mulberry32(this.seed ^ hashString(`${li}:${L.prop}`) ^ ((L.seed ?? 0) * 2654435761));
-      const sc = L.scale || [1, 1], slope = L.slope || [0, 1], hr = L.height || [-Infinity, Infinity];
-      const align = L.align ?? spec.align ?? 0.5, sink = L.sink ?? spec.sink ?? 0.15;
-      const isRock = !!spec.rock;
-      const bedHalf = (this.hf.P?.carve?.bedWidth ?? 60) / 2;
-      const margin = cover ? 30 : Math.min(maxDist0, 0.35 * hw0 + 120);
-      const maxDist = maxDist0 * (tier.scatterDistance ?? 1);
-      const batchByKey = new Map();
-      for (const k of keys) {
-        const M = this._mesh(k);
-        const B = { layer: L, maxDist, maxDist2: maxDist * maxDist, cells: new Map(), count: 0, collide: !!L.collide, castShadow: !!(L.castShadow ?? false) };
-        M.batches.push(B); batchByKey.set(k, B);
-        if (B.castShadow && tier.name !== 'low' && M.type.castShadow !== false) M.shadow = true;
+      const LC = this._layerCtx(li, this.layers[li]);
+      if (!LC) continue;
+      if (LC.cover) {
+        // ground cover (no colliders, ≤ 150 m): generated per 64 m cell as cells come into range (refill), from a
+        // per-cell seed, so it is deterministic and costs nothing at load
+        LC.done = new Set();
+        for (const B of LC.batchByKey.values()) B.lazy = LC;
+        this._lazy.push(LC);
+        continue;
       }
-      // region: the route's bounding box grown by the corridor plus margin
+      // the whole level, deterministically: a jittered grid sized from the layer density
+      const L = LC.L, rng = mulberry32(LC.seed);
+      const cl = L.cluster && L.cluster.count > 1 ? { size: Math.max(1, L.cluster.size || 10), count: Math.round(L.cluster.count) } : null;
+      const cs = Math.sqrt(10000 / (cl ? LC.density / cl.count : LC.density));
       let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
       for (const p of this.route.points) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); }
-      const grow = hw0 * 1.1 + margin;
+      const grow = LC.hw0 * 1.1 + LC.margin;
       x0 = Math.floor((x0 - grow) / cs) * cs; z0 = Math.floor((z0 - grow) / cs) * cs; x1 += grow; z1 += grow;
       const nxc = Math.ceil((x1 - x0) / cs), nzc = Math.ceil((z1 - z0) / cs);
-      const tryPlace = (x, z) => {
-        const r1 = rng(), r2 = rng(), r3 = rng(), r4 = rng(), r5 = rng(), r6 = rng();
-        this.route.closestInto(x, z, _rc);
-        const hw = this.route.halfWidthAt(_rc.s);
-        if (_rc.dist > hw * (cover ? 1.0 : 1.1) + margin) return;
-        if (L.range && (_rc.s < L.range[0] || _rc.s > L.range[1])) return;
-        if (L.routeBand && (Math.abs(_rc.dist) < L.routeBand[0] || Math.abs(_rc.dist) > L.routeBand[1])) return;
-        if (L.avoidRoute && _rc.dist < bedHalf + 14) return;
-        this.hf.bakeAt(x, z, _bk);
-        const sl = _bk.slope >= 0 ? _bk.slope : this.hf.slopeAt(x, z);
-        if (sl < slope[0] || sl > slope[1]) return;
-        if (L.surface && L.surface !== 'any') {
-          const su = this.hf.surfaceAt(x, z);
-          if (L.surface === 'rock' && su.rock < 0.5) return;
-          if (L.surface === 'sediment' && su.sediment < 0.35) return;
-          if (L.surface === 'flat' && sl > 0.06) return;
-        }
-        // rocks gather at slope breaks, in gullies and on steep ground; they thin out on open flats (AD §3.8)
-        if (isRock && !cover) {
-          const pref = clamp(0.3 + sl * 2.2 + _bk.flow * 0.8, 0, 1);
-          if (r6 > pref) return;
-        }
-        // power-law scale for rocks (many small, few big)
-        const t = isRock ? r1 * r1 * r1 : r1;
-        const s = lerp(sc[0], sc[1], t);
-        const r = spec.radius * s;
-        if (this._excluded(x, z, r)) return;
-        const gy = this.hf.heightAt(x, z);
-        if (gy < hr[0] || gy > hr[1]) return;
-        this.hf.normalAt(x, z, _n);
-        _q.setFromAxisAngle(_up, r2 * TAU);
-        _q2.setFromUnitVectors(_up, _n);
-        _q2.slerp(_q.identity(), 1 - align);
-        _q.setFromAxisAngle(_up, r2 * TAU);
-        _q.premultiply(_q2);
-        const y = gy - sink * spec.height * s;
-        _p.set(x, y, z); _s.set(s, s, s);
-        _m.compose(_p, _q, _s);
-        const key = keys[Math.floor(r3 * keys.length) % keys.length];
-        const B = batchByKey.get(key);
-        const ck = ckey(Math.floor(x / CELL), Math.floor(z / CELL));
-        let arr = B.cells.get(ck);
-        if (!arr) { arr = []; B.cells.set(ck, arr); }
-        const tint = 0.86 + 0.28 * r4;
-        arr.push(..._m.elements, tint, x, z);
-        B.count++;
-        if (L.collide && s >= (L.collideMinScale ?? sc[0]) && spec.collider) {
-          const col = this.ctx.collision;
-          if (col) {
-            const top = gy + spec.height * s * 0.7;
-            const c = spec.collider === 'box'
-              ? col.obox(x, z, r * 1.7, r * 1.7, r2 * TAU, top, undefined, { surface: isRock ? 'rock' : 'concrete', tag: 'prop', owner: this })
-              : col.circle(x, z, r * 0.85, top, undefined, { surface: isRock ? 'rock' : (spec.kind === 'wood' ? 'wood' : 'concrete'), tag: 'prop', owner: this });
-            this.colliders.push(c);
-          }
-        }
-        void r5;
-      };
       for (let j = 0; j < nzc; j++) {
         for (let i = 0; i < nxc; i++) {
           const cx = x0 + (i + rng()) * cs, cz = z0 + (j + rng()) * cs;
-          if (!cl) tryPlace(cx, cz);
+          if (!cl) this._tryPlace(LC, rng, cx, cz);
           else for (let c = 0; c < cl.count; c++) {
             const a = rng() * TAU, d = cl.size * Math.sqrt(rng()) * 0.7;
-            tryPlace(cx + Math.cos(a) * d, cz + Math.sin(a) * d);
+            this._tryPlace(LC, rng, cx + Math.cos(a) * d, cz + Math.sin(a) * d);
           }
         }
         if (performance.now() - tLast > 40) {
@@ -539,22 +560,27 @@ export class Scatter {
           tLast = performance.now();
         }
       }
-      for (const B of batchByKey.values()) for (const [k, arr] of B.cells) B.cells.set(k, Float32Array.from(arr));
+      for (const B of LC.batchByKey.values()) for (const [k, arr] of B.cells) B.cells.set(k, Float32Array.from(arr));
     }
     // meshes: capacity from the densest visible disc
     for (const M of this.meshes.values()) {
       let total = 0, est = 0;
       for (const B of M.batches) {
+        const cellsIn = Math.PI * (B.maxDist / CELL + 0.5) ** 2;
+        if (B.lazy) {
+          // the layer's density over the disc, shared by its variants, with headroom for clustering
+          total += 1;
+          est += Math.ceil(B.lazy.density * B.lazy.tierDens * cellsIn * CELL * CELL / 10000 / B.lazy.keys.length * 1.6) + 32;
+          continue;
+        }
         total += B.count;
-        // instances inside one maxDist disc: the layer's density over the disc (+ one cell), shared by its variants,
-        // with headroom for clustering and the rock preference
-        const nv = Math.max(1, this._types(B.layer.prop).length);
-        est += Math.min(B.count, Math.ceil((Number(B.layer.density) || 0) * (this.tier.scatterDensity ?? 1)
-          * Math.PI * (B.maxDist + CELL) ** 2 / 10000 / nv * 1.6) + 32);
+        // instances inside one maxDist disc: the mean count of the populated 64 m cells over the disc (+ half a cell),
+        // with headroom for clustering and the rock preference (the fill drops the farthest instances beyond it)
+        est += Math.min(B.count, Math.ceil(B.count / Math.max(1, B.cells.size) * cellsIn * 1.5) + 32);
       }
       M.total = total;
       const maxI = M.type.maxInstances ?? Infinity;
-      M.cap = Math.max(1, Math.min(total, est, maxI));
+      M.cap = Math.max(1, Math.min(M.batches.some(B => B.lazy) ? Infinity : total, est, maxI));
       if (!total) continue;
       const inst = new THREE.InstancedMesh(M.type.geometry, M.type.material, M.cap);
       inst.name = 'scatter:' + M.key;
@@ -581,10 +607,39 @@ export class Scatter {
       }
     }
     this._stats.types = [...this.meshes.values()].filter(M => M.total > 0).length;
-    this._stats.instances = [...this.meshes.values()].reduce((a, M) => a + M.total, 0);
+    this._countInstances();
     this._stats.colliders = this.colliders.length;
     this.genMs = performance.now() - t0;
     onProgress?.(1);
+  }
+  _countInstances() {
+    let n = 0;
+    for (const M of this.meshes.values()) for (const B of M.batches) n += B.count;
+    this._stats.instances = n;
+  }
+  /** generate the lazy ground-cover cells within range of (fx, fz) */
+  _fillLazy(fx, fz) {
+    let added = false;
+    for (const LC of this._lazy || []) {
+      const R = Math.ceil(LC.maxDist / CELL), ci = Math.floor(fx / CELL), cj = Math.floor(fz / CELL), md2 = (LC.maxDist + CELL) ** 2;
+      // a jittered grid of sub-cells inside each 64 m cell, each holding a candidate with the right probability
+      const nsub = Math.max(1, Math.round(CELL / Math.sqrt(10000 / LC.density))), sub = CELL / nsub, pc = LC.density * sub * sub / 10000;
+      for (let j = cj - R; j <= cj + R; j++) for (let i = ci - R; i <= ci + R; i++) {
+        const key = ckey(i, j);
+        if (LC.done.has(key)) continue;
+        const ddx = Math.max(i * CELL - fx, 0, fx - (i + 1) * CELL), ddz = Math.max(j * CELL - fz, 0, fz - (j + 1) * CELL);
+        if (ddx * ddx + ddz * ddz > md2) continue;
+        LC.done.add(key);
+        const rng = mulberry32(LC.seed ^ Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1));
+        for (let b = 0; b < nsub; b++) for (let a = 0; a < nsub; a++) {
+          const x = (i * CELL) + (a + rng()) * sub, z = (j * CELL) + (b + rng()) * sub;
+          if (rng() < pc) this._tryPlace(LC, rng, x, z); else { rng(); rng(); rng(); rng(); rng(); rng(); }
+        }
+        for (const B of LC.batchByKey.values()) { const arr = B.cells.get(key); if (Array.isArray(arr)) B.cells.set(key, Float32Array.from(arr)); }
+        added = true;
+      }
+    }
+    if (added) this._countInstances();
   }
   update(focus) {
     if (!focus) return;
@@ -597,6 +652,7 @@ export class Scatter {
     this._calls = 0;
     this._lastFocus.copy(focus);
     const fx = focus.x, fz = focus.z;
+    this._fillLazy(fx, fz);
     const shadowR = (this.ctx.tier?.shadowExtent ?? 160) * 1.2, shadowR2 = shadowR * shadowR;
     let visible = 0;
     for (const M of this.meshes.values()) {

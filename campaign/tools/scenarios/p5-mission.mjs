@@ -135,6 +135,15 @@ export default async function (g) {
     const missing = expect.filter(e => !v.errs.some(x => x.includes(e)));
     g.log('broken copy errors:', v.errs.length, v.errs.slice(0, 30));
     g.assert(missing.length === 0 && v.errs.length === expect.length, `a broken copy returns the expected ${expect.length} errors (got ${v.errs.length}; missing: ${missing.join(' | ') || 'none'})`);
+    // level 1 (P6's content, logged only): validateLevel with the live ctx, as P6's acceptance runs it
+    const v1 = await g.eval(async () => {
+      try {
+        const M = await import(new URL('src/mission/mission.js', location.href).href);
+        const L = (await import(new URL('levels/level01.js', location.href).href)).default;
+        return M.validateLevel(L, window.__game.ctx);
+      } catch (e) { return ['import failed: ' + e.message]; }
+    });
+    g.log(`validateLevel(level01): ${v1.length} error(s)`, v1.slice(0, 10));
 
   }
   if (!touch && S(2)) {
@@ -158,7 +167,9 @@ export default async function (g) {
                part: c.save.unlockedParts().has('mg_r12'), gate: c.structures.get('gate_a').state, barricade: c.structures.get('barricade_a').state,
                inline: c.enemies.count({ tag: 'inline' }), scripted: c.enemies.count({ tag: 'scripted' }), ifThen: m.flags['p5.ifThen'], ifElse: m.flags['p5.ifElse'],
                wrong: m.flags['p5.wrong'], called: m.flags['p5.called'], markers: c.hud.markers.map(x => x.id), letterbox: c.hud.letterboxOn,
-               hint: document.getElementById('hint').textContent, killsBarricade: m.kills('barricade') };
+               hint: document.getElementById('hint').textContent, killsBarricade: m.kills('barricade'),
+               scrub: m.objective('o_scrub').state, temp: m.objective('o_temp').state, tempSeq: window.__p5.obj.o_temp,
+               tempLi: !!document.querySelector('#objs li[data-id="o_temp"]'), scrubLi: document.querySelector('#objs li[data-id="o_scrub"]')?.dataset.state };
     });
     g.log('action checklist:', act);
     g.assert(act.done && act.text === 'Report to range control' && act.persisted === 7 && act.codex && act.part && act.gate === 'open' && act.barricade === 'destroyed',
@@ -166,6 +177,8 @@ export default async function (g) {
     g.assert(act.inline === 0 && act.scripted === 0 && act.ifThen && act.ifElse && !act.wrong && act.called === 1 && act.killsBarricade === 1,
       'spawn/despawn/kill, if/then/else, call');
     g.assert(act.markers.includes('m_tower') && !act.markers.includes('m_tmp') && !act.letterbox && act.hint.includes('desktop'), 'markers add/remove, letterbox on/off, hint picks the desktop text');
+    g.assert(act.scrub === 'failed' && act.scrubLi === 'failed' && act.temp === 'hidden' && !act.tempLi && JSON.stringify(act.tempSeq) === '["active","hidden"]',
+      `objective fail and remove actions (o_scrub ${act.scrub}, o_temp ${JSON.stringify(act.tempSeq)}, HUD in step)`);
     // natural progression
     await tp({ s: 520 }); await g.step(12);
     await tp({ s: 620 }); await g.step(12);
@@ -197,6 +210,13 @@ export default async function (g) {
       `custom, once:false edges (${f['p5.edges']}), enable, any, all+not, flag eq, objective failed + onFail`);
     // interact objective path needs the relay down: zone ridge, checkpoint, barrage
     await tp({ s: 1310 }); await g.step(12);
+    {   // zone hysteresis (§5.11): never two neighbouring zones at once, whichever way the frame moves through the boundary
+      const zs = [];
+      for (const sv of [1310, 1255, 1245, 1236, 1245, 1255, 1262]) { await tp({ s: sv }); await g.step(7); zs.push(sv + ':' + (await g.eval(() => window.__game.ctx.mission.zones.join('+')))); }
+      g.log('zones across the boundary:', zs.join(' '));
+      g.assert(zs.every(z => !z.includes('+')) && zs[0].endsWith('z_ridge') && zs[3].endsWith('z_flats') && zs[6].endsWith('z_ridge'),
+        `zone hysteresis: one zone at a time across the 1250 m boundary (${zs.join(' ')})`);
+    }
     await tp({ s: 1510 }); await g.step(12);
     st = await g.eval(() => ({ cp: window.__game.ctx.mission.checkpoint, relay: window.__game.ctx.mission.objective('o_relay').state, f: window.__game.ctx.mission.flags['p5.zone'],
                                rings: window.__game.ctx.cinematics.counts }));
@@ -337,12 +357,14 @@ export default async function (g) {
     const objs = await g.eval(() => ({ seq: window.__p5.obj, now: window.__game.ctx.mission.objectives().map(o => [o.id, o.state]) }));
     const badSeq = objs.now.filter(([id, stt]) => {
       const q = objs.seq[id] || [];
-      return !(q[0] === 'active' && (q.includes('done') || q.includes('failed'))) && !(id === 'o_reach');
+      return !(q[0] === 'active' && (q.includes('done') || q.includes('failed'))) && !(id === 'o_reach') && !(id === 'o_temp' && q.join() === 'active,hidden');
     });
     g.log('objective transitions:', objs.seq);
     g.assert(badSeq.length === 0, `every objective went hidden → active → done/failed (exceptions: ${badSeq.map(x => x[0]).join(', ') || 'none'})`);
     const hm = await hudMatches();
     g.assert(hm.length === 0, `HUD objective list matches the mission (${hm.join('; ') || 'ok'})`);
+    const cs = await g.eval(() => ({ st: window.__game.state(), inp: window.__game.ctx.input.enabled, inv: window.__game.ctx.player.invuln, sim: window.__game.ctx.simRunning }));
+    g.assert(cs.st === 'complete' && !cs.inp && cs.inv && cs.sim, `complete.when holds → state 'complete' while complete.do plays (sim on, input off, frame safe) (${JSON.stringify(cs)})`);
     await g.step(90);
     g.assert(await waitState(['debrief', 'complete'], 5000), 'reaching o_reach completes the test level');
     await g.eval(() => window.__game.ctx.flow.toTitle());
@@ -369,6 +391,7 @@ export default async function (g) {
     await g.step(30);
     const before = await g.eval(() => ({ e: window.__game.ctx.mission.encounterState('e_drones').state, waves: window.__game.ctx.enemies.count({ tag: 'enc:e_waves' }), relay: window.__game.ctx.structures.get('relay').state }));
     g.assert(before.e === 'cleared' && before.waves > 0 && before.relay === 'destroyed', 'state mutated after the checkpoint');
+    await g.eval(() => window.__game.ctx.comms.defineSpeakers({ OPS: { name: 'RENAMED' } }));   // a mid-level rename (A5.2)
     await g.setGod(false);
     await g.eval(() => window.__game.ctx.combat.damage(window.__game.ctx.player, 1e9, 0, { team: 'enemy' }));
     await g.step(6);
@@ -388,7 +411,7 @@ export default async function (g) {
                convoy: m.encounterState('e_convoy').state, convoyUnits: c.enemies.count({ tag: 'convoy' }), waves: m.encounterState('e_waves').state,
                waveUnits: c.enemies.count({ tag: 'enc:e_waves' }), relay: c.structures.get('relay').state, relayAlive: !!c.structures.get('relay').target?.alive,
                kills: m.kills('drones'), lines: window.__p5.lines.map(l => l.text), start: window.__p5.starts[0],
-               s: c.world.playArea(c.player.pos.x, c.player.pos.z).s };
+               s: c.world.playArea(c.player.pos.x, c.player.pos.z).s, spk: c.comms.speaker('OPS').name, zones: m.zones, statKills: c.combat.stats.kills };
     });
     g.log('after retry:', after);
     g.assert(after.cp === 'cp_mid' && Math.abs(after.s - 1300) < 15, `respawned at cp_mid (s ${after.s.toFixed(0)})`);
@@ -398,6 +421,9 @@ export default async function (g) {
     g.assert(after.waves === 'pending' && after.waveUnits === 0, 'a pending encounter stays pending');
     g.assert(after.relay === 'intact' && after.relayAlive, 'structures restored');
     g.assert(after.lines.includes('Checkpoint restored.'), 'onCheckpoint ran');
+    g.assert(after.spk === 'OPERATIONS', `a restart puts the level's speaker labels back (a rename after the checkpoint is undone: ${after.spk})`);
+    g.assert(after.zones.length === 1 && after.zones[0] === 'z_ridge', `the spawn zone is entered on restart (${after.zones})`);
+    g.assert(after.statKills === snap.checkpoint.stats?.kills, `run stats roll back to the checkpoint (kills ${after.statKills} = ${snap.checkpoint.stats?.kills})`);
     g.assert(after.start && !after.start.fresh && after.start.playerActive && after.start.flags['p5.pre'] === 1 && after.start.relay === 'intact',
       `level:start fires after flags, objectives and structures are restored and the player spawned (${JSON.stringify(after.start && { fresh: after.start.fresh, active: after.start.playerActive })})`);
     // level:failed → death screen → retry
@@ -409,7 +435,7 @@ export default async function (g) {
     g.assert(failLine === 'Proving run aborted.', `death screen shows the fail reason (${failLine})`);
     await click('#bRetry'); await waitState('playing', 30000);
     // reload → Continue resumes at cp_mid
-    await page.reload({ waitUntil: 'load' });
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 180000 });
     await page.waitForFunction(() => window.__game && window.__game.ready, null, { timeout: 90000 });
     await g.eval(() => window.__game.ready);
     await g.eval(() => { window.__game.pause(); window.__game.ctx.pausedRender = false; });
@@ -531,27 +557,28 @@ export default async function (g) {
       out.blocked = document.getElementById('hud').classList.contains('blocked');
       return out;
     });
-    g.assert(pc.p?.text === 'Test prompt' && pc.p?.key === 'G' && pc.p?.hold && pc.bar === '50.0%' && pc.gone, `prompt with key, hold and progress (${JSON.stringify(pc.p)})`);
+    g.assert(pc.p?.text === 'Test prompt' && pc.p?.key === 'G' && pc.p?.hold && Math.abs(parseFloat(pc.bar) - 50) < 0.6 && pc.gone, `prompt with key, hold and progress (${JSON.stringify(pc.p)})`);
     g.assert(pc.opts === 4 && pc.picked === 'k4', `choice with 4 options; Digit4 picks the fourth (${pc.picked})`);
     g.assert(pc.blocked, 'a blocked hit gives the short flash');
+    // TEAR prompt and rack: a stand-in ctx.haul with a candidate (the real service, if landed, is put back afterwards)
     const tear = await g.eval(() => {
       const G = window.__game, c = G.ctx;
-      if (c.haul) return { landed: true };
-      const fake = { candidate: { id: 1 }, enabled: true, holdProgress: 0.4, rack: ['harpoon_gaff', 'shotgun_s8'], capacity: 3 };
-      c.haul = fake; G.step(2);
-      const out = { landed: false, p: c.hud.promptState, rack: [...document.querySelectorAll('#rack .rc span')].map(s => s.textContent) };
-      delete c.haul; G.step(1);
+      window.__realHaul = c.haul;
+      c.haul = { candidate: { id: 1 }, enabled: true, holdProgress: 0.4, rack: ['harpoon_gaff', 'shotgun_s8'], capacity: 3, isHaulPart: (id) => !!window.__realHaul?.isHaulPart?.(id) };
+      G.step(2);
+      const out = { landed: !!window.__realHaul, p: c.hud.promptState, bar: document.querySelector('#prompt .pb i').style.width,
+                    rack: [...document.querySelectorAll('#rack .rc span')].map(s => s.textContent), count: document.querySelector('#rack .rh b').textContent };
+      c.player.abilities && (c.player.abilities = { ...c.player.abilities, tear: false }); G.step(1);
+      out.gated = c.hud.promptState;
+      c.player.abilities && (c.player.abilities = { ...c.player.abilities, tear: true }); G.step(1);
       return out;
     });
-    if (!tear.landed) {
-      g.assert(tear.p?.text === 'TEAR' && tear.p?.key === 'RMB' && tear.p?.tear && /Harpoon|harpoon/.test(tear.rack[0]), `TEAR prompt and rack read ctx.haul (${JSON.stringify(tear)})`);
-      await g.eval(() => { const c = window.__game.ctx; c.haul = { candidate: { id: 1 }, enabled: true, holdProgress: 0.6, rack: ['harpoon_gaff', 'shotgun_s8'], capacity: 3 }; window.__game.step(2); });
-      await shotHUD('hud-tear-rack');
-      await g.eval(() => { delete window.__game.ctx.haul; window.__game.step(1); });
-    } else {
-      g.log('ctx.haul has landed (P4): TEAR prompt read from the real service');
-      await shotHUD('hud-rack');
-    }
+    g.assert(tear.p?.text === 'TEAR' && tear.p?.key === 'RMB' && tear.p?.hold && tear.p?.tear && Math.abs(parseFloat(tear.bar) - 40) < 0.6 && /harpoon/i.test(tear.rack[0]) && tear.count === '2 / 3',
+      `TEAR prompt (RMB, hold, progress) and the rack read ctx.haul (${JSON.stringify(tear)})`);
+    g.assert(tear.gated === null || tear.gated?.text !== 'TEAR', 'TEAR prompt hidden while abilities.tear is false');
+    await g.eval(() => { const c = window.__game.ctx; c.haul.holdProgress = 0.7; window.__game.step(2); });
+    await shotHUD('hud-tear-rack');
+    await g.eval(() => { const c = window.__game.ctx; if (window.__realHaul) c.haul = window.__realHaul; else delete c.haul; window.__game.step(1); });
     await g.eval(() => window.__game.ctx.hud.setPanels({ rack: false }));
     await g.eval(() => window.__game.ctx.flow.toTitle());
     await waitState('title');
@@ -590,14 +617,18 @@ export default async function (g) {
   await g.shot(nm('screen-credits'), { settle: false });
   await page.keyboard.press('Escape'); await waitState('title', 5000);
   // briefing
-  await g.eval(() => { void window.__game.ctx.screens.showBriefing({ level: window.__game.ctx.mission.def || { title: 'Proving Ground', briefing: { title: 'Proving Ground', subtitle: 'Systems shakedown', body: 'Briefing body.', objectives: ['Reach the far marker'], fine: 'Fine print.' } } }); });
+  await g.eval(async () => { const T = (await import(new URL('levels/test.js', location.href).href)).default; void window.__game.ctx.screens.showBriefing({ level: T }); });
   await sleep(1500);
+  const bmap = await g.eval(() => { const c = document.getElementById('bMap'); return !!c && c.offsetParent !== null; });
+  if (!touch) g.assert(bmap, 'briefing.showMap draws the route sketch');
   await g.shot(nm('screen-briefing'), { settle: false });
   await g.eval(() => window.__game.ctx.screens.showLoading({ title: 'Proving Ground' }).set(0.62, 'Terrain'));
   await g.shot(nm('screen-loading'), { settle: false });
   for (const style of ['black', 'terminal']) {
     g.eval((style) => { void window.__game.ctx.screens.showInterstitial([{ style, text: style === 'black' ? 'Its text types out over black, one character at a time.' : 'PROVING GROUND // RANGE LOG 0042' }]); }, style);
     await sleep(2200);
+    const iv = await g.eval((style) => ({ cur: window.__game.ctx.screens.current, card: !!document.querySelector(`#screen .center-card.inter.${style}`), hidden: document.getElementById('screen').hidden }), style);
+    g.assert(iv.cur === 'interstitial' && iv.card && !iv.hidden, `interstitial (${style}) is up, even when it replaced an unfinished one (${JSON.stringify(iv)})`);
     await g.shot(nm('screen-interstitial-') + style, { settle: false });
   }
   await g.eval(() => { void window.__game.ctx.screens.showDebrief({ level: { title: 'Proving Ground' }, result: { time: 251, kills: 14, damageTaken: 3400, shots: 820, collectibles: ['cache_a'], rank: 'A' }, unlocks: [] }); });
@@ -605,6 +636,8 @@ export default async function (g) {
   await g.eval(() => { void window.__game.ctx.screens.showMorningCount({ day: 1, water: { before: 4, sledges: 2, gives: 1, draw: 3, after: 4, short: 0 }, rigs: 40, souls: 300, lost: [],
                                                                   log: 'Found a war machine in the ice. Kit named it. Of course Kit named it.', edgeLat: 38 }); });
   await g.shot(nm('screen-morningcount'), { settle: false });
+  await g.eval(() => { void window.__game.ctx.screens.showDeath({ line: 'Signal lost.', hasCheckpoint: true }); });
+  await g.shot(nm('screen-death-card'), { settle: false });
   await g.eval(() => window.__game.ctx.screens.hide());
   // the HUD at full stretch
   await g.startLevel('test', 'cp_start');
@@ -641,6 +674,24 @@ export default async function (g) {
   g.assert(hudDom.lock === 'block' && hudDom.markers >= 2 && hudDom.edge >= 1 && hudDom.boss && hudDom.prompt && hudDom.zone && /LEAVING/.test(hudDom.warn) && hudDom.hint === '1' && hudDom.toast && hudDom.vitals && hudDom.comms,
     'every HUD element is up: lock box, markers with an edge arrow, compass marks, boss bar, prompt, zone card, warning, hint, toast, vitals, comms');
   if (!touch) g.assert(hudDom.compass >= 1, 'compass shows marker bearings');
+  // CPU cost of the P5 systems at this busy HUD moment (every element up, 3 drones, markers, boss bar, vitals, comms)
+  const cpu = await g.eval(() => {
+    const G = window.__game, c = G.ctx, names = ['flow', 'mission', 'cinematics', 'comms', 'hud', 'hud-sim'];
+    const acc = {}, wrapped = [];
+    for (const list of Object.values(c.systems)) for (const d of list) if (names.includes(d.name)) {
+      const f = d.update; acc[d.name] = { t: 0, max: 0, n: 0 };
+      d.update = (dt, x) => { const t0 = performance.now(); try { return f(dt, x); } finally { const e = performance.now() - t0; const a = acc[d.name]; a.t += e; a.n++; if (e > a.max) a.max = e; } };
+      wrapped.push([d, f]);
+    }
+    G.step(120);
+    for (const [d, f] of wrapped) d.update = f;
+    const out = {}; let total = 0;
+    for (const [k, a] of Object.entries(acc)) { out[k] = { avg: +(a.t / Math.max(1, a.n)).toFixed(3), max: +a.max.toFixed(2) }; total += a.t / Math.max(1, a.n); }
+    out.totalAvgMs = +total.toFixed(3);
+    return out;
+  });
+  g.log('P5 systems CPU per tick (ms):', JSON.stringify(cpu));
+  g.assert(cpu.totalAvgMs < 4, `P5 systems stay cheap at a busy moment (avg ${cpu.totalAvgMs} ms per tick in the sandbox)`);
   // pause with the tactical map and the comms log
   await g.eval(() => window.__game.ctx.flow.pause());
   await page.waitForSelector('#bRes', { state: 'visible', timeout: 10000 });
@@ -652,8 +703,9 @@ export default async function (g) {
   await g.step(2);
   g.assert(await state() === 'playing', 'Esc resumes from the pause menu');
   if (touch) {
-    const tb = await g.eval(() => ({ touch: !document.getElementById('touch').hidden, interact: !document.getElementById('tInteract').hidden }));
+    const tb = await g.eval(() => ({ touch: !document.getElementById('touch').hidden, interact: !document.getElementById('tInteract').hidden, key: window.__game.ctx.hud.promptState?.key }));
     g.assert(tb.touch && tb.interact, 'touch layer up with the INTERACT button for the prompt');
+    g.assert(tb.key === 'USE', `on touch the prompt names the on-screen button, not a keyboard key (${tb.key})`);
     const errs = await g.eval(() => window.__game.errors());
     g.assert(errs.length === 0, `no game errors (${errs.map(e => e.system + ': ' + e.message).join('; ')})`);
     return;

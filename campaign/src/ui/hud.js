@@ -33,13 +33,15 @@ const HUD_CSS = `
 #hud.cine>*:not(#vignette):not(#glitch):not(#scan){opacity:0!important;transition:opacity .35s}
 #hud>*{transition:opacity .35s}
 #game.cine #touch .tb:not(#tSkip):not(#tPause){opacity:0;pointer-events:none}
+#touch #tSkip,#touch #tPause{z-index:3}
+#game.touch #prompt kbd:not([hidden]):not(:empty){display:inline-block;font-size:10px;letter-spacing:.12em;color:var(--en);border-color:var(--en)}
 #objpanel .mrow{display:flex;gap:10px;align-items:baseline}
 #objs li{transition:opacity .6s,color .4s}
 #objs li .pg{font-family:var(--f-mono);font-size:13px;letter-spacing:0;color:var(--hud-dim);margin-left:2px}
 #objs li .tg{font-size:10px;letter-spacing:.2em;color:var(--hud-dim);border:1px solid var(--hud-faint);padding:0 4px;transform:translateY(-2px)}
 #objs li.new{animation:hudObjIn 1.8s ease-out}
 #objs li.new::before{animation:hudObjDot 1.8s ease-out}
-@keyframes hudObjIn{0%{opacity:0;transform:translateX(-10px)}10%{opacity:1;transform:none;color:var(--accent)}55%{color:var(--accent)}100%{color:var(--hud)}}
+@keyframes hudObjIn{0%{opacity:.35;transform:translateX(-10px)}10%{opacity:1;transform:none;color:var(--accent)}55%{color:var(--accent)}100%{color:var(--hud)}}
 @keyframes hudObjDot{0%,55%{background:var(--accent);border-color:var(--accent)}}
 #objs li.done{animation:hudObjDone 1.2s ease-out}
 @keyframes hudObjDone{0%{color:var(--ok)}100%{color:var(--hud-dim)}}
@@ -81,7 +83,9 @@ const HUD_CSS = `
 #choice .opt{display:flex;align-items:center;gap:0;font-family:var(--f-display);color:var(--hud);transition:border-color .15s,background .15s}
 #choice .opt:hover,#choice .opt.pick{border-color:var(--accent);background:rgba(224,145,60,.18)}
 #choice .opt.pick{color:var(--accent)}
-#choice .t{text-shadow:0 0 14px rgba(255,91,46,.35)}
+#choice{padding:16px 26px 20px;box-sizing:border-box;background:radial-gradient(closest-side,rgba(8,8,10,.76),rgba(8,8,10,.5) 58%,rgba(8,8,10,0))}
+#choice .t{color:#ff7a52;text-shadow:0 1px 2px rgba(0,0,0,.85),0 0 16px rgba(255,91,46,.35)}
+#choice .opt{background:rgba(12,11,14,.8)}
 #weapons .wpn{transition:background .3s}
 #weapons .wpn.off .wn{text-decoration:line-through;text-decoration-thickness:1px;color:var(--hud-dim)}
 #weapons .wpn.off .wv{color:var(--hud-dim);font-size:11px;letter-spacing:.14em}
@@ -102,7 +106,7 @@ const HUD_CSS = `
 #rack .rh{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.24em;color:var(--hud-dim);border-bottom:1px solid var(--hud-faint);padding-bottom:4px}
 #rack .rh b{font-family:var(--f-mono);font-weight:500;letter-spacing:.04em;color:var(--accent)}
 #rack .rs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
-#rack .rc{display:flex;align-items:center;gap:7px;min-width:0;height:24px;padding:0 8px;border:1px solid var(--hud-faint);background:rgba(12,11,14,.35);font-size:13px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+#rack .rc{display:flex;align-items:center;gap:6px;min-width:0;height:24px;padding:0 6px;border:1px solid var(--hud-faint);background:rgba(12,11,14,.35);font-size:12px;letter-spacing:.03em;text-transform:uppercase;white-space:nowrap}
 #rack .rc i{flex:none;width:7px;height:7px;border-radius:50%;background:#ffbf4a;box-shadow:0 0 8px #ffbf4a}
 #rack .rc span{overflow:hidden;text-overflow:ellipsis}
 #rack .rc.empty{color:var(--hud-faint)}
@@ -122,7 +126,20 @@ const HUD_CSS = `
 #game.touch #vitals{right:calc(100% + 10px);width:84px}
 #game.touch #vitals canvas{width:84px;height:22px}
 #game.touch #vitals .bpm{font-size:16px}
-#game.touch #rack{right:calc(14px + var(--safe-r));top:124px;bottom:auto;width:min(300px,36vw)}
+#zonecard{top:15.5%}
+#game.touch #rack{left:calc(14px + var(--safe-l));right:auto;top:auto;bottom:170px;width:min(300px,36vw)}
+#game.touch #mname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#game.touch #objpanel{max-width:33vw}
+#game.touch #objs li{flex-wrap:wrap;column-gap:6px;row-gap:0;line-height:1.25}
+#game.touch #bossbar{top:72px}
+#game.touch #zonecard{top:25%}
+#game.touch #zonecard .t{font-size:28px}
+#game.touch #zonecard .s{font-size:11px}
+#game.touch #warn{top:37%}
+#game.touch #prompt{top:calc(50% + 40px)}
+#game.touch #hint{bottom:84px}
+#game.touch #progress{top:calc(50% + 84px)}
+#game.touch #tInteract{right:calc(262px + var(--r));bottom:150px}
 #game.touch #rack .rc{font-size:11px;padding:0 5px;height:20px}
 #game.touch #cineSkip{display:none}
 @media (max-width:760px){#rack{width:260px;bottom:150px}#vitals{display:none}}
@@ -395,10 +412,20 @@ export function install(ctx) {
     for (let i = 0; i < rackCells.length; i++) {
       const c = rackCells[i], id = rack[i];
       toggle(c, 'empty', !id);
+      if (!id) c.classList.remove('in');
       setText(c.querySelector('span'), id ? partName(id) : '—');
       c.title = id || '';
       if (id && i >= before && i < rack.length) { c.classList.remove('in'); void c.offsetWidth; c.classList.add('in'); }
     }
+  }
+  /** the key cap a prompt shows: keyboard keys on desktop; on touch the on-screen button that does it (interact → the
+   *  USE button), or none (TEAR: the BLADE button itself is relabelled TEAR) */
+  const TOUCH_KEYS = { F: 'USE', E: 'LOCK', R: 'KIT', Q: 'MSL', G: '', RMB: '', LMB: 'FIRE', SPACE: 'JUMP', SHIFT: 'BOOST' };
+  function promptKey(k) {
+    const key = k == null ? 'F' : String(k);
+    if (!ctx.input?.isTouch) return key;
+    const t = TOUCH_KEYS[key.toUpperCase()];
+    return t !== undefined ? t : key;
   }
   function renderPrompt() {
     const h = ctx.haul, p = ctx.player;
@@ -410,10 +437,12 @@ export function install(ctx) {
       ctx.input?.showTouchButton?.('interact', false);
       return;
     }
-    const sig = `${cur.text}|${cur.key}|${cur.hold}|${!!cur.tear}`;
+    const key = promptKey(cur.key);
+    const sig = `${cur.text}|${key}|${cur.hold}|${!!cur.tear}`;
     if (sig !== shownPrompt) {
       shownPrompt = sig;
-      setText(pr.kbd, cur.key || 'F');
+      setText(pr.kbd, key);
+      if (pr.kbd) pr.kbd.hidden = !key;
       setText(pr.text, cur.text);
       setText(pr.hold, cur.hold ? 'HOLD' : '');
       toggle(el.prompt, 'tear', !!cur.tear);
@@ -492,7 +521,7 @@ export function install(ctx) {
     const rig = ctx.cameraRig, p = ctx.player;
     const W = ctx.canvas.clientWidth || innerWidth, H = ctx.canvas.clientHeight || innerHeight;
     const touch = ctx.input?.isTouch;
-    const mx = touch ? 70 : 56, top = touch ? 70 : 92, bot = touch ? 120 : 150;
+    const mx = touch ? 70 : 56, top = touch ? 128 : 168, bot = touch ? 120 : 190;   // clear of objectives/comms/radar/boss bar and weapons
     let n = 0;
     for (const m of markers) {
       if (!rig || !markerPos(m, _v)) continue;
@@ -723,7 +752,7 @@ export function install(ctx) {
     },
     /** prompt(text, { key = 'F', hold, progress }); the TEAR prompt (ctx.haul) shows over it */
     prompt(text, o = {}) {
-      basePrompt = text ? { text: String(text), key: o?.key || (ctx.input?.isTouch ? '' : 'F'), hold: !!o?.hold, progress: o?.progress ?? null } : null;
+      basePrompt = text ? { text: String(text), key: o?.key ?? 'F', hold: !!o?.hold, progress: o?.progress ?? null } : null;
       renderPrompt();
     },
     choice(def) {

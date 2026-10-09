@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import { isHostile } from './combat.js';
 
 const MAX_STEP = 1.5;
+// ground warning drape: polar columns, radial height rows, lift above the sampled ground, fill rows, start-size factor
+const WARN_SEG = 48, WARN_ROWS = 13, WARN_LIFT = 0.4, WARN_FILL_ROWS = 6, WARN_GROW = 1.15;
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _q = new THREE.Vector3(), _seg = new THREE.Vector3();
 const _c = new THREE.Vector3(), _w = new THREE.Vector3(), _cur = new THREE.Vector3(), _n = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _quat = new THREE.Quaternion(), _scl = new THREE.Vector3(), _fwd = new THREE.Vector3(0, 0, 1);
@@ -274,29 +276,39 @@ export function install(ctx) {
       }
       return n;
     },
-    /** extra: a pulsing ground ring that warns of an incoming strike (artillery, barrages). Returns { stop() }. */
+    /**
+     * extra: a pulsing ground ring that warns of an incoming strike (artillery, barrages). Returns { stop() }.
+     * The ring and its fill drape over the terrain (and low collider tops) instead of lying flat, so the whole ring
+     * reads on slopes: heights are sampled once per call on a polar grid and the per-frame tighten/grow animation
+     * interpolates them (no per-frame ground queries).
+     */
     groundWarning(pos, radius = 10, seconds = 2) {
       let w = warnings.find(x => !x.alive);
       if (!w) {
         if (warnings.length >= 32) w = warnings[0];
-        else {
-          const g = new THREE.RingGeometry(0.82, 1, 40, 1).rotateX(-Math.PI / 2); g.userData.shared = true;
-          const m = new THREE.Mesh(g, ctx.materials?.glow ? ctx.materials.glow(0xff3a20, 0.85)
-                                                       : new THREE.MeshBasicMaterial({ color: 0xff3a20, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-          const g2 = new THREE.CircleGeometry(1, 32).rotateX(-Math.PI / 2); g2.userData.shared = true;
-          const fill = new THREE.Mesh(g2, ctx.materials?.glow ? ctx.materials.glow(0xff2a10, 0.22)
-                                                              : new THREE.MeshBasicMaterial({ color: 0xff2a10, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
-          m.add(fill); m.name = 'groundWarning'; m.renderOrder = 4; m.frustumCulled = false;
-          ctx.scene.add(m);
-          w = { mesh: m, fill, t: 0, dur: 0, r: 1, alive: false };
-          warnings.push(w);
+        else { w = makeWarning(); warnings.push(w); }
+      }
+      const C = ctx.collision;
+      const gh = C?.groundHeight ? C.groundHeight(pos.x, pos.z) : pos.y;
+      const cy = Math.max(gh, pos.y - 2);
+      const top = pos.y + 1;                       // collider tops up to ~2.6 m above the aim point count (a roof strike)
+      const rmax = radius * WARN_GROW;
+      for (let a = 0; a < WARN_SEG; a++) {
+        const ph = a / WARN_SEG * Math.PI * 2, ca = Math.cos(ph), sa = Math.sin(ph);
+        for (let j = 0; j < WARN_ROWS; j++) {
+          const rho = j / (WARN_ROWS - 1) * rmax, x = pos.x + ca * rho, z = pos.z + sa * rho;
+          let h = C?.supportHeight ? C.supportHeight(x, z, top) : C?.groundHeight ? C.groundHeight(x, z) : cy;
+          if (!Number.isFinite(h)) h = cy;
+          w.heights[a * WARN_ROWS + j] = h - cy;
         }
       }
-      const gh = ctx.collision?.groundHeight ? ctx.collision.groundHeight(pos.x, pos.z) : pos.y;
-      w.mesh.position.set(pos.x, Math.max(gh, pos.y - 2) + 0.35, pos.z);
+      w.rmax = rmax;
+      w.mesh.position.set(pos.x, cy, pos.z);
+      w.mesh.scale.setScalar(1);
       w.r = radius; w.t = 0; w.dur = seconds; w.alive = true; w.mesh.visible = true;
-      w.mesh.scale.setScalar(radius);
-      return { stop() { w.alive = false; w.mesh.visible = false; } };
+      const id = w.serial = (w.serial || 0) + 1;   // a stale handle must not stop the pooled ring's next use
+      drapeWarning(w, 0);
+      return { stop() { if (w.serial === id) { w.alive = false; w.mesh.visible = false; } } };
     },
     /** extra: live ground warnings */
     get warnings() { let n = 0; for (const w of warnings) if (w.alive) n++; return n; },
@@ -308,6 +320,48 @@ export function install(ctx) {
     get count() { return list.length; },
   };
 
+  // ground warnings: one ring + fill pair per pooled warning, each with its own geometry (draped per call)
+  function makeWarning() {
+    const g = new THREE.RingGeometry(0.82, 1, WARN_SEG, 1).rotateX(-Math.PI / 2); g.userData.shared = true;
+    const m = new THREE.Mesh(g, ctx.materials?.glow ? ctx.materials.glow(0xff3a20, 0.85)
+                                                 : new THREE.MeshBasicMaterial({ color: 0xff3a20, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const g2 = new THREE.RingGeometry(0, 1, WARN_SEG, WARN_FILL_ROWS).rotateX(-Math.PI / 2); g2.userData.shared = true;
+    const fill = new THREE.Mesh(g2, ctx.materials?.glow ? ctx.materials.glow(0xff2a10, 0.22)
+                                                        : new THREE.MeshBasicMaterial({ color: 0xff2a10, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false }));
+    m.add(fill); m.name = 'groundWarning'; m.renderOrder = 4; m.frustumCulled = false; fill.frustumCulled = false;
+    ctx.scene.add(m);
+    return { mesh: m, fill, ring: drapeInfo(g), disc: drapeInfo(g2), heights: new Float32Array(WARN_SEG * WARN_ROWS),
+             rmax: 1, t: 0, dur: 0, r: 1, alive: false };
+  }
+  /** per vertex of a flat unit ring in XZ: its unit offset, its radius and its polar column */
+  function drapeInfo(geo) {
+    const a = geo.attributes.position.array, n = a.length / 3;
+    const ux = new Float32Array(n), uz = new Float32Array(n), ur = new Float32Array(n), col = new Uint16Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = a[i * 3], z = a[i * 3 + 2], r = Math.hypot(x, z);
+      ux[i] = x; uz[i] = z; ur[i] = r;
+      let ph = Math.atan2(z, x); if (ph < 0) ph += Math.PI * 2;
+      col[i] = Math.round(ph / (Math.PI * 2) * WARN_SEG) % WARN_SEG;
+    }
+    return { geo, ux, uz, ur, col, n };
+  }
+  /** writes a ring of world radius R onto the sampled ground (polar table, linear between radial rows) */
+  function drape(w, d, R) {
+    const attr = d.geo.attributes.position, a = attr.array, H = w.heights, last = WARN_ROWS - 1;
+    for (let i = 0; i < d.n; i++) {
+      const fj = Math.min(last, d.ur[i] * R / w.rmax * last), j0 = Math.min(last - 1, Math.floor(fj)), f = fj - j0;
+      const b = d.col[i] * WARN_ROWS + j0;
+      a[i * 3] = d.ux[i] * R; a[i * 3 + 2] = d.uz[i] * R;
+      a[i * 3 + 1] = H[b] + (H[b + 1] - H[b]) * f + WARN_LIFT;
+    }
+    attr.needsUpdate = true;
+  }
+  function drapeWarning(w, k) {
+    // the ring tightens from 1.15 r to r and the fill grows from 0.2 to the ring as the strike lands
+    const R = w.r * (WARN_GROW - (WARN_GROW - 1) * k);
+    drape(w, w.ring, R);
+    drape(w, w.disc, R * (0.2 + 0.8 * k));
+  }
   function updateWarnings(dt) {
     for (const w of warnings) {
       if (!w.alive) continue;
@@ -316,8 +370,7 @@ export function install(ctx) {
       const k = w.t / w.dur;
       // the ring tightens and pulses faster as the strike lands
       const pulse = 0.5 + 0.5 * Math.sin(w.t * (8 + 16 * k));
-      w.mesh.scale.setScalar(w.r * (1.15 - 0.15 * k));
-      w.fill.scale.setScalar(0.2 + 0.8 * k);
+      drapeWarning(w, k);
       w.mesh.visible = pulse > 0.15 || k > 0.8;
     }
   }

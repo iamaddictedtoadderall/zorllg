@@ -348,10 +348,10 @@ export function genSmokeAtlas(cw, seed = 81) {
           D = sstep(1, 0.3, rr) * 0.8; H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))); B = n; break;
         }
         case 4: { const d = (r - 0.75) / 0.12; D = Math.exp(-d * d) * sstep(1, 0.92, r); H = 0.5; break; }
-        case 5: {   // dust clump: granular
-          const n = nC((u + 0.5) * 2 + 0.3, (v + 0.5) * 2 + 0.9), n2 = nB((u + 0.5) + 0.2, (v + 0.5) + 0.6);
-          const rr = r + (n2 - 0.5) * 0.7;
-          D = sstep(1, 0.35, rr) * (0.55 + 0.45 * sstep(0.3, 0.7, n)); H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.5 + n); B = n; break;
+        case 5: {   // dust clump: a soft, lumpy puff with a little grain inside (reads as dust, not sponge)
+          const n = nC((u + 0.5) * 0.9 + 0.3, (v + 0.5) * 0.9 + 0.9), n2 = nB((u + 0.5) * 0.6 + 0.2, (v + 0.5) * 0.6 + 0.6);
+          const rr = r + (n2 - 0.5) * 0.75;
+          D = sstep(1, 0.3, rr) ** 1.3 * (0.8 + 0.2 * n); H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.7 + 0.5 * n2); B = 0.35 + 0.3 * n; break;
         }
         case 6: { const a = Math.atan2(v, u), rr = r * (1 + 0.35 * Math.sin(a * 3 + 1) + 0.2 * Math.sin(a * 5)); D = sstep(0.75, 0.6, rr); H = 1 - rr; B = 0.3; break; }   // chip
         case 7: D = sstep(0.8, 0.55, r); H = Math.sqrt(Math.max(0, 1 - r * r)); break;   // flake

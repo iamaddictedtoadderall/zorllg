@@ -20,11 +20,35 @@ const RANK_TEXT = { S: 'Exemplary', A: 'Clean', B: 'Steady', C: 'Survived' };
 
 const SCREEN_CSS = `
 #screen{z-index:4}
+#screen .doc .actions{position:sticky;bottom:-24px;z-index:1;margin:22px calc(-1 * clamp(18px,3vw,34px)) -28px;padding:14px clamp(18px,3vw,34px) 28px;
+  background:linear-gradient(rgba(18,16,19,0),rgba(18,16,19,.98) 14px)}
+#screen .pause-wrap .doc .actions{position:static;margin:22px 0 0;padding:0;background:none}
+#game.menu-up #hud :is(#zonecard,#hint,#warn,#checkpointToast,#killfeed,#markers,#lockbox,#prompt,#progress,#choice,#reticle,#bossbar){visibility:hidden}
+.title-wrap h1{font-size:min(clamp(64px,13vw,150px),17vh)}
+.title-wrap .tag{white-space:nowrap;font-size:clamp(13px,1.6vw,20px);letter-spacing:.3em}
+.title-wrap .controls{grid-template-columns:repeat(3,minmax(0,1fr));gap:0 26px;max-width:720px;margin-top:28px}
+.title-wrap .controls div{font-size:13px;padding:4px 0;letter-spacing:.1em}
+.title-wrap .controls kbd{font-size:11px;color:var(--hud-dim)}
+@media (max-height:520px){.title-wrap h1{font-size:min(clamp(56px,10vw,96px),19vh)}.title-wrap .controls{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-height:440px){.title-wrap .controls{display:none}.title-wrap .actions{margin-top:14px}}
+@media (max-height:520px){
+  .doc h2{font-size:clamp(30px,5.2vw,44px)}
+  .doc .body{min-height:0;margin-top:12px;font-size:13px;line-height:1.55}
+  .doc dl{margin-top:12px}
+  .doc .fine{margin-top:12px;padding-top:8px}
+  #screen .doc .actions{margin-top:14px;padding-top:12px;flex-wrap:nowrap}
+  #screen .doc .actions .btn{padding-block:9px}
+  #screen .pause-wrap .doc .actions{margin:16px 0 0;padding:0;grid-template-columns:1fr 1fr}
+  #screen .pause-wrap .doc .actions .btn{font-size:14px;padding-inline:12px}
+  .pause-wrap .doc h2{font-size:34px}
+  .debrief-top{flex-wrap:nowrap}
+  .rank{width:62px;height:62px;font-size:38px;flex:none}
+}
 #fade{z-index:2}
 #screen .doc{box-shadow:0 18px 60px rgba(0,0,0,.45)}
 #screen.menu-dark{background:rgba(8,8,10,.72)}
 #screen.debrief{background:linear-gradient(90deg,rgba(8,8,10,.9),rgba(8,8,10,.55))}
-.doc .kv{display:flex;justify-content:space-between;gap:12px;font-family:var(--f-mono);font-size:11px;color:var(--hud-dim)}
+.kv{display:flex;justify-content:space-between;gap:12px;font-family:var(--f-mono);font-size:11px;color:var(--hud-dim);letter-spacing:.06em}
 .doc .objlist{list-style:none;margin:0;padding:0;display:grid;gap:3px}
 .doc .objlist li{display:flex;gap:10px;align-items:baseline;font-size:16px;letter-spacing:.06em;text-transform:uppercase}
 .doc .objlist li::before{content:"";flex:none;width:7px;height:7px;border:1px solid var(--hud);transform:translateY(-1px) rotate(45deg)}
@@ -51,13 +75,22 @@ const SCREEN_CSS = `
 .pause-log .empty{opacity:.6}
 @media (max-width:860px),(max-height:520px){.pause-wrap{grid-template-columns:1fr;max-width:460px}.pause-side{display:none}}
 .set-group{margin-top:16px}
+#screen .doc.settings-doc{width:min(980px,calc(100% - 32px))}
+.set-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 44px}
+.set-cols .set-row{grid-template-columns:1fr minmax(120px,180px) 44px;letter-spacing:.1em}
+@media (max-width:900px){.set-cols{grid-template-columns:1fr}#screen .doc.settings-doc{width:min(620px,calc(100% - 32px))}}
 .set-group h3{margin:0 0 6px}
 .set-row:focus-within{color:var(--hud)}
 .set-row input[type=range]{height:18px}
+.brief-map{margin-top:16px}
+.brief-map canvas{display:block;width:100%;height:auto;margin-top:6px;border:1px solid var(--hud-faint)}
+@media (max-height:520px){.brief-map{display:none}}
 .ledger td:first-child{letter-spacing:.06em;text-transform:uppercase;color:var(--hud-dim);font-family:var(--f-display);font-size:15px}
 .ledger td:last-child{color:var(--hud)}
 .ledger tr.hl td:last-child{color:var(--accent)}
-.debrief-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.debrief-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:nowrap}
+.debrief-top>div:first-child{min-width:0}
+.debrief-top .rank{flex:none}
 .rank{display:grid;place-items:center;width:84px;height:84px;border:2px solid var(--accent);font:700 54px/1 var(--f-display);color:var(--accent);clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)}
 .rank small{display:block;font:500 9px var(--f-mono);letter-spacing:.2em;color:var(--hud-dim);text-align:center;margin-top:-4px}
 .list-item .nm{display:flex;flex-direction:column;gap:2px}
@@ -66,6 +99,10 @@ const SCREEN_CSS = `
 .center-card.inter{max-width:760px}
 .center-card.inter p{font-size:17px;line-height:1.85;text-align:left;letter-spacing:.01em}
 .center-card.inter.black p{color:#e9e3d3}
+.center-card.inter:is(.black,.terminal) .btn{background:transparent;color:var(--hud-dim);box-shadow:inset 0 0 0 1px rgba(233,227,211,.22);clip-path:none;font-size:13px;padding:8px 18px}
+.center-card.inter:is(.black,.terminal) .btn:is(:hover,:focus-visible){color:var(--hud);box-shadow:inset 0 0 0 1px var(--hud-dim)}
+.center-card.inter .actions:not([hidden]){animation:interIn .9s ease-out}
+@keyframes interIn{from{opacity:0}to{opacity:1}}
 .center-card.inter.paper{background:#e8dcc4;color:#2a241c;padding:40px 46px;box-shadow:0 20px 70px rgba(0,0,0,.6)}
 .center-card.inter.paper p{color:#2a241c;font-family:Georgia,"Times New Roman",serif;font-size:18px}
 .center-card.inter.paper .btn{background:#2a241c;color:#e8dcc4}
@@ -96,9 +133,13 @@ export function install(ctx) {
   const timers = new Set();
   const later = (fn, ms) => { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); return id; };
 
+  const game = document.getElementById('game');
+  let seq = 0;   // bumps on every open(): a show* call cleans up only a screen it still owns
   function open(name, html, cls = '', escV = undefined) {
     close(null);
+    seq++;
     api.current = name;
+    game?.classList.add('menu-up');
     root.className = cls;
     root.innerHTML = html;
     root.hidden = false;
@@ -184,6 +225,66 @@ export function install(ctx) {
     }
   });
 
+  // ---------------------------------------------------------------- briefing route sketch (briefing.showMap)
+  /** A north-up schematic of def.route drawn before the world exists: the corridor, the route (a polyline through the
+   *  control points), zone boundaries as ticks and checkpoints as squares. No names: zone and checkpoint labels could
+   *  reveal places before they are reached (§8.6). */
+  function drawRouteSketch(c, L) {
+    const pts = (L.route?.points || []).filter(p => Array.isArray(p) && p.length >= 2);
+    if (pts.length < 2) return false;
+    const g = c.getContext('2d'), W = c.width, H = c.height;
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const len = cum[cum.length - 1] || 1;
+    const hwOf = (i) => { const h = L.route.halfWidth; return Array.isArray(h) ? (+h[Math.min(i, h.length - 1)] || 400) : (+h || 400); };
+    const at = (s) => {   // point and unit forward along the polyline at arc length s
+      s = Math.max(0, Math.min(len, s));
+      let i = 1; while (i < cum.length - 1 && cum[i] < s) i++;
+      const a = pts[i - 1], b = pts[i], seg = Math.max(1e-6, cum[i] - cum[i - 1]), u = (s - cum[i - 1]) / seg;
+      return { x: a[0] + (b[0] - a[0]) * u, z: a[1] + (b[1] - a[1]) * u, fx: (b[0] - a[0]) / seg, fz: (b[1] - a[1]) / seg };
+    };
+    const posOf = (p) => {
+      if (Array.isArray(p)) return { x: +p[0], z: +p[1] };
+      if (p && typeof p === 'object' && 's' in p) { const q = at(+p.s || 0), l = +p.l || 0; return { x: q.x - q.fz * l, z: q.z + q.fx * l }; }
+      return p && Number.isFinite(p.x) && Number.isFinite(p.z) ? { x: p.x, z: p.z } : null;
+    };
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity, hw = 0;
+    pts.forEach((p, i) => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); z0 = Math.min(z0, p[1]); z1 = Math.max(z1, p[1]); hw = Math.max(hw, hwOf(i)); });
+    x0 -= hw; x1 += hw; z0 -= hw * 0.35; z1 += hw * 0.35;
+    const k = Math.min((W - 40) / (x1 - x0), (H - 36) / (z1 - z0));
+    const X = (x) => W / 2 + (x - (x0 + x1) / 2) * k, Y = (z) => H / 2 + (z - (z0 + z1) / 2) * k;
+    g.fillStyle = '#0c0b0e'; g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(233,227,211,.05)'; g.lineWidth = 1;
+    for (let gx = 0; gx < W; gx += 24) { g.beginPath(); g.moveTo(gx + 0.5, 0); g.lineTo(gx + 0.5, H); g.stroke(); }
+    for (let gy = 0; gy < H; gy += 24) { g.beginPath(); g.moveTo(0, gy + 0.5); g.lineTo(W, gy + 0.5); g.stroke(); }
+    const path = () => { g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(X(p[0]), Y(p[1])) : g.moveTo(X(p[0]), Y(p[1])))); };
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    path(); g.strokeStyle = 'rgba(233,227,211,.07)'; g.lineWidth = Math.max(6, hw * 2 * k); g.stroke();
+    path(); g.strokeStyle = 'rgba(233,227,211,.10)'; g.lineWidth = Math.max(3, hw * 0.9 * k); g.stroke();
+    path(); g.strokeStyle = 'rgba(224,145,60,.9)'; g.lineWidth = 2; g.setLineDash([7, 6]); g.stroke(); g.setLineDash([]);
+    for (const z of L.zones || []) {   // zone boundaries as ticks across the route
+      const s0 = Array.isArray(z.range) ? +z.range[0] : 0;
+      if (!(s0 > 1)) continue;
+      const q = at(s0), r = 11;
+      g.strokeStyle = 'rgba(233,227,211,.45)'; g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(X(q.x) + q.fz * r, Y(q.z) - q.fx * r); g.lineTo(X(q.x) - q.fz * r, Y(q.z) + q.fx * r); g.stroke();
+    }
+    for (const cp of L.checkpoints || []) {
+      const q = posOf(cp.at); if (!q) continue;
+      g.fillStyle = '#8fd2c6'; g.fillRect(X(q.x) - 3, Y(q.z) - 3, 6, 6);
+    }
+    const a = pts[0], b = pts[pts.length - 1], d = at(0);
+    g.save(); g.translate(X(a[0]), Y(a[1])); g.rotate(Math.atan2(d.fz, d.fx) + Math.PI / 2);
+    g.fillStyle = '#e9e3d3'; g.beginPath(); g.moveTo(0, -8); g.lineTo(6, 6); g.lineTo(-6, 6); g.closePath(); g.fill(); g.restore();
+    g.save(); g.translate(X(b[0]), Y(b[1])); g.rotate(Math.PI / 4);
+    g.strokeStyle = '#e0913c'; g.lineWidth = 2; g.strokeRect(-6, -6, 12, 12); g.restore();
+    g.fillStyle = 'rgba(233,227,211,.7)'; g.font = '600 11px "IBM Plex Mono",monospace'; g.textBaseline = 'top';
+    g.fillText('N ↑', W - 34, 8);
+    const bar = 1000 * k;
+    if (bar > 20 && bar < W * 0.6) { g.fillStyle = 'rgba(233,227,211,.6)'; g.fillRect(12, H - 12, bar, 2); g.fillText('1 KM', 12, H - 26); }
+    return true;
+  }
+
   // ---------------------------------------------------------------- the morning count map strip
   function drawStrip(c, m) {
     const g = c.getContext('2d'), W = c.width, H = c.height;
@@ -213,8 +314,9 @@ export function install(ctx) {
       gr.addColorStop(0, `rgba(255,214,150,${a * 0.6})`); gr.addColorStop(0.5, `rgba(255,170,90,${a})`); gr.addColorStop(1, `rgba(255,120,60,${a * 0.6})`);
       g.fillStyle = gr; g.fillRect(edgeX - w / 2, 0, w, H);
     }
-    g.fillStyle = 'rgba(233,227,211,.5)'; g.textAlign = 'center';
-    g.fillText('THE EDGE', edgeX, 12);
+    g.fillStyle = 'rgba(255,214,150,.75)'; g.textAlign = 'left';
+    g.fillText('THE EDGE', edgeX + 12, 14);
+    g.fillStyle = 'rgba(233,227,211,.5)';
     g.textAlign = 'left'; g.fillText('ICE · WEST', 8, H - 10);
     g.textAlign = 'right'; g.fillText('EAST · BURN', W - 8, H - 10);
     // the Wake
@@ -234,6 +336,7 @@ export function install(ctx) {
     hide() {
       close(null);
       api.current = null;
+      game?.classList.remove('menu-up');
       root.innerHTML = ''; root.className = ''; root.hidden = true;
     },
     showTitle(m = {}) {
@@ -286,10 +389,13 @@ export function install(ctx) {
           <div class="sub">${esc(b.subtitle || L.subtitle || '')}</div>
           <div class="body" id="briefBody"></div>
           ${(b.objectives || []).length ? `<dl><dt>Objectives</dt><dd>${b.objectives.map(esc).join('<br>')}</dd></dl>` : ''}
+          ${b.showMap ? '<div class="brief-map"><div class="kv"><span>ROUTE</span><span>NORTH UP</span></div><canvas id="bMap" width="640" height="170"></canvas></div>' : ''}
           ${b.fine ? `<div class="fine">${esc(b.fine)}</div>` : ''}
           <div class="actions">${btn('bStart', 'Deploy', false, 'autofocus')}${canFit ? btn('bFit', 'Fit frame', true) : ''}${btn('bBack', 'Back', true)}</div>
         </div>`, 'menu-dark', 'back');
       bind({ bStart: 'start', bFit: 'garage', bBack: 'back' });
+      const map = root.querySelector('#bMap');
+      if (map) { try { if (!drawRouteSketch(map, L)) map.parentElement.remove(); } catch (e) { console.warn('[screens] briefing map', e); map.parentElement.remove(); } }
       typeInto(root.querySelector('#briefBody'), b.body || '', 90);
       return p;
     },
@@ -298,13 +404,13 @@ export function install(ctx) {
           <div class="eyebrow">Loading</div><h2>${esc(m.title || '')}</h2>
           <div class="stat-bar"><i id="ldBar"></i></div><p class="mono" id="ldLbl">&nbsp;</p>
           <p class="tip">${esc(m.tip || TIPS[Math.floor(Math.random() * TIPS.length)])}</p></div>`, 'loading');
-      const bar = root.querySelector('#ldBar'), lbl = root.querySelector('#ldLbl');
+      const bar = root.querySelector('#ldBar'), lbl = root.querySelector('#ldLbl'), mine = seq;
       return {
         set(p, label) {
           if (bar && bar.isConnected) bar.style.width = (Math.max(0, Math.min(1, p)) * 100).toFixed(1) + '%';
           if (lbl && lbl.isConnected && label) lbl.textContent = label;
         },
-        close() { if (api.current === 'loading') api.hide(); },
+        close() { if (api.current === 'loading' && seq === mine) api.hide(); },
       };
     },
     showPause(m = {}) {
@@ -321,7 +427,7 @@ export function install(ctx) {
           <div class="pause-side">
             ${m.drawMap ? `<div class="panel"><div class="kv"><span>TACTICAL MAP</span><span>NORTH UP</span></div><canvas id="pMap" width="560" height="340" style="margin-top:8px"></canvas>
               <div class="maplegend"><span><i style="background:#e9e3d3"></i>Frame</span><span><i style="background:#e0913c"></i>Route · objective</span><span><i style="background:#8fd2c6"></i>Checkpoint</span></div></div>` : ''}
-            <div class="panel"><div class="kv"><span>COMMS LOG</span><span>${(m.commsLog || []).length} lines</span></div>
+            <div class="panel"><div class="kv"><span>COMMS LOG</span><span>${(m.commsLog || []).length} line${(m.commsLog || []).length === 1 ? '' : 's'}</span></div>
               <div class="pause-log" id="pLog" style="margin-top:8px">${log || '<div class="empty">No transmissions yet.</div>'}</div></div>
           </div></div>`, 'dim', 'resume');
       bind({ bRes: 'resume', bRetry: 'restart', bSet: 'settings', bQuit: 'quit' });
@@ -342,18 +448,21 @@ export function install(ctx) {
         const sc = SETTINGS_SCHEMA[k], v = s.get(k);
         if (!sc) return '';
         if (sc.bool) return `<label class="set-row"><span>${label}</span><input type="checkbox" data-k="${k}" ${v ? 'checked' : ''}><output></output></label>`;
-        if (sc.options) return `<label class="set-row"><span>${label}</span><select data-k="${k}">${sc.options.map(o => `<option value="${o}"${o === v ? ' selected' : ''}>${o}</option>`).join('')}</select><output></output></label>`;
+        if (sc.options) return `<label class="set-row"><span>${label}</span><select data-k="${k}">${sc.options.map(o => `<option value="${o}"${o === v ? ' selected' : ''}>${esc(String(o).charAt(0).toUpperCase() + String(o).slice(1))}</option>`).join('')}</select><output></output></label>`;
         return `<label class="set-row"><span>${label}</span><input type="range" data-k="${k}" min="${sc.min}" max="${sc.max}" step="${sc.step}" value="${v}"><output>${fmt(k, v)}</output></label>`;
       };
       const forced = ctx.forcedTier ? `<div class="fine">Quality is forced to ${esc(ctx.forcedTier)} by the page address.</div>` : '';
       const p = open('settings', `<div class="doc settings-doc">
           <div class="hdr"><span>SETTINGS</span><span>Saved automatically</span></div>
           <h2>Settings</h2>
+          <div class="set-cols"><div>
           <div class="set-group"><h3>Controls</h3><div class="set-grid">${row('sens', 'Look speed')}${row('invertY', 'Invert Y')}${row('touch', 'Touch controls')}</div></div>
           <div class="set-group"><h3>Camera</h3><div class="set-grid">${row('fov', 'Field of view')}${row('cameraShake', 'Camera shake')}${row('reducedMotion', 'Reduced motion')}</div></div>
+          </div><div>
           <div class="set-group"><h3>Audio</h3><div class="set-grid">${row('volMaster', 'Master volume')}${row('volMusic', 'Music volume')}${row('volSfx', 'Effects volume')}</div></div>
           <div class="set-group"><h3>Display</h3><div class="set-grid">${row('quality', 'Graphics quality')}${row('ao', 'Ambient occlusion')}${row('showFps', 'Show FPS')}</div></div>
           <div class="set-group"><h3>Comms</h3><div class="set-grid">${row('commsSpeed', 'Comms speed')}</div></div>
+          </div></div>
           ${forced}
           <div class="actions">${btn('bBack', 'Back', false, 'autofocus')}</div></div>`, 'menu-dark', 'back');
       root.querySelectorAll('[data-k]').forEach(inp => {
@@ -371,7 +480,7 @@ export function install(ctx) {
     },
     showDeath(m = {}) {
       const p = open('death', `<div class="center-card">
-          <div class="eyebrow">Signal lost</div><h2 class="threat">Frame down</h2><p>${esc(m.line || '')}</p>
+          <div class="eyebrow">${esc([ctx.flow?.def?.title, formatTime(ctx.mission?.elapsed ?? 0)].filter(Boolean).join(' · '))}</div><h2 class="threat">Frame down</h2><p>${esc(m.line || '')}</p>
           <div class="actions">${btn('bRetry', m.hasCheckpoint ? 'Retry from checkpoint' : 'Retry', false, 'autofocus')}${btn('bQuit', 'Quit to title', true)}</div></div>`, 'dim', 'quit');
       bind({ bRetry: 'retry', bQuit: 'quit' });
       return p;
@@ -399,6 +508,7 @@ export function install(ctx) {
       return p;
     },
     async showInterstitial(pages = [], o = {}) {
+      let mine = -1;
       for (let i = 0; i < pages.length; i++) {
         const pg = pages[i], last = i === pages.length - 1, style = ['black', 'paper', 'terminal'].includes(pg.style) ? pg.style : 'black';
         const p = open('interstitial', `<div class="center-card inter ${style}">
@@ -406,16 +516,17 @@ export function install(ctx) {
             ${pages.length > 1 ? `<div class="pg">${i + 1} / ${pages.length}</div>` : ''}
             <div class="actions" id="itA" hidden>${btn('bNext', last ? 'Continue' : 'Next', false)}${o.skippable && !last ? btn('bSkip', 'Skip', true) : ''}</div></div>`,
           'inter ' + style, o.skippable ? 'skip' : undefined);
+        mine = seq;
         bind({ bNext: 'next', bSkip: 'skip' });
         typeInto(root.querySelector('#itP'), pg.text || '', style === 'terminal' ? 55 : 40, () => {
           const a = root.querySelector('#itA');
           if (a) { a.hidden = false; a.querySelector('button')?.focus({ preventScroll: true }); }
-          if (pg.hold > 0) later(() => { if (api.current === 'interstitial' && pending) done('next'); }, pg.hold * 1000);
+          if (pg.hold > 0) { const at = seq; later(() => { if (api.current === 'interstitial' && pending && seq === at) done('next'); }, pg.hold * 1000); }
         });
         const r = await p;
-        if (r === 'skip' || r === null) break;
+        if (r === 'skip' || r === null || seq !== mine) break;
       }
-      if (api.current === 'interstitial') api.hide();
+      if (api.current === 'interstitial' && seq === mine) api.hide();
     },
     showCredits(m = {}) {
       const p = open('credits', `<div class="center-card credits">

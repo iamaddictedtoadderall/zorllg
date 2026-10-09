@@ -35,7 +35,8 @@ export function canHit(t, team) {
 export function install(ctx) {
   const targets = new Set();
   const list = [];          // same members as `targets`, for allocation-free iteration (combat.targets)
-  const tmp = [];
+  const radialPool = [];    // one { snap, pos } frame per radial() nesting depth (radial is re-entrant: a death can splash)
+  let radialDepth = 0;
   let nextId = PLAYER_ID;   // the last id handed out
   let staggerHinted = false;
   const rewindIds = () => { let m = PLAYER_ID; for (const t of targets) if (t.id > m) m = t.id; nextId = m; };
@@ -140,20 +141,32 @@ export function install(ctx) {
     radial(pos, radius, amount, imp, source, o = {}) {
       if (!(radius > 0)) return 0;
       let n = 0;
-      tmp.length = 0;
-      for (const t of list) tmp.push(t);
-      for (const t of tmp) {
-        if (!t.alive || t.targetable === false || t === o.exclude) continue;
-        if (source?.team && !isHostile(source.team, t.team)) continue;
-        const hr = t.hitR || 0;
-        const d = t.center(_c).distanceTo(pos);
-        if (d > radius + hr) continue;
-        if (o.los && ctx.collision && !ctx.collision.lineOfSight(pos, _c)) continue;
-        const k = o.falloff === false ? 1 : clamp(1 - Math.max(0, d - hr) / radius, 0, 1);
-        if (k <= 0) continue;
-        api.damage(t, amount * k, (imp || 0) * k, source); n++;
+      // Snapshot the target list into this depth's own array: damage() can run onDamage/onDeath hooks and
+      // target:damaged/killed listeners that call radial() again (chained explosions), which must not clobber the
+      // outer iteration. `_c` is likewise re-read per target, never held across damage().
+      const frame = radialPool[radialDepth] || (radialPool[radialDepth] = { snap: [], pos: new THREE.Vector3() });
+      const snap = frame.snap;
+      pos = frame.pos.copy(pos);      // a caller's scratch vector may be reused by a nested call
+      radialDepth++;
+      snap.length = 0;
+      for (const t of list) snap.push(t);
+      try {
+        for (let i = 0; i < snap.length; i++) {
+          const t = snap[i];
+          if (!t.alive || t.targetable === false || t === o.exclude) continue;
+          if (source?.team && !isHostile(source.team, t.team)) continue;
+          const hr = t.hitR || 0;
+          const d = t.center(_c).distanceTo(pos);
+          if (d > radius + hr) continue;
+          if (o.los && ctx.collision && !ctx.collision.lineOfSight(pos, _c)) continue;
+          const k = o.falloff === false ? 1 : clamp(1 - Math.max(0, d - hr) / radius, 0, 1);
+          if (k <= 0) continue;
+          api.damage(t, amount * k, (imp || 0) * k, source); n++;
+        }
+      } finally {
+        radialDepth--;
+        snap.length = 0;
       }
-      tmp.length = 0;
       return n;
     },
     kill(t, source, info) {

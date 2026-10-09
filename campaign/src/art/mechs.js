@@ -4,6 +4,9 @@
 // animateMech is the port of animateAC plus the kneel (crouch 1) and the optional TEAR pose; buildMechWreck makes a
 // posed, scorched, broken static merge.
 //
+// On top of the unchanged port, detailLayer() adds the third layer of plates, seams, pistons and vents per design (see
+// DETAIL), using the frame's own materials so the bake keeps its draw calls.
+//
 // One change to the ported designs: the right forearm's gun and the left forearm's blade emitter are built into child
 // groups (S.arms.R.gun, S.arms.L.emitter) at the forearm's origin, and the shoulder pod into S.pod (a child of the pod
 // bone), so a fitted part can replace them. The plates themselves are unchanged.
@@ -194,6 +197,94 @@ export const DESIGNS = {
   },
 };
 const DESIGN_BEVEL = { vanguard: 0.07, striker: 0.05, bastion: 0.14, moth: 0.07 };
+
+// ------------------------------------------------------------------ detail layer ("the bevelled mechs or better")
+// The ported designs are side-profile extrusions: from the front their torsos, thighs and shins are single flat faces.
+// This adds the third layer (AD law 2: shell, plates, trim/greebles) on top of the unchanged port: two-layer chest
+// plates split by a dark seam, thigh and shin plates, hydraulic pistons on the calves and forearms, louvred vents on the
+// torso sides and pauldrons, and a fin bank between the thrusters. Everything uses the frame's existing materials, so
+// the baked mech keeps its draw calls (≈ +3.5k triangles). Numbers are bone-local and follow each design's profiles.
+// Plate entries: [x, y, z, w, h, tiltX] (the plate faces −z, tilted up by tiltX); vents: [x, y, z, w, h, faceSign].
+const DETAIL = {
+  vanguard: {
+    chest: [[-0.64, 1.86, -1.5, 1.08, 0.96, 0.05], [0.64, 1.86, -1.5, 1.08, 0.96, 0.05]], seam: [0, 1.86, -1.52, 1.02],
+    sideVent: [1.83, 2.0, 0.05, 1.1, 0.7], backFins: [0, 1.98, 2.36, 0.9, 0.55],
+    thigh: [0, -0.98, -0.77, 0.98, 1.3, -0.08], shin: [0, -1.7, -0.6, 1.0, 0.86, -0.2], calf: [0.78, 0.18, -0.35, -1.75, 0.11],
+    paulVent: [1.08, 0.18, 0.02, 0.9, 0.42], arm: [0, 0.56, -0.95, 0.7, 1.15, 0.12], armPiston: [0.6, -0.12, -0.15, -1.45, 0.1],
+  },
+  striker: {
+    chest: [[-0.5, 2.1, -1.43, 0.84, 0.92, 0.38], [0.5, 2.1, -1.43, 0.84, 0.92, 0.38]], seam: [0, 2.1, -1.46, 0.96, 0.38],
+    sideVent: [1.48, 1.55, 0.25, 0.9, 0.6], backFins: [0, 1.85, 2.08, 0.62, 0.5],
+    thigh: [0, -0.85, -0.6, 0.74, 1.2, 0.02], shin: [0, -1.68, -0.44, 0.8, 0.84, -0.15], calf: [0.62, 0.1, -0.35, -1.75, 0.09],
+    paulVent: [0.86, 0.15, 0.2, 0.8, 0.38], arm: [0, 0.43, -1.05, 0.56, 1.25, 0.11], armPiston: [0.5, -0.1, -0.2, -1.6, 0.08],
+  },
+  bastion: {
+    chest: [[-0.76, 2.21, -1.56, 1.36, 0.54, 0], [0.76, 2.21, -1.56, 1.36, 0.54, 0]], seam: [0, 2.21, -1.58, 0.6],
+    sideVent: [2.16, 2.2, 0.0, 1.2, 0.72], backFins: [0, 2.12, 2.5, 0.9, 0.6],
+    thigh: [0, -1.1, -0.94, 1.24, 1.2, 0.04], shin: [0, -1.82, -0.66, 1.26, 0.92, -0.2], calf: [1.1, 0.22, -0.4, -1.85, 0.13],
+    paulVent: [1.33, 0.32, 0.0, 1.1, 0.45], arm: [0, 0.6, -0.95, 0.9, 1.2, 0.1], armPiston: [0.72, -0.15, -0.15, -1.5, 0.12], noArmPistonL: true,
+  },
+};
+DETAIL.moth = { ...DETAIL.vanguard, sideVent: null, backFins: null, paulVent: null, seamLight: true,
+  // narrower chest plates: Moth's gold seam strips run down the chest at x ±0.98 (mothDressing)
+  chest: [[-0.53, 1.84, -1.5, 0.86, 0.9, 0.05], [0.53, 1.84, -1.5, 0.86, 0.9, 0.05]], seam: [0, 1.84, -1.52, 0.96] };   // Founders: minimal greebles (AD §2.13 rule 8), a seam-light
+/** a two-layer plate facing −z, tilted up by tx, at [x, y, z] in `parent` */
+function facePlate(parent, mat, x, y, z, w, h, tx, t = 0.1, pec = 0) {
+  // pec ±1: a pectoral plate, its outer lower corner cut on the diagonal (seen from the front, outer = sign of x)
+  const c = Math.min(w, h) * 0.12, q = (v) => Math.round(v * 1e4) / 1e4;
+  let pts = KIT.chamferRect(w, h, pec ? [h * 0.42, c, c, c] : c);
+  // the plate is turned to face −z, so its local −x lands on world +x: the cut (local bottom-left) is already outer for
+  // x > 0; mirror it for x < 0 (and reverse to keep the profile counter-clockwise)
+  if (pec < 0) pts = pts.map(([a, b]) => [-a, b]).reverse();
+  const g = KIT.armourPlate(pts.map(([a, b]) => [q(a), q(b)]), t, { lip: Math.min(w, h) * 0.1 });
+  const m = mk(parent, g, mat, x, y, z);
+  m.rotation.set(tx, Math.PI, 0);
+  return m;
+}
+/** a hydraulic piston along y from y0 to y1 at (x, z): barrel, polished rod, eye blocks */
+function piston(parent, M, x, z, y0, y1, r) {
+  const L = Math.abs(y1 - y0), top = Math.max(y0, y1);
+  mk(parent, KIT.cylinder(r, r, L * 0.55, 10), M.dark, x, top - L * 0.3, z);
+  mk(parent, KIT.cylinder(r * 0.45, r * 0.45, L * 0.5, 8), M.mid, x, top - L * 0.75, z);
+  mk(parent, KIT.ring(r * 1.02, r * 0.35, r * 0.6, 10), M.mid, x, top - L * 0.56, z);
+  for (const y of [top - 0.02, top - L]) mk(parent, KIT.plateBox(r * 1.6, r * 1.2, r * 2.4, r * 0.25), M.dark, x, y, z);
+}
+/** a louvred vent on a ±x face (s = side sign) */
+function sideVent(parent, M, s, x, y, z, w, h) {
+  const m = mk(parent, KIT.greeble('vent', w, h, Math.min(w, h) * 0.3), M.dark, s * x, y, z);
+  m.rotation.y = s * Math.PI / 2;
+  return m;
+}
+function detailLayer(S, M, design) {
+  const D = DETAIL[design];
+  if (!D) return;
+  const T = S.torso;
+  for (const [x, y, z, w, h, tx] of D.chest) facePlate(T, M.base, x, y, z, w, h, tx, 0.11, Math.sign(x));
+  if (D.seam) {
+    const [x, y, z, h, tx = 0] = D.seam;
+    mk(T, KIT.plateBox(0.14, h, 0.12, 0.03), M.dark, x, y, z, tx);
+    // Founders seam-light (AD §4.5): a cyan strip sunk in the chest seam, lit like the visor
+    if (D.seamLight) mk(T, KIT.plateBox(0.05, h * 0.86, 0.05, 0.01), M.visor, x, y, z - 0.07, tx).castShadow = false;
+  }
+  if (D.sideVent) for (const s of [-1, 1]) sideVent(T, M, s, D.sideVent[0], D.sideVent[1], D.sideVent[2], D.sideVent[3], D.sideVent[4]);
+  if (D.backFins) { const [x, y, z, w, h] = D.backFins; mk(T, KIT.greeble('fins', w, h, 0.22), M.dark, x, y, z); }
+  for (const L of S.legs) {
+    const s = L.side;
+    { const [x, y, z, w, h, tx] = D.thigh; facePlate(L.hip, M.base, x, y, z, w, h, tx, 0.09); }
+    { const [x, y, z, w, h, tx] = D.shin; facePlate(L.knee, M.base, x, y, z, w, h, tx, 0.08); }
+    { const [x, z, y0, y1, r] = D.calf; piston(L.knee, M, s * x, z, y0, y1, r); }
+  }
+  for (const s of [-1, 1]) {
+    const A = S.arms[s < 0 ? 'L' : 'R'];
+    if (D.paulVent) sideVent(A.sh, M, s, D.paulVent[0], D.paulVent[1], D.paulVent[2], D.paulVent[3], D.paulVent[4]);
+    { const [x, y, z, w, h, tx] = D.arm; const m = mk(A.el, KIT.armourPlate(KIT.chamferRect(w, h, Math.min(w, h) * 0.22), 0.08), M.base, x, y, z); m.rotation.set(-Math.PI / 2 + tx, 0, 0); }
+    if (!(s < 0 && D.noArmPistonL)) {   // the piston runs along the forearm (−z) on its outer side
+      const [x, y, z0, z1, r] = D.armPiston, g = new THREE.Group();
+      g.position.set(s * x, y, (z0 + z1) / 2); g.rotation.x = Math.PI / 2; A.el.add(g);   // local +y → +z: the barrel sits at the elbow
+      piston(g, M, 0, 0, (z0 - z1) / 2, (z1 - z0) / 2, r);
+    }
+  }
+}
 /** Which visual id each design's built-in weapon stands for (the design's own rendition of that visual). */
 const BUILTIN = { R: 'rifle', L: 'blade', S: 'pod4' };
 
@@ -258,7 +349,7 @@ function partMaterials(ctx, M) {
     const [name, color, r, m, env] = DREDGE_LIB[key];
     const got = ctx?.materials?.get?.(name);
     if (got && got.name === name) return got;
-    if (ctx?.materials?.standard) return ctx.materials.standard({ color, roughness: r, metalness: m, envMapIntensity: env, wear: 0.6 });
+    if (ctx?.materials?.standard) return ctx.materials.standard({ color, roughness: r, metalness: m, envMapIntensity: env, wear: 0.6, wearStyle: 'dredge' });
     return new THREE.MeshStandardMaterial({ color, roughness: r, metalness: m });
   };
   const PM = { ...M, iron: lib('iron'), oxide: lib('oxide'), steel: lib('steel') };
@@ -434,10 +525,18 @@ function designMaterials(ctx, scheme, design) {
   const set = ctx?.materials?.mechSet ? ctx.materials.mechSet(scheme) : fallbackMechSet(scheme);
   if (design !== 'moth' || !ctx?.materials?.standard) return set;
   const w = scheme.wear ?? 0.55, std = ctx.materials.standard;
+  // P3 decision: MOTH_PAINT's ceramic (#d8d2c4) is near-white; under the r170 sun (6.5 at dawn in L1, 4+ in any daylight)
+  // it clips flat and the bloom (P1 soft knee, max channel 0.85) haloes it, so every bevel vanishes. A century of ice
+  // has dulled it: the painted colour is kept as the hue and its linear value scaled to weathered ceramic.
+  const dull = (c, k) => new THREE.Color(c).multiplyScalar(k);
+  scheme = { ...scheme, base: dull(scheme.base, 0.7), mid: dull(scheme.mid, 0.8) };
   return { ...set,
-    base: std({ color: scheme.base, roughness: 0.36, metalness: 0.05, envMapIntensity: 0.75, wear: w }),
-    mid: std({ color: scheme.mid, roughness: 0.48, metalness: 0.05, envMapIntensity: 0.6, wear: Math.min(1, w + 0.15) }),
-    acc: std({ color: scheme.accent, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.1, wear: 0.4 }) };
+    // satin, weathered ceramic: rough enough that a low sun never mirrors off it into the bloom
+    // Founders wear: crazing, and chips that show pale ceramic body (not bare steel) so the bevels don't read as a dashed
+    // outline; wearStyle/bare are AD §4.4 options the library honours when it has them (ignored otherwise)
+    base: std({ color: scheme.base, roughness: 0.46, metalness: 0.04, envMapIntensity: 0.6, wear: w * 0.8, wearStyle: 'founders', bare: '#9a9384' }),
+    mid: std({ color: scheme.mid, roughness: 0.55, metalness: 0.04, envMapIntensity: 0.5, wear: Math.min(1, w + 0.1), wearStyle: 'founders', bare: '#8c8578' }),
+    acc: std({ color: scheme.accent, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.1, wear: 0.35, wearStyle: 'founders', bare: '#7a5e2a' }) };
 }
 
 /** Port of buildAC. scheme: { design, base, mid, accent, visor, flame?, blade?, dark?, wear? }.
@@ -487,6 +586,7 @@ export function buildMech(ctx, scheme, o = {}) {
   const podShell = new THREE.Group(); podShell.name = 'builtinS'; pod.add(podShell);
   const S = { pelvis, legs, torso, head, arms: { L: { ...arms.L, emitter }, R: { ...arms.R, gun } }, pod: podShell };
   D.build(S, M, KIT);
+  detailLayer(S, M, design);
   const builtin = { R: gun, L: emitter, S: podShell };
   const defaultMuzzle = { R: muzzle.position.clone(), L: muzzleL.position.clone(), S: null };
 

@@ -14,7 +14,7 @@ import { FOG_PARS, NOISE_PARS } from './glsl.js';
 
 const TAU = Math.PI * 2;
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
-const _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _c = new THREE.Color();
+const _m = new THREE.Matrix4(), _s = new THREE.Vector3(), _c = new THREE.Color(), _dt = new THREE.Vector3(), _db = new THREE.Vector3();
 const LIT_CELLS_ALPHA = [0, 1, 1, 1, 0, 1, 0, 0];   // which alpha cells use the lit-billow shading
 
 // ------------------------------------------------------------------------------------------------ shared uniforms
@@ -22,7 +22,7 @@ const LIT_CELLS_ALPHA = [0, 1, 1, 1, 0, 1, 0, 0];   // which alpha cells use the
 const LIGHT = {
   uSunCol: { value: new THREE.Color(1, 1, 1) }, uHemiSky: { value: new THREE.Color(0.3, 0.3, 0.3) },
   uHemiGround: { value: new THREE.Color(0.1, 0.1, 0.1) }, uLightDir: { value: new THREE.Vector3(0, 1, 0) },
-  uTime: { value: 0 }, uPx: { value: new THREE.Vector2(1 / 640, 1 / 360) }, uSizeMul: { value: 1 },
+  uTime: { value: 0 }, uPx: { value: new THREE.Vector2(1 / 640, 1 / 360) }, uSizeMul: { value: 1 }, uMinMul: { value: 1 },
 };
 
 function fogUniforms(ctx) {
@@ -49,6 +49,7 @@ attribute vec3 iPos;
 attribute vec4 iCol;     // rgb (linear, may exceed 1), alpha
 attribute vec4 iMisc;    // size (m), atlas cell, rotation (rad), life fraction 0..1
 attribute vec3 iVel;
+attribute float iGround;   // ground height under the spawn point (soft fade where a quad cuts into the ground)
 uniform vec3 uLightDir;
 uniform float uAdditive;
 varying vec4 vCol;
@@ -58,8 +59,10 @@ varying float vFog;
 varying vec3 vFogCol;
 varying float vCell;
 varying float vLife;
+varying vec3 vSoft;      // world y of this vertex (linear across the quad), ground height, fade height
 void main() {
   float size = iMisc.x;
+  vSoft = vec3(1.0, -1e5, 1.0);
   vCol = iCol; vCell = iMisc.y; vLife = iMisc.w;
   if (size <= 0.0 || iCol.a <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vUv = vec2(0.0); vSun = vec2(0.0); vFog = 0.0; vFogCol = vec3(0.0); return; }
   vec4 mv = viewMatrix * vec4(iPos, 1.0);
@@ -81,6 +84,9 @@ void main() {
   vCol.a *= near;
   mv.xy += off;
   gl_Position = projectionMatrix * mv;
+  // planar soft particles: fade the part of a camera-facing quad that dips under the ground it was spawned over, so
+  // dust rings and smoke never show a hard horizontal cut line where they meet the terrain
+  vSoft = vec3(((mv.xyz - viewMatrix[3].xyz) * mat3(viewMatrix)).y, iGround, clamp(size * 0.35, 0.3, 4.0));
   float cell = floor(iMisc.y + 0.5);
   vUv = vec2(mod(cell, 4.0) * 0.25, floor(cell / 4.0) * 0.5) + uv * vec2(0.25, 0.5);
   // sun direction in the sprite's own frame (lit billows)
@@ -94,14 +100,18 @@ void main() {
 const PARTICLE_FS_ADD = /* glsl */`
 uniform sampler2D uAtlas;
 varying vec4 vCol; varying vec2 vUv; varying vec2 vSun; varying float vFog; varying vec3 vFogCol; varying float vCell; varying float vLife;
+varying vec3 vSoft;
 void main() {
+  float soft = smoothstep(vSoft.y - 0.15, vSoft.y + vSoft.z, vSoft.x);
   vec4 t = texture2D(uAtlas, vUv);
   vec3 col = vCol.rgb;
-  if (abs(vCell - 3.0) < 0.5) {   // fireball: hot core cools to deep red over its life
+  float tr = t.r;
+  if (abs(vCell - 3.0) < 0.5) {   // fireball: hot core cools to deep red over its life; billow structure kept visible
     col *= mix(vec3(1.0), vec3(0.42, 0.16, 0.06), smoothstep(0.15, 0.9, vLife));
-    col *= mix(1.0, 0.6 + 0.8 * t.g, 0.6);
+    col *= mix(1.0, 0.3 + 1.4 * t.g, 0.8);
+    tr = pow(tr, 1.4);
   }
-  float a = t.r * vCol.a * (1.0 - vFog);
+  float a = tr * vCol.a * (1.0 - vFog) * soft;
   gl_FragColor = vec4(col * a, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -112,9 +122,11 @@ uniform sampler2D uAtlas;
 uniform vec3 uSunCol, uHemiSky, uHemiGround;
 uniform float uLitCells[8];
 varying vec4 vCol; varying vec2 vUv; varying vec2 vSun; varying float vFog; varying vec3 vFogCol; varying float vCell; varying float vLife;
+varying vec3 vSoft;
 void main() {
+  float soft = smoothstep(vSoft.y - 0.15, vSoft.y + vSoft.z, vSoft.x);
   vec4 t = texture2D(uAtlas, vUv);       // rg: sprite normal (0..1), b: detail, a: density
-  float dens = t.a;
+  float dens = t.a * soft;
   if (dens * vCol.a < 0.004) discard;
   int ci = int(vCell + 0.5);
   float litOn = 0.0;
@@ -177,12 +189,15 @@ export class ParticleSystem {
     this.pos = new Float32Array(max * 3);
     this.col = new Float32Array(max * 4);
     this.misc = new Float32Array(max * 4);
+    this.gy = new Float32Array(max).fill(-1e5);
     if (this.geo) this.geo.dispose();   // capacity changed: drop the old GPU buffers first (three re-uploads on next use)
     const g = this.geo || quadGeometry();
-    for (const n of ['iPos', 'iCol', 'iMisc', 'iVel']) if (g.getAttribute(n)) g.deleteAttribute(n);
+    for (const n of ['iPos', 'iCol', 'iMisc', 'iVel', 'iGround']) if (g.getAttribute(n)) g.deleteAttribute(n);
     const mk = (arr, n) => new THREE.InstancedBufferAttribute(arr, n).setUsage(THREE.DynamicDrawUsage);
     this.aPos = mk(this.pos, 3); this.aCol = mk(this.col, 4); this.aMisc = mk(this.misc, 4); this.aVel = mk(this.vel, 3);
+    this.aGround = mk(this.gy, 1);
     g.setAttribute('iPos', this.aPos); g.setAttribute('iCol', this.aCol); g.setAttribute('iMisc', this.aMisc); g.setAttribute('iVel', this.aVel);
+    g.setAttribute('iGround', this.aGround);
     g.instanceCount = 0;
     g.userData.shared = true;
     this.geo = g;
@@ -203,6 +218,10 @@ export class ParticleSystem {
     this.life[i] = this.maxLife[i] = life;
     this.s0[i] = size0; this.s1[i] = size1; this.a0[i] = alpha; this.drag[i] = drag; this.grav[i] = gravity;
     this.misc[i4] = size0; this.misc[i4 + 1] = sprite | 0; this.misc[i4 + 2] = Math.random() * TAU; this.misc[i4 + 3] = 0;
+    const gh = this.ctx.world?.groundHeight;
+    let gy = gh ? gh.call(this.ctx.world, x, z) : -1e5;
+    if (!(gy > -1e5) || y < gy - 0.5) gy = -1e5;   // spawned under the terrain surface (tunnels, under decks): no fade
+    this.gy[i] = gy;
     this.rotV[i] = (Math.random() - 0.5) * (sprite === 1 || sprite === 2 || sprite === 3 ? 0.8 : 0.2);
   }
   update(dt) {
@@ -227,7 +246,7 @@ export class ParticleSystem {
     this._alive = alive;
     if (alive === 0 && this.high > 0 && this.cursor === 0) this.high = 0;
     this.geo.instanceCount = this.high;
-    for (const a of [this.aPos, this.aCol, this.aMisc, this.aVel]) {
+    for (const a of [this.aPos, this.aCol, this.aMisc, this.aVel, this.aGround]) {
       a.clearUpdateRanges();
       a.addUpdateRange(0, this.high * a.itemSize);
       a.needsUpdate = true;
@@ -252,7 +271,7 @@ ${NOISE_PARS}
 attribute vec3 iPos;
 attribute vec3 iCol;
 attribute vec4 iPar;     // size (m), minPx, pulse (0 none, 1 beat, 2 sparkle, 3 flicker), phase
-uniform float uBeat, uTime, uSizeMul;
+uniform float uBeat, uTime, uSizeMul, uMinMul;
 uniform vec2 uPx;
 varying vec3 vCol;
 varying vec2 vUv;
@@ -265,7 +284,7 @@ void main() {
   vec4 clip = projectionMatrix * c;
   float size = iPar.x * uSizeMul;
   vec2 ndc = vec2(projectionMatrix[0][0], projectionMatrix[1][1]) * size / max(-c.z, 0.1);
-  ndc = max(ndc, iPar.y * uSizeMul * uPx);
+  ndc = max(ndc, iPar.y * uMinMul * uPx);
   clip.xy += position.xy * ndc * clip.w;
   float p = 1.0;
   float ph = iPar.w;
@@ -305,7 +324,7 @@ class Glows {
     this.geo.userData.shared = true;
     const beat = ctx.materials?.uniforms?.uBeat ?? { value: 0 };
     this.material = new THREE.ShaderMaterial({
-      uniforms: { ...fogUniforms(ctx), uBeat: beat, uTime: LIGHT.uTime, uPx: LIGHT.uPx, uSizeMul: LIGHT.uSizeMul },
+      uniforms: { ...fogUniforms(ctx), uBeat: beat, uTime: LIGHT.uTime, uPx: LIGHT.uPx, uSizeMul: LIGHT.uSizeMul, uMinMul: LIGHT.uMinMul },
       vertexShader: GLOW_VS, fragmentShader: GLOW_FS,
       transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
     });
@@ -597,10 +616,10 @@ class Decals {
     const ground = world?.groundHeight && n.y > 0.6 && Math.abs(pos.y - world.groundHeight(pos.x, pos.z)) < 4;
     // tangent frame with a random rotation about the normal
     const rot = Math.random() * TAU;
-    const t = new THREE.Vector3(1, 0, 0);
+    const t = _dt.set(1, 0, 0);
     if (Math.abs(n.x) > 0.9) t.set(0, 0, 1);
     t.sub(_v.copy(n).multiplyScalar(t.dot(n))).normalize().applyAxisAngle(n, rot);
-    const b = _v.copy(n).cross(t);
+    const b = _db.copy(n).cross(t);
     const V = DECAL_GRID * DECAL_GRID;
     const u0 = (cell % 2) * 0.5, v0 = Math.floor(cell / 2) * 0.5;
     const shade = kind === 'crater' ? 1 : 0.9 + Math.random() * 0.1;
@@ -663,6 +682,7 @@ export function install(ctx) {
       ctx.renderer.getDrawingBufferSize(size);
       LIGHT.uPx.value.set(2 / Math.max(1, size.x), 2 / Math.max(1, size.y));
       LIGHT.uSizeMul.value = ctx.tier.name === 'low' ? 1.3 : 1;
+      LIGHT.uMinMul.value = ctx.tier.name === 'low' ? 1.5 : 1;   // AD §4.5: 4 px beacons hold 5+ px on Low (no bloom to spread them)
       glows.prepare(scene || ctx.scene);
     },
     /** extra: live counts for tests and budgets */

@@ -54,20 +54,20 @@ export class Route {
       const p1 = P[i], p2 = P[i + 1];
       const p0 = (i > 0 && !sharp[i]) ? P[i - 1] : [2 * p1[0] - p2[0], 2 * p1[1] - p2[1]];
       const p3 = (i + 2 < n && !sharp[i + 1]) ? P[i + 2] : [2 * p2[0] - p1[0], 2 * p2[1] - p1[1]];
-      const chord = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+      const chord = Math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2);
       const m = Math.max(2, Math.ceil(chord / DENSE));
       ctrlS[i] = s;
       for (let k = 0; k <= m; k++) {
         const t = k / m;
         crPoint(p0, p1, p2, p3, this.tension, t, q);
-        if (k > 0) s += Math.hypot(q.x - px, q.z - pz);
+        if (k > 0) s += Math.sqrt((q.x - px) ** 2 + (q.z - pz) ** 2);
         // tangent by a small central difference inside the span (one-sided at the ends)
         const h = 1e-4, ta = Math.max(0, t - h), tb = Math.min(1, t + h);
         crPoint(p0, p1, p2, p3, this.tension, ta, q2);
         const ax = q2.x, az = q2.z;
         crPoint(p0, p1, p2, p3, this.tension, tb, q2);
         let tx = q2.x - ax, tz = q2.z - az;
-        const tl = Math.hypot(tx, tz);
+        const tl = Math.sqrt(tx * tx + tz * tz);
         if (tl > 1e-12) { tx /= tl; tz /= tl; } else { tx = (p2[0] - p1[0]) / (chord || 1); tz = (p2[1] - p1[1]) / (chord || 1); }
         X.push(q.x); Z.push(q.z); TX.push(tx); TZ.push(tz); S.push(s);
         px = q.x; pz = q.z;
@@ -121,7 +121,7 @@ export class Route {
     const k = this._idx(s), S = this._S, L = S[k + 1] - S[k];
     const t = L > 0 ? clamp((s - S[k]) / L, 0, 1) : 0;
     const x = this._TX[k] + (this._TX[k + 1] - this._TX[k]) * t, z = this._TZ[k] + (this._TZ[k + 1] - this._TZ[k]) * t;
-    const l = Math.hypot(x, z);
+    const l = Math.sqrt(x * x + z * z);
     return l > 1e-12 ? out.set(x / l, 0, z / l) : out.set(this._TX[k], 0, this._TZ[k]);
   }
   yawAt(s) { const t = this.tangentAt(s, _t); return yawTo(t.x, t.z); }
@@ -129,8 +129,8 @@ export class Route {
     if (!this._hw) return this._hwConst;
     s = clamp(Number(s) || 0, 0, this._len);
     const C = this._ctrlS, n = C.length;
-    let i = 0;
-    while (i < n - 2 && C[i + 1] <= s) i++;
+    let i = 0, hi = n - 2;                    // the span holding s (binary search)
+    while (i < hi) { const m = (i + hi + 1) >> 1; if (C[m] <= s) i = m; else hi = m - 1; }
     const L = C[i + 1] - C[i];
     let t = L > 0 ? clamp((s - C[i]) / L, 0, 1) : 0;
     t = t * t * (3 - 2 * t);
@@ -154,11 +154,14 @@ export class Route {
     const g = this._grid;
     const i = Math.floor((x - g.x0) / GRID), j = Math.floor((z - g.z0) / GRID);
     let best = Infinity, bk = 0, bt = 0;
-    const X = this._X, Z = this._Z, nSeg = X.length - 1;
+    const X = this._X, Z = this._Z, nSeg = X.length - 1, CX = g.cx, CZ = g.cz, CR = g.cr;
     let a = 0, b = g.nChunks, list = null;
     if (i >= 0 && j >= 0 && i < g.nx && j < g.nz) { const cell = j * g.nx + i; a = g.offA[cell]; b = g.offB[cell]; list = g.list; }
     for (let q = a; q < b; q++) {
       const c = list ? list[q] : q;
+      // a chunk whose bounding circle is farther than the best distance so far cannot hold a nearer point
+      const ex = x - CX[c], ez = z - CZ[c], dc = Math.sqrt(ex * ex + ez * ez) - CR[c];
+      if (dc > 0 && dc * dc >= best) continue;
       const k0 = c * CHUNK, k1 = Math.min(nSeg, k0 + CHUNK);
       for (let k = k0; k < k1; k++) {
         const ax = X[k], az = Z[k], dx = X[k + 1] - ax, dz = Z[k + 1] - az;
@@ -176,7 +179,7 @@ export class Route {
     out.s = this._S[bk] + (this._S[bk + 1] - this._S[bk]) * bt;
     // signed lateral offset against the interpolated tangent (smooth across dense vertices)
     const tx0 = this._TX[bk] + (this._TX[bk + 1] - this._TX[bk]) * bt, tz0 = this._TZ[bk] + (this._TZ[bk + 1] - this._TZ[bk]) * bt;
-    const tl = Math.hypot(tx0, tz0);
+    const tl = Math.sqrt(tx0 * tx0 + tz0 * tz0);
     const tx = tl > 1e-9 ? tx0 / tl : dx / L, tz = tl > 1e-9 ? tz0 / tl : dz / L;
     out.l = (x - qx) * -tz + (z - qz) * tx;
     out.dist = Math.sqrt(best);
@@ -203,11 +206,12 @@ export class Route {
       for (let k = c * CHUNK; k <= Math.min(nSeg, c * CHUNK + CHUNK); k++) {
         x0 = Math.min(x0, X[k]); x1 = Math.max(x1, X[k]); z0 = Math.min(z0, Z[k]); z1 = Math.max(z1, Z[k]);
       }
-      cx[c] = (x0 + x1) / 2; cz[c] = (z0 + z1) / 2; cr[c] = Math.hypot(x1 - x0, z1 - z0) / 2;
+      cx[c] = (x0 + x1) / 2; cz[c] = (z0 + z1) / 2; cr[c] = Math.sqrt((x1 - x0) ** 2 + (z1 - z0) ** 2) / 2;
       bx0 = Math.min(bx0, x0); bx1 = Math.max(bx1, x1); bz0 = Math.min(bz0, z0); bz1 = Math.max(bz1, z1);
     }
-    // cover everything a level can query: the generated bounds (hw + 1500) plus the rendered margin
-    const M = this._hwMax + 4200;
+    // cover everything a level queries: the generated bounds (hw + 1500) and a margin (queries outside fall back to a
+    // scan of every chunk: correct, just slower)
+    const M = this._hwMax + 1800;
     const SUP = GRID * SUPER;
     const x0 = Math.floor((bx0 - M) / SUP) * SUP, z0 = Math.floor((bz0 - M) / SUP) * SUP;
     const sx = Math.ceil((bx1 + M - x0) / SUP), sz = Math.ceil((bz1 + M - z0) / SUP);
@@ -224,14 +228,14 @@ export class Route {
       const PX = x0 + (I + 0.5) * SUP, PZ = z0 + (J + 0.5) * SUP;
       let minUpper = Infinity, minLower = Infinity;
       for (let c = 0; c < nChunks; c++) {
-        const d = Math.hypot(PX - cx[c], PZ - cz[c]);
+        const d = Math.sqrt((PX - cx[c]) ** 2 + (PZ - cz[c]) ** 2);
         if (d + cr[c] < minUpper) minUpper = d + cr[c];
         if (d - cr[c] < minLower) minLower = d - cr[c];
       }
       const limS = minUpper + diagS + diag;
       let ns = 0;
       const sa = cnt;
-      for (let c = 0; c < nChunks; c++) if (Math.hypot(PX - cx[c], PZ - cz[c]) - cr[c] <= limS) { sub[ns++] = c; push(c); }
+      for (let c = 0; c < nChunks; c++) if (Math.sqrt((PX - cx[c]) ** 2 + (PZ - cz[c]) ** 2) - cr[c] <= limS) { sub[ns++] = c; push(c); }
       const sb = cnt;
       const near = minLower - diagS / 2 <= BAND;
       for (let jj = 0; jj < SUPER; jj++) for (let ii = 0; ii < SUPER; ii++) {
@@ -239,23 +243,23 @@ export class Route {
         if (!near) { offA[k] = sa; offB[k] = sb; continue; }
         const px = x0 + (I * SUPER + ii + 0.5) * GRID, pz = z0 + (J * SUPER + jj + 0.5) * GRID;
         let mu = Infinity;
-        for (let q = 0; q < ns; q++) { const c = sub[q]; const d = Math.hypot(px - cx[c], pz - cz[c]) + cr[c]; if (d < mu) mu = d; }
+        for (let q = 0; q < ns; q++) { const c = sub[q]; const d = Math.sqrt((px - cx[c]) ** 2 + (pz - cz[c]) ** 2) + cr[c]; if (d < mu) mu = d; }
         const lim = mu + diag;
         offA[k] = cnt;
-        for (let q = 0; q < ns; q++) { const c = sub[q]; if (Math.hypot(px - cx[c], pz - cz[c]) - cr[c] <= lim) push(c); }
+        for (let q = 0; q < ns; q++) { const c = sub[q]; if (Math.sqrt((px - cx[c]) ** 2 + (pz - cz[c]) ** 2) - cr[c] <= lim) push(c); }
         offB[k] = cnt;
       }
     }
     list = list.slice(0, cnt);
-    this._grid = { x0, z0, nx, nz, offA, offB, list, nChunks };
+    this._grid = { x0, z0, nx, nz, offA, offB, list, nChunks, cx, cz, cr };
   }
 }
 
 /** Barry–Goldman evaluation of a Catmull-Rom span p1→p2 with knot exponent alpha. Writes {x, z}. */
 function crPoint(p0, p1, p2, p3, alpha, t, out) {
-  const d01 = Math.max(1e-6, Math.pow(Math.hypot(p1[0] - p0[0], p1[1] - p0[1]), alpha));
-  const d12 = Math.max(1e-6, Math.pow(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]), alpha));
-  const d23 = Math.max(1e-6, Math.pow(Math.hypot(p3[0] - p2[0], p3[1] - p2[1]), alpha));
+  const d01 = Math.max(1e-6, Math.pow(Math.sqrt((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2), alpha));
+  const d12 = Math.max(1e-6, Math.pow(Math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2), alpha));
+  const d23 = Math.max(1e-6, Math.pow(Math.sqrt((p3[0] - p2[0]) ** 2 + (p3[1] - p2[1]) ** 2), alpha));
   const t0 = 0, t1 = d01, t2 = t1 + d12, t3 = t2 + d23;
   const T = t1 + (t2 - t1) * t;
   if (t <= 0) { out.x = p1[0]; out.z = p1[1]; return out; }

@@ -420,11 +420,17 @@ export function createWeapon(ctx, part, owner) {
   function harpoonHit(hit) {
     w.head = null;
     const C = ctx.combat, t = hit.target;
-    const light = t && t.pos && (t.impMax ?? Infinity) <= (st.lightImpMax ?? 1000) && !t.boss && !t.immovable && t.vel;
+    // A5.1 / L1 §13.4: a target with impMax <= 1000 takes 300 dmg + 2000 imp (a guaranteed stagger) and is reeled to
+    // 12 m in front of the owner over 0.6 s. Anything else (heavy, boss part, structure, ground) pulls the owner to
+    // the hit point and takes no damage. Boss parts count as "anything else" whatever their impMax.
+    // P4 ruling (spec gap): a light target that cannot move (immovable: turret, beacon; or no velocity) still takes
+    // the 300 dmg + 2000 imp stagger, but is not reeled and does not pull the owner: the cable lets go at once.
+    const light = t && (t.impMax ?? Infinity) <= (st.lightImpMax ?? 1000) && !t.boss;
     if (light) {
       const info = C?.damage(t, st.dmg ?? 300, st.imp ?? 2000, src('harpoon'));
-      sfx(ctx, 'winch', t.pos);
-      if (info && !info.killed && t.alive) {
+      sfx(ctx, 'winch', t.pos || hit.point);
+      const reelable = t.pos && t.vel && !t.immovable;
+      if (reelable && info && !info.killed && t.alive) {
         w.state = 'reel';
         const fromP = t.pos.clone();
         S.reels.push({ target: t, owner, weapon: w, t: 0, dur: st.reelTime ?? 0.6, dist: st.reelTo ?? 12, from: fromP, fromY: fromP.y });
@@ -434,8 +440,7 @@ export function createWeapon(ctx, part, owner) {
       w.state = 'idle';
       return;
     }
-    if (t && C) C.damage(t, st.dmg ?? 300, 0, src('harpoon'));
-    // heavy, boss part, structure or the world: pull the owner to the point
+    // heavy, boss part, structure or the world: pull the owner to the point (no damage, per spec)
     w.state = 'pull';
     owner.lunge = null;
     owner.pull = { point: hit.point.clone(), speed: st.pullSpeed ?? 70, stop: st.pullStop ?? 6, t: 0,

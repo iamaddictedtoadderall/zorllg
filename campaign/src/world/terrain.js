@@ -48,10 +48,12 @@ function hash1(n) {
 function worley(seed, cx, cz = cx) {
   const r = mulberry32(seed), pts = new Float32Array(cx * cz * 2);
   for (let i = 0; i < pts.length; i++) pts[i] = r();
+  // anisotropic cells (cz < cx: taller than wide) need a wider search across the narrow axis, or the pattern breaks
+  const rx = cx > cz ? Math.ceil(cx / cz) + 1 : 1, ry = cz > cx ? Math.ceil(cz / cx) + 1 : 1;
   return (u, v, out) => {
     const x = u * cx, y = v * cz, xi = Math.floor(x), yi = Math.floor(y);
     let f1 = 9, f2 = 9, id = 0;
-    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    for (let j = -ry; j <= ry; j++) for (let i = -rx; i <= rx; i++) {
       const gx = ((xi + i) % cx + cx) % cx, gy = ((yi + j) % cz + cz) % cz, k = gy * cx + gx;
       // distance in units of the cell width (cells cz/cx times taller than wide stretch the pattern vertically)
       const d = Math.hypot(xi + i + pts[k * 2] - x, (yi + j + pts[k * 2 + 1] - y) * (cx / cz));
@@ -82,31 +84,69 @@ function detailTextures(style, size, aniso) {
   if (T) { for (const t of Object.values(T)) t.anisotropy = aniso; return T; }
   const s = 9137;
   const A = tileable2(s, 8), B = tileable2(s + 1, 32), C = tileable2(s + 2, 64), E = tileable2(s + 3, 4), F = tileable2(s + 4, 16);
-  const W = worley(s + 5, 24), Wr = worley(s + 6, 10, 3), Wi = worley(s + 7, 36), Wb = worley(s + 9, 8);
+  const W = worley(s + 5, 24), Wr = worley(s + 6, 10, 3), Wi = worley(s + 7, 36), Wb = worley(s + 9, 8), Wc = worley(s + 10, 16, 8);
   const N4 = tileable2(s + 11, 4), N8 = tileable2(s + 12, 8);
   // vertical streaks: smooth noise across 48 columns, constant down each column
-  const colH = new Float32Array(48); { const r = mulberry32(s + 13); for (let i = 0; i < 48; i++) colH[i] = r(); }
-  const streakAt = (u) => { const x = u * 48, i = Math.floor(x), f = x - i, t = f * f * (3 - 2 * f); return colH[i % 48] + (colH[(i + 1) % 48] - colH[i % 48]) * t; };
+  const colH = new Float32Array(32); { const r = mulberry32(s + 13); for (let i = 0; i < 32; i++) colH[i] = r(); }
+  const streakAt = (u) => { const x = ((u % 1) + 1) % 1 * 32, i = Math.floor(x), f = x - i, t = f * f * (3 - 2 * f); return colH[i % 32] + (colH[(i + 1) % 32] - colH[i % 32]) * t; };
   const fbmT = (u, v) => 0.5 * E(u * 4, v * 4) + 0.3 * A(u * 8, v * 8) + 0.2 * F(u * 16, v * 16);
+  // irregular strata (AD §3.6): 5 bands per tile with random widths, boundaries warped by two octaves of noise; only some
+  // boundaries carry a thin dark (or pale) line, hard bands stand proud. Evenly spaced bands with a line at every
+  // boundary read as scan lines on a cliff.
+  const BANDS = (() => {
+    const r = mulberry32(s + 21), n = 5, w = [];
+    let sum = 0;
+    for (let i = 0; i < n; i++) { const x = 0.45 + r() * 1.4; w.push(x); sum += x; }
+    const b = [0]; let acc = 0;
+    for (let i = 0; i < n; i++) { acc += w[i] / sum; b.push(acc); }
+    const line = [], hard = [], joints = [];
+    for (let i = 0; i < n; i++) {
+      const q = r(); line.push(q < 0.35 ? -1 : q < 0.5 ? 1 : 0); hard.push(r() > 0.45);
+      // vertical joints confined to the band (blocky jointing between bedding planes), 4 to 9 per tile width
+      const nj = 4 + Math.floor(r() * 6), js = [];
+      for (let k = 0; k < nj; k++) js.push([r(), 0.45 + 0.55 * r()]);
+      joints.push(js);
+    }
+    return { n, b, line, hard, joints };
+  })();
+  const strata = (u, v, out) => {
+    let y = v + 0.05 * (E(u * 4, v * 4) - 0.5) * 2 + 0.018 * (F(u * 16, v * 16) - 0.5) * 2;
+    y -= Math.floor(y);
+    let i = 0; while (i < BANDS.n - 1 && y >= BANDS.b[i + 1]) i++;
+    const d0 = y - BANDS.b[i], d1 = BANDS.b[i + 1] - y;
+    // line at the band's lower boundary (index i) and upper boundary (index i + 1 → the next band's lower one)
+    const l0 = BANDS.line[i], l1 = BANDS.line[(i + 1) % BANDS.n];
+    const e0 = smooth(0.012, 0.0, d0), e1 = smooth(0.012, 0.0, d1);
+    out.edge = (l0 < 0 ? e0 : 0) + (l1 < 0 ? e1 : 0);
+    out.pale = (l0 > 0 ? e0 : 0) + (l1 > 0 ? e1 : 0);
+    out.hard = BANDS.hard[i] ? 1 : 0;
+    out.round = Math.min(1, Math.min(d0, d1) / 0.04);        // hard bands round off at their edges
+    // joints: distance to the nearest of the band's joints (slightly wavy, wrapping in u)
+    const uu = u + 0.012 * (E(u * 4 + 0.7, v * 8) - 0.5) * 2;
+    let jd = 1, js = 0;
+    for (const [ju, jw] of BANDS.joints[i]) { let d = Math.abs(uu - ju); d = Math.min(d, 1 - d); if (d < jd) { jd = d; js = jw; } }
+    out.joint = smooth(0.007, 0.0, jd) * js;
+    return out;
+  };
+  const _st = { edge: 0, pale: 0, hard: 0, round: 1, joint: 0 };
   let soil, rock;
   if (style === 'snow') {
     soil = makeData(size, (u, v, o) => {
       // wind sastrugi: noise stretched 6:1 along u, plus sparse glassy ice pebbles
       const st = 0.55 * E(u * 4, v * 24) + 0.3 * A(u * 8, v * 48) + 0.15 * C(u * 64, v * 64);
       const w = Wi(u, v, _wo), peb = smooth(0.3, 0.12, w.f1 * 1.0) * (hash1(w.id + 3) > 0.82 ? 1 : 0);
-      o[0] = 0.52 + (st - 0.5) * 0.3 - peb * 0.28;
+      o[0] = 0.52 + (st - 0.5) * 0.3 - peb * 0.1;
       o[1] = 0.25 + st * 0.6 + peb * 0.15;
       o[2] = 1 - smooth(0.32, 0.15, st) * 0.35;
       o[3] = 0.8 - peb * 0.65 + (st - 0.5) * 0.12;
     });
     rock = makeData(size, (u, v, o) => {
-      const n = fbmT(u, v), band = v * 7 + 0.15 * (E(u * 4, v * 4) - 0.5) * 2, bi = Math.floor(band), bf = band - bi;
-      const hard = hash1(bi * 7 + 11) > 0.45, edge = smooth(0.07, 0.0, Math.min(bf, 1 - bf));
-      const w = Wr(u, v, _wo), crack = smooth(0.06, 0.0, w.f2 - w.f1);
+      const n = fbmT(u, v), st = strata(u, v, _st), hard = st.hard * st.round;
+      const w = Wc(u, v, _wo), crack = Math.max(st.joint * 0.7, smooth(0.035, 0.0, w.f2 - w.f1) * (hash1(w.id + 5) > 0.4 ? 1 : 0.2));
       // rime fills the fractures: cracks read pale, frost flecks on hard bands
-      o[0] = 0.5 + (hard ? 0.08 : -0.06) + (n - 0.5) * 0.3 + crack * 0.3 - edge * 0.12;
-      o[1] = (hard ? 0.62 : 0.42) + n * 0.2 - crack * 0.4 - edge * 0.1;
-      o[2] = 1 - crack * 0.5 - edge * 0.25;
+      o[0] = 0.5 + hard * 0.06 - 0.03 + (n - 0.5) * 0.3 + crack * 0.2 - st.edge * 0.1 + st.pale * 0.08;
+      o[1] = 0.42 + hard * 0.18 + n * 0.2 - crack * 0.4 - st.edge * 0.1;
+      o[2] = 1 - crack * 0.5 - st.edge * 0.2;
       o[3] = 0.78 - crack * 0.3 + (n - 0.5) * 0.1;
     });
   } else if (style === 'ash') {
@@ -132,13 +172,14 @@ function detailTextures(style, size, aniso) {
       o[3] = 0.82 - peb * 0.25 + (base - 0.5) * 0.2;
     });
     rock = makeData(size, (u, v, o) => {
-      const n = fbmT(u, v), band = v * 7 + 0.15 * (E(u * 4, v * 4) - 0.5) * 2, bi = Math.floor(band), bf = band - bi;
-      const hard = hash1(bi * 7 + 11) > 0.45, edge = smooth(0.07, 0.0, Math.min(bf, 1 - bf));
-      const w = Wr(u, v, _wo), crack = smooth(0.06, 0.0, w.f2 - w.f1);
-      const streak = smooth(0.6, 0.9, streakAt(u)) * (0.5 + 0.5 * E(u * 4, v * 4)) * 0.25;   // varnish streaks down the face
-      o[0] = 0.5 + (hard ? 0.1 : -0.07) + (n - 0.5) * 0.3 - edge * 0.25 - crack * 0.2 - streak;
-      o[1] = (hard ? 0.65 : 0.4) + n * 0.2 - crack * 0.45 - edge * 0.1;
-      o[2] = 1 - crack * 0.85 - edge * 0.3;
+      const n = fbmT(u, v), st = strata(u, v, _st), hard = st.hard * st.round;
+      // fractures: the band's vertical joints, plus a faint partial network
+      const w = Wr(u, v, _wo), crack = Math.max(st.joint, smooth(0.04, 0.0, w.f2 - w.f1) * (hash1(w.id + 5) > 0.55 ? 0.35 : 0));
+      // varnish streaks down the face: wobbling, broken up along their length
+      const streak = smooth(0.62, 0.97, streakAt(u + 0.015 * (E(u * 4 + 0.9, v * 8) - 0.5) * 2)) * smooth(0.3, 0.8, E(u * 4 + 0.31, v * 4)) * 0.08;
+      o[0] = 0.5 + hard * 0.08 - 0.03 + (n - 0.5) * 0.3 - st.edge * 0.12 + st.pale * 0.08 - crack * 0.14 - streak;
+      o[1] = 0.4 + hard * 0.22 + n * 0.2 - crack * 0.45 - st.edge * 0.1;
+      o[2] = 1 - crack * 0.85 - st.edge * 0.25;
       o[3] = 0.88 + (n - 0.5) * 0.1;
     });
   }
@@ -152,6 +193,8 @@ function detailTextures(style, size, aniso) {
   TEX_CACHE.set(key, T);
   return T;
 }
+/** extra (tools/tests): the cached detail maps of a surface style: { soil, rock, noise } DataTextures */
+export function terrainDetailTextures(style = 'grit', size = 512, aniso = 4) { return detailTextures(style, size, aniso); }
 /** 256 × 1 strata colour ramp (sRGB data texture) */
 function strataRamp(colors, seed) {
   const r = mulberry32(seed), n = 256, data = new Uint8Array(n * 4);
@@ -245,10 +288,15 @@ const F_ALBEDO = /* glsl */`
 #else
   vec4 rk = texture2D( tRock, vec2( vTW.x + vTW.z, vTW.y ) * 0.06 );
 #endif
+  // the detail maps lose contrast with distance (mid-distance moiré on cliffs); the mips take over beyond
+  float tFar = smoothstep( 180.0, 1200.0, length( vViewPosition ) );
+  rk = mix( rk, vec4( 0.48, 0.5, 0.86, 0.86 ), tFar * 0.55 );
+  soil = mix( soil, vec4( 0.5, 0.45, 0.9, 0.82 ), tFar * 0.4 );
   float macro = texture2D( tNoise, vTW.xz * 0.0024 ).r;
   float rockW = smoothstep( uRockSlope.x, uRockSlope.y, 1.0 - wn.y + ( soil.g - 0.5 ) * 0.12 );
   float band = vTW.y / uStrata.x + ( texture2D( tNoise, vTW.xz * 0.0015 ).g - 0.5 ) * uStrata.y + rk.g * 0.15;
-  vec3 strataCol = texture2D( tStrata, vec2( fract( band ), 0.5 ) ).rgb;
+  // explicit gradients of the unwrapped band: fract() would jump at every wrap and pick the smallest mip there (a line)
+  vec3 strataCol = textureGrad( tStrata, vec2( fract( band ), 0.5 ), vec2( dFdx( band ), 0.0 ), vec2( dFdy( band ), 0.0 ) ).rgb;
   vec3 rockCol = mix( diffuseColor.rgb, strataCol, uStrata.z ) * ( 0.7 + 0.6 * rk.r );
   vec3 soilCol = mix( diffuseColor.rgb * ( 0.82 + 0.36 * soil.r ), uPath * ( 0.9 + 0.2 * soil.r ), vSurf.a * 0.5 );
   vec3 col = mix( soilCol, rockCol, rockW ) * ( 0.86 + 0.28 * macro );
@@ -483,7 +531,8 @@ export class TerrainRenderer {
       const kids = this._kids(n);
       let all = true;
       for (const k of kids) if (!this._canCover(k)) { all = false; break; }
-      if (all) { for (const k of kids) this._cover(k, cx, cz, covered || !!n.mesh); return true; }
+      // while settling, recurse straight to the leaves: they are all built before anything is drawn
+      if (all || this._settling) { for (const k of kids) this._cover(k, cx, cz, covered || !!n.mesh); return true; }
       for (const k of kids) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), covered || !!n.mesh); }
     }
     else if (n.L < MAXL && n.mesh && d < this.K * n.size * 1.3) {
@@ -491,7 +540,9 @@ export class TerrainRenderer {
       for (const k of this._kids(n)) if (!k.mesh) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), true, 2000); }
     }
     if (n.mesh) { this._draw(n); return true; }
-    this._want(n, d, covered);
+    // a split node without all its children is wanted as a fallback (drawn while they build); prewarm and settle skip
+    // fallbacks, because they build the children right away
+    this._want(n, d, covered, 0, split);
     if (n.kids && n.kids.every(k => this._canCover(k))) { for (const k of n.kids) this._drawCovered(k, cx, cz); return true; }
     return false;
   }
@@ -508,11 +559,12 @@ export class TerrainRenderer {
     for (const k of n.kids) this._drawCovered(k, cx, cz);
   }
   /** queue a build. Priority: holes first (nothing drawn above), then equal screen error (distance / size) */
-  _want(n, d, covered = true, extra = 0) {
+  _want(n, d, covered = true, extra = 0, fallback = false) {
     if (n.mesh || n.want === this._frame) return;
     n.want = this._frame;
     n._p = (covered ? 1000 : 0) + extra + d / n.size;
-    if (extra) n._pre = true; else n._pre = false;
+    n._pre = !!extra;
+    n._fb = fallback;
     this._queue.push(n); n._d = d;
   }
   _draw(n) {
@@ -555,53 +607,63 @@ export class TerrainRenderer {
     if (!slot || slot.segs !== this.segs) { if (slot) slot.geo.dispose(); slot = this._newGeo(); }
     const hf = this.hf, nseg = this.segs, V = nseg + 1, sp = n.size / nseg, B = 2, G = V + 2 * B;
     const hg = this._hg && this._hg.length === G * G ? this._hg : (this._hg = new Float64Array(G * G));
-    for (let j = 0; j < G; j++) {
-      const z = n.z0 + (j - B) * sp;
-      for (let i = 0; i < G; i++) hg[j * G + i] = hf.heightAt(n.x0 + (i - B) * sp, z);
-    }
+    // heights on the node lattice plus a 2-vertex border (normals and morph targets), batch-evaluated: identical to
+    // heightAt per sample, so neighbouring nodes and the collision tiles agree exactly
+    hf.heightGrid(n.x0 - B * sp, n.z0 - B * sp, sp, G, G, hg);
     const geo = slot.geo, P = geo.attributes.position.array, N = geo.attributes.normal.array, C = geo.attributes.color.array,
           SF = geo.attributes.surf.array, M = geo.attributes.morph.array;
     const pal = this.pal, h20 = hf.h20 ?? 0, h80 = hf.h80 ?? 1;
+    const gR = pal.ground.r, gG = pal.ground.g, gB = pal.ground.b, sR = pal.sediment.r, sG = pal.sediment.g, sB = pal.sediment.b;
+    const hR = pal.high.r, hG = pal.high.g, hB = pal.high.b, rR = pal.rock.r, rG = pal.rock.g, rB = pal.rock.b;
+    const dR = pal.dust.r, dG = pal.dust.g, dB = pal.dust.b;
     let minY = Infinity, maxY = -Infinity;
-    const H = (i, j) => hg[(j + B) * G + i + B];
-    const nrm = (i, j, s, out) => {           // normal at lattice (i, j) with neighbour step s (in vertices)
-      const hx = (H(i + s, j) - H(i - s, j)) / (2 * s * sp), hz = (H(i, j + s) - H(i, j - s)) / (2 * s * sp);
-      const l = Math.sqrt(hx * hx + hz * hz + 1);
-      out[0] = -hx / l; out[1] = 1 / l; out[2] = -hz / l; return out;
-    };
-    const nA = [0, 0, 0], nB = [0, 0, 0], nO = [0, 0, 0];
+    const i2s = 1 / (2 * sp), i4s = 1 / (4 * sp);
+    const vn = this._vn, isLow = n.L === 0;
     for (let j = 0; j < V; j++) for (let i = 0; i < V; i++) {
-      const v = j * V + i, x = n.x0 + i * sp, z = n.z0 + j * sp, h = H(i, j);
+      const v = j * V + i, x = n.x0 + i * sp, z = n.z0 + j * sp, g = (j + B) * G + i + B, h = hg[g];
       if (h < minY) minY = h; if (h > maxY) maxY = h;
       P[v * 3] = i * sp; P[v * 3 + 1] = h; P[v * 3 + 2] = j * sp;
-      nrm(i, j, 1, nO);
-      N[v * 3] = nO[0] * 127; N[v * 3 + 1] = nO[1] * 127; N[v * 3 + 2] = nO[2] * 127;
-      // morph target: the parent's surface at this point
+      // normal: central differences on the node's own lattice (same-level neighbours agree exactly)
+      let hx = (hg[g + 1] - hg[g - 1]) * i2s, hz = (hg[g + G] - hg[g - G]) * i2s;
+      let l = 1 / Math.sqrt(hx * hx + hz * hz + 1);
+      const ny = l;
+      N[v * 3] = -hx * l * 127; N[v * 3 + 1] = l * 127; N[v * 3 + 2] = -hz * l * 127;
+      // morph target: the parent's surface at this point (odd vertices: the mean of their even neighbours along the
+      // parent's edge/diagonal) and the parent's normal (step-2 differences)
       const oi = i & 1, oj = j & 1;
-      let ty;
-      if (!oi && !oj) { ty = h; nrm(i, j, 2, nA); nB[0] = nA[0]; nB[1] = nA[1]; nB[2] = nA[2]; }
-      else if (oi && !oj) { ty = (H(i - 1, j) + H(i + 1, j)) * 0.5; nrm(i - 1, j, 2, nA); nrm(i + 1, j, 2, nB); }
-      else if (!oi && oj) { ty = (H(i, j - 1) + H(i, j + 1)) * 0.5; nrm(i, j - 1, 2, nA); nrm(i, j + 1, 2, nB); }
-      else { ty = (H(i - 1, j - 1) + H(i + 1, j + 1)) * 0.5; nrm(i - 1, j - 1, 2, nA); nrm(i + 1, j + 1, 2, nB); }
-      let mx = nA[0] + nB[0], my = nA[1] + nB[1], mz = nA[2] + nB[2];
-      const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
-      M[v * 4] = ty; M[v * 4 + 1] = mx / ml; M[v * 4 + 2] = mz / ml; M[v * 4 + 3] = n.L > 0 ? n.size : 0;
+      let ty, mx, my, mz;
+      if (!oi && !oj) {
+        ty = h; hx = (hg[g + 2] - hg[g - 2]) * i4s; hz = (hg[g + 2 * G] - hg[g - 2 * G]) * i4s;
+        l = 1 / Math.sqrt(hx * hx + hz * hz + 1); mx = -hx * l; my = l; mz = -hz * l;
+      } else {
+        const ga = oi && !oj ? g - 1 : !oi && oj ? g - G : g - G - 1, gb = oi && !oj ? g + 1 : !oi && oj ? g + G : g + G + 1;
+        ty = (hg[ga] + hg[gb]) * 0.5;
+        let ax = (hg[ga + 2] - hg[ga - 2]) * i4s, az = (hg[ga + 2 * G] - hg[ga - 2 * G]) * i4s;
+        let la = 1 / Math.sqrt(ax * ax + az * az + 1);
+        let bx = (hg[gb + 2] - hg[gb - 2]) * i4s, bz = (hg[gb + 2 * G] - hg[gb - 2 * G]) * i4s;
+        let lb = 1 / Math.sqrt(bx * bx + bz * bz + 1);
+        mx = -ax * la - bx * lb; my = la + lb; mz = -az * la - bz * lb;
+        const ml = 1 / (Math.sqrt(mx * mx + my * my + mz * mz) || 1); mx *= ml; my *= ml; mz *= ml;
+      }
+      M[v * 4] = ty; M[v * 4 + 1] = mx; M[v * 4 + 2] = mz; M[v * 4 + 3] = n.L > 0 ? n.size : 0;
       // colour bake (AD §3.3 with the arch §5.4 sun term; sky AO goes to surf.b for the shader)
       hf.bakeAt(x, z, _bk);
-      const slope = _bk.slope >= 0 ? _bk.slope : 1 - nO[1];
+      const slope = _bk.slope >= 0 ? _bk.slope : 1 - ny;
       const sed = smooth(0.15, 0.6, _bk.flow);
       const cv = _bk.curv || 0;
-      _col.copy(pal.ground)
-        .lerp(pal.sediment, sed * 0.8)
-        .lerp(pal.high, Math.min(1, smooth(h20, h80, h) * 0.5 + Math.max(0, cv) * 0.35))
-        .lerp(_c2.copy(pal.sediment).multiplyScalar(0.8), Math.max(0, -cv) * 0.3)
-        .lerp(pal.rock, smooth(0.16, 0.4, slope))
-        .lerp(pal.dust, _bk.bed * 0.6);
-      const patch = 0.88 + 0.24 * this._vn(x / 37, z / 37);
-      const light = patch * (0.55 + 0.45 * _bk.sun);
-      C[v * 3] = clamp(_col.r * light, 0, 1) * 65535; C[v * 3 + 1] = clamp(_col.g * light, 0, 1) * 65535; C[v * 3 + 2] = clamp(_col.b * light, 0, 1) * 65535;
-      SF[v * 4] = clamp(_bk.flow * 1.3, 0, 1) * 255; SF[v * 4 + 1] = sed * 255; SF[v * 4 + 2] = _bk.sky * 255; SF[v * 4 + 3] = _bk.bed * 255;
+      let r = gR, gg = gG, b = gB, t;
+      t = sed * 0.8; r += (sR - r) * t; gg += (sG - gg) * t; b += (sB - b) * t;
+      t = Math.min(1, smooth(h20, h80, h) * 0.5 + (cv > 0 ? cv : 0) * 0.35); r += (hR - r) * t; gg += (hG - gg) * t; b += (hB - b) * t;
+      t = (cv < 0 ? -cv : 0) * 0.3; r += (sR * 0.8 - r) * t; gg += (sG * 0.8 - gg) * t; b += (sB * 0.8 - b) * t;
+      t = smooth(0.16, 0.4, slope); r += (rR - r) * t; gg += (rG - gg) * t; b += (rB - b) * t;
+      t = _bk.bed * 0.6; r += (dR - r) * t; gg += (dG - gg) * t; b += (dB - b) * t;
+      const light = (0.88 + 0.24 * vn(x / 37, z / 37)) * (0.55 + 0.45 * _bk.sun);
+      r *= light; gg *= light; b *= light;
+      C[v * 3] = (r > 1 ? 1 : r) * 65535; C[v * 3 + 1] = (gg > 1 ? 1 : gg) * 65535; C[v * 3 + 2] = (b > 1 ? 1 : b) * 65535;
+      const fl = _bk.flow * 1.3;
+      SF[v * 4] = (fl > 1 ? 1 : fl) * 255; SF[v * 4 + 1] = sed * 255; SF[v * 4 + 2] = _bk.sky * 255; SF[v * 4 + 3] = _bk.bed * 255;
     }
+    void isLow;
     // skirts
     const skirt = Math.max(4, 2 * sp), base = V * V;
     for (let e = 0; e < 4; e++) for (let k = 0; k < V; k++) {
@@ -699,9 +761,11 @@ export class TerrainRenderer {
     this._lastCam.copy(cam);
     this.uniforms.uLodCenter.value.copy(cam);
     this._syncUniforms();
-    for (let it = 0; it < 8; it++) {
+    for (let it = 0; it < 4; it++) {
+      this._settling = true;
       this._select(cam.x, cam.z);
-      const q = this._queue.filter(n => !n._pre);
+      this._settling = false;
+      const q = this._queue.filter(n => !n._pre && !n._fb);
       if (!q.length) break;
       for (const n of q) if (!n.mesh) this._build(n);
     }
@@ -716,9 +780,11 @@ export class TerrainRenderer {
     this.uniforms.uLodCenter.value.copy(cam);
     this._syncUniforms();
     let done = 0, t = performance.now();
-    for (let it = 0; it < 10; it++) {
+    for (let it = 0; it < 4; it++) {
+      this._settling = true;
       this._select(cam.x, cam.z);
-      const q = this._queue.filter(n => !n._pre);
+      this._settling = false;
+      const q = this._queue.filter(n => !n._pre && !n._fb);
       if (!q.length) break;
       for (const n of q) {
         if (!n.mesh) this._build(n);

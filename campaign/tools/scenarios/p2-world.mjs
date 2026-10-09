@@ -227,8 +227,9 @@ export default async function (g) {
         const s = rng() * r.length, l = (rng() * 2 - 1) * r.halfWidthAt(s), p = r.toWorld(s, l);
         maxD = Math.max(maxD, Math.abs(w.groundHeight(p.x, p.z) - hf.heightAt(p.x, p.z)));
       }
-      // raycast the settled 2 m mesh around the camera
+      // raycast the settled 2 m mesh around the player (settle the terrain there first: the LOD flight moved it)
       const P = c.player.pos;
+      w.terrain.settle(new T.Vector3(P.x, P.y + 12, P.z));
       const ray = new T.Raycaster(), down = new T.Vector3(0, -1, 0);
       let maxR = 0, n = 0, tries = 0;
       while (n < 200 && tries < 4000) {
@@ -272,6 +273,9 @@ export default async function (g) {
       const G = window.__game, c = G.ctx, w = c.world, r = w.route, T = c.THREE;
       const pos = new T.Vector3(), look = new T.Vector3();
       const at = (s) => { r.toWorld(s, 0, pos); pos.y = w.groundHeight(pos.x, pos.z) + 80; r.toWorld(Math.min(r.length, s + 200), 0, look); look.y = pos.y - 40; };
+      // render at a small viewport during the flight (uploads and disposals are what count, not pixels)
+      const rr = c.renderer, size = rr.getSize(new T.Vector2()), pr = rr.getPixelRatio();
+      rr.setPixelRatio(1); rr.setSize(320, 180, false);
       at(0); c.cameraRig.setFree(true, { pos, look });
       G.step(1); w.terrain.settle(c.camera.position); G.render();
       const geo0 = c.renderer.info.memory.geometries, built0 = w.terrain.stats().built;
@@ -282,12 +286,13 @@ export default async function (g) {
           at(s); c.cameraRig.setFree(true, { pos, look });
           G.step(1); frames++;
           maxPend = Math.max(maxPend, w.terrain.stats().pending);
-          if (frames % 90 === 0) G.render();
+          if (frames % 120 === 0) G.render();
         }
       };
       leg(0, r.length); leg(r.length, 0);
       at(0); c.cameraRig.setFree(true, { pos, look }); G.step(2); w.terrain.settle(c.camera.position); G.render();
       const geo1 = c.renderer.info.memory.geometries;
+      rr.setPixelRatio(pr); rr.setSize(size.x, size.y, false);
       return { maxPend, frames, geo0, geo1, built0, built1: w.terrain.stats().built, st: w.terrain.stats() };
     });
     g.log('streaming round trip:', fly);
@@ -450,10 +455,13 @@ export default async function (g) {
     if (g.args.tier !== 'low') {
       await g.eval(() => window.__game.setTier('low'));
       await g.step(2);
+      const hashHi = await g.eval(() => window.__game.ctx.world.scatter.colliderHash());
       await g.eval(async () => { const w = window.__game.ctx.world; await w.regenerateScatter(); });
       const lo = await g.eval(() => ({ lite: window.__game.ctx.world.terrain.material.defines.TERRAIN_LITE !== undefined,
-                                       segs: window.__game.ctx.world.terrain.segs, st: window.__game.ctx.world.terrain.stats() }));
+                                       segs: window.__game.ctx.world.terrain.segs, st: window.__game.ctx.world.terrain.stats(),
+                                       hash: window.__game.ctx.world.scatter.colliderHash(), sc: window.__game.ctx.world.scatter.stats() }));
       g.assert(lo.lite && lo.segs === 32, `Low tier: TERRAIN_LITE material and 32-segment nodes (${lo.lite}, ${lo.segs})`);
+      g.assert(lo.hash === hashHi, `prop colliders identical on High and Low (${hashHi} vs ${lo.hash}; Low draws ${lo.sc.instances} instances)`);
       await snowShots('low');
       await g.eval(() => window.__game.setTier('high'));
       await g.step(2);

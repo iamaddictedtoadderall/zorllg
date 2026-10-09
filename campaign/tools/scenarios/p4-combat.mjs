@@ -3,23 +3,44 @@
 // needs with the tag 'p4'. Time is advanced with step(); rendering happens only for screenshots.
 //
 //   node tools/playtest.mjs --scenario p4-combat --port 8300 --out /tmp/campaign-playtest/P4-p4-combat
+//   P4_SECTIONS=haul,kinds node tools/playtest.mjs --scenario p4-combat ...   (only those sections)
+
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const PARTS_EXPECT = {};   // filled from the page
+// the harness's output directory (playtest.mjs default when --out is absent)
+const OUT_DIR = (() => { const i = process.argv.indexOf('--out'); return i > 0 ? process.argv[i + 1] : '/tmp/campaign-playtest/p4-combat'; })();
 
 export default async function (g) {
   const T0 = Date.now();
+  // P4_SECTIONS=haul,kinds runs only those sections (a quick local check; acceptance runs everything)
+  const ONLY = typeof process !== 'undefined' && process.env.P4_SECTIONS ? process.env.P4_SECTIONS.split(',') : null;
   const sec = async (name, fn) => {
+    if (ONLY && !ONLY.includes(name)) return;
     const t = Date.now();
     try { await fn(); }
     catch (e) { g.assert(false, `${name}: threw ${e.message}`); g.log(String(e.stack || e)); }
     g.log(`section ${name}: ${((Date.now() - t) / 1000).toFixed(1)} s`);
   };
   const near = (a, b, tol) => Math.abs(a - b) <= tol;
-  // software rendering on a loaded machine can exceed the 30 s screenshot timeout: retry once, never abort the asserts
+  // software rendering on a loaded machine can exceed the 30 s screenshot timeout: on a timeout, fall back to one
+  // rendered frame read straight off the canvas (preserveDrawingBuffer is on under ?debug=1; no HUD). Never aborts.
   const shot = async (name, o) => {
-    for (let i = 0; i < 2; i++) {
-      try { return await g.shot(name, o); } catch (e) { g.log(`shot ${name} attempt ${i + 1} failed: ${e.message}`); }
-    }
+    try { return await g.shot(name, o); } catch (e) { g.log(`shot ${name} failed: ${e.message.split('\n')[0]}`); }
+    try {
+      const url = await g.eval(async (o) => {
+        const G = window.__game;
+        await G.settle?.(); G.render?.();
+        const r = G.ctx.renderer.domElement.toDataURL('image/png');
+        if (o?.hud === false) G.hud?.(true);
+        return r;
+      }, o || {});
+      const file = join(OUT_DIR, `${name}.png`);
+      writeFileSync(file, Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
+      g.log(`shot ${name}: canvas capture (no HUD) ${file}`);
+      return file;
+    } catch (e) { g.log(`shot ${name} canvas capture failed: ${e.message}`); }
     return null;
   };
 
@@ -264,6 +285,30 @@ export default async function (g) {
     g.assert(near(r.tow.pulled, 18, 2.5) && r.tow.broke === 'boost' && r.tow.cleared, `player.tow drags 18 m/s and a quick boost snaps it (${r.tow.pulled.toFixed(1)} m in 1 s, ${r.tow.broke})`);
     g.assert(r.col.was && r.col.now && !r.col.left, `a moved turret's collider follows it (${JSON.stringify(r.col)})`);
     g.assert(r.deployed === 2 && r.landed && r.behaviors.every(b => b === 'hold'), `dropship deploys a UnitGroup-shaped group that lands (${r.deployed}, ${r.behaviors})`);
+
+    // combat.radial is re-entrant: a death inside a splash that splashes again (chained explosions) must not cut the
+    // outer splash short (review rev2 #2)
+    const re = await g.eval(() => {
+      const H = window.__p4, G = H.G, c = H.c;
+      H.clean(); H.place(160, 0); G.step(5);
+      const A = H.spawn('tank', H.fwd(60, 0, -9), { behavior: 'hold' });
+      const B = H.spawn('tank', H.fwd(60, 0, 0), { behavior: 'hold' });
+      const C = H.spawn('tank', H.fwd(60, 0, 9), { behavior: 'hold' });
+      A.ap = 10; B.ap = 5000; C.ap = 5000;
+      const far = H.fwd(400, 0);
+      let nested = -1, depth = 0;
+      const off = c.events.on('target:killed', (e) => {
+        if (e.target !== A) return;
+        depth++; nested = c.combat.radial(far, 10, 50, 0, { team: 'player', kind: 'test' }); depth--;
+      });
+      const n = c.combat.radial(A.center(), 30, 100, 0, { team: 'player', kind: 'test' }, { falloff: false });
+      off();
+      const out = { n, nested, aDead: !A.alive, b: 5000 - B.ap, c: 5000 - C.ap };
+      H.clean();
+      return out;
+    });
+    g.assert(re.n === 3 && re.nested === 0 && re.aDead && re.b === 100 && re.c === 100,
+      `combat.radial is re-entrant: a nested splash from a death inside it leaves the outer one whole (${JSON.stringify(re)})`);
   });
 
   // ---------------------------------------------------------------------------------------------- 3 weapons
@@ -445,6 +490,42 @@ export default async function (g) {
     g.assert(pull.aimHit && pull.pulled && pull.travelled > 40 && pull.toWall < 12 && pull.vEnd > 20,
       `harpoon pulls the player to a wall (${pull.travelled.toFixed(1)} m in ${pull.t.toFixed(2)} s, ends ${pull.toWall.toFixed(1)} m from it, keeps ${pull.vEnd.toFixed(0)} m/s)`);
 
+    // A5.1: a light target that cannot move (turret, impMax 800) still takes 300 dmg + 2000 imp (a stagger) and is not
+    // reeled; a heavy (impMax > 1000) pulls the player and takes no damage (review rev2 #4)
+    const hk = await g.eval(() => {
+      const H = window.__p4, G = H.G, c = H.c, p = c.player;
+      const one = (kind) => {
+        H.clean({ loadout: false }); H.place(200, 0);
+        p.setLoadout({ ...H.LO.DEFAULT_LOADOUT, L: 'harpoon_gaff' }); p.refill(); G.step(10);
+        const t = H.spawn(kind, H.fwd(50, 0), { behavior: 'scripted' });
+        G.step(1); H.face(t.center()); G.step(2);
+        const locked = p.lock === t, p0 = p.pos.clone(), t0 = t.pos.clone();
+        G.input.press('blade');
+        let pulled = false, reel = false, stag = 0, n = 0;
+        for (; n < 90; n++) {
+          G.step(1);
+          if (p.pull) pulled = true;
+          if (p.weapons.L.state === 'reel') reel = true;
+          stag = Math.max(stag, t.stagT || 0);
+          if (n > 30 && !p.pull && p.weapons.L.state === 'idle') break;
+        }
+        const hits = H.dmg.filter(x => x.tid === t.id && x.sk === 'harpoon');
+        return { kind, impMax: t.impMax, locked, pulled, reel, stag: +stag.toFixed(2), moved: +H.dist(p.pos, p0).toFixed(1),
+                 tMoved: +H.dist(t.pos, t0).toFixed(1), hits: hits.map(x => [Math.round(x.amt), Math.round(x.imp), x.staggered]),
+                 state: p.weapons.L.state };
+      };
+      const out = { turret: one('turret'), heavy: one('tank_heavy') };
+      p.setLoadout({ ...H.LO.DEFAULT_LOADOUT }); H.clean();
+      return out;
+    });
+    g.log('harpoon kinds', JSON.stringify(hk));
+    const tu = hk.turret, hv = hk.heavy;
+    g.assert(tu.locked && tu.impMax <= 1000 && tu.hits.length === 1 && tu.hits[0][0] === 300 && tu.hits[0][1] === 2000 && tu.hits[0][2] && tu.stag > 0
+      && !tu.pulled && !tu.reel && tu.moved < 2 && tu.tMoved < 0.5 && tu.state === 'idle',
+      `harpoon on a turret (impMax ${tu.impMax}): 300 dmg + 2000 imp stagger, no reel and no pull (player moved ${tu.moved} m)`);
+    g.assert(hv.locked && hv.impMax > 1000 && hv.hits.length === 0 && hv.pulled && hv.moved > 30,
+      `harpoon on a tank_heavy (impMax ${hv.impMax}) pulls the player ${hv.moved} m and deals no damage (${hv.hits.length} hits)`);
+
     const flare = await g.eval(() => {
       const H = window.__p4, G = H.G, c = H.c, p = c.player, T = H.T;
       H.clean(); H.place(170, 0);
@@ -611,6 +692,25 @@ export default async function (g) {
     g.assert(JSON.stringify(cp.restored) === JSON.stringify(cp.before) && JSON.stringify(cp.changed) !== JSON.stringify(cp.before) && cp.tears === cp.tears0,
       `a checkpoint restart restores the rack (${JSON.stringify(cp.before)} → ${JSON.stringify(cp.changed)} → ${JSON.stringify(cp.restored)})`);
     g.assert(JSON.stringify(cp.cache) === '["harpoon_gaff"]', 'a haul cache pickup racks its part');
+
+    // a restart during the 1.2 s rip puts the gameplay FOV and invulnerability back (review rev2 #1)
+    const fov = await g.eval(async () => {
+      const H = window.__p4, G = H.G, c = H.c, p = c.player;
+      H.clean(); H.place(180, 0); G.step(5);
+      const base = c.cameraRig.baseFov ?? c.camera.fov, start = c.camera.fov;
+      const d = H.spawn('drone', H.fwd(18, 8), { config: { haul: 'harpoon_gaff' }, behavior: 'scripted' });
+      c.combat.damage(d, 0, 600, { team: 'player', kind: 'test' });
+      G.step(1); H.face(d.center()); G.input.hold('blade', true);
+      G.step(36);
+      const busy = c.haul.busy, mid = c.camera.fov, inv = p.invuln;
+      G.input.clear();
+      await G.restart(); G.step(60);
+      const out = { base, start, busy, mid, inv, after: c.camera.fov, invAfter: p.invuln, busyAfter: c.haul.busy, rip: !!p.rip };
+      c.haul.clear(); H.clean();
+      return out;
+    });
+    g.assert(fov.busy && fov.inv && fov.mid < fov.base - 4 && Math.abs(fov.after - fov.base) < 0.01 && !fov.invAfter && !fov.busyAfter && !fov.rip,
+      `a restart mid-rip restores the FOV (${fov.mid.toFixed(1)} → ${fov.after.toFixed(1)}, base ${fov.base}) and invulnerability`);
   });
 
   // ---------------------------------------------------------------------------------------------- 6 every enemy kind
@@ -691,6 +791,40 @@ export default async function (g) {
     });
     await g.camera(line.a, line.b, 60);
     await shot('lineup', { hud: false });
+    await g.freeCam(false);
+  });
+
+  // ---------------------------------------------------------------------------------------------- 6b warning on a slope
+  await sec('warning-slope', async () => {
+    // the warning drapes over sloped ground: every ring vertex sits just above the terrain (review rev2 #3)
+    const slope = await g.eval(() => {
+      const H = window.__p4, G = H.G, c = H.c, p = c.player, T = H.T;
+      H.clean(); H.place(300, 120); G.step(5);
+      // a strike on the player at s 300 / l 120: about 9 m of rise across the 24 m ring (artillery aims at the ground under it)
+      const ctr = H.fwd(0, 0);
+      c.projectiles.groundWarning(ctr, 12, 3);
+      G.step(60);
+      const ring = c.scene.children.filter(o => o.name === 'groundWarning' && o.visible !== undefined)
+        .find(o => Math.hypot(o.position.x - ctr.x, o.position.z - ctr.z) < 0.01);
+      const v = new T.Vector3();
+      let lo = Infinity, hi = -Infinity, glo = Infinity, ghi = -Infinity, nv = 0;
+      for (const m of ring ? [ring, ring.children[0]] : []) {
+        m.updateMatrixWorld(true);
+        const a = m.geometry.attributes.position;
+        for (let i = 0; i < a.count; i++) {
+          v.fromBufferAttribute(a, i).applyMatrix4(m.matrixWorld);
+          const gh = c.world.groundHeight(v.x, v.z), dy = v.y - gh;
+          lo = Math.min(lo, dy); hi = Math.max(hi, dy); glo = Math.min(glo, gh); ghi = Math.max(ghi, gh); nv++;
+        }
+      }
+      const cam = H.fwd(-30, 8, 20), look = p.pos.clone();
+      return { found: !!ring, nv, lo: +lo.toFixed(2), hi: +hi.toFixed(2), rise: +(ghi - glo).toFixed(1), cam: [cam.x, cam.y, cam.z], look: [look.x, look.y, look.z] };
+    });
+    g.log('warning drape', JSON.stringify(slope));
+    g.assert(slope.found && slope.nv > 300 && slope.rise > 3 && slope.lo > 0.15 && slope.hi < 1.2,
+      `the ground warning drapes over a ${slope.rise} m rise (vertices ${slope.lo}..${slope.hi} m above the ground)`);
+    await g.camera(slope.cam, slope.look, 60);
+    await shot('artillery-warning-slope', { hud: false });
     await g.freeCam(false);
   });
 

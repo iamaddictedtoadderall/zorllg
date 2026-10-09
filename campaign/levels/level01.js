@@ -146,7 +146,9 @@ const STAMPS = [
   { at: { s: 170, l: 0 }, r: 165, falloff: 30, mode: 'flatten', h: 0 },
   // Z2: the shaft's raised rim first, then the cavern trench (y -18) cut through it, then the shaft floor
   { at: { s: 625 }, r: 30, falloff: 10, mode: 'raise', h: 16 },
-  ...Array.from({ length: 13 }, (_, i) => ({ at: { s: 330 + i * 25 }, r: i < 4 ? 50 : 34, falloff: 6, mode: 'flatten', h: -18, noScatter: true })),
+  ...Array.from({ length: 12 }, (_, i) => ({ at: { s: 330 + i * 25 }, r: i < 4 ? 50 : 34, falloff: 6, mode: 'flatten', h: -18, noScatter: true })),
+  // the shelf closes over the trench's end east of the shaft (no open pit at the start of the Teeth)
+  { at: { s: 662 }, r: 22, falloff: 6, mode: 'flatten', h: 0 },
   { at: { s: 625 }, r: 14, falloff: 4, mode: 'flatten', h: -18, noScatter: true },
   // Z4 apron and hull pad; Z5 field
   { at: { s: 1440 }, r: 150, falloff: 40, mode: 'flatten', h: 0 },
@@ -205,16 +207,20 @@ const ZONES = [
   { id: 'z_under', range: [320, 640], name: 'Under the Ice',          // no card: the player arrives during the boot
     art: ART_UNDER, artBlend: 1.5,
     structures: [
-      ...Array.from({ length: 10 }, (_, i) => ({ type: 'ice_vault', at: { s: 345 + i * 30, h: 16 }, yaw: 'route',
-                                                 params: { span: i < 3 ? 104 : 72, depth: 30, seed: 20 + i } })),
+      // the roof stops short of the shaft (s 610): the moulin is open to the sky
+      ...Array.from({ length: 9 }, (_, i) => ({ type: 'ice_vault', at: { s: 345 + i * 30, h: 16 }, yaw: 'route',
+                                                params: { span: i < 3 ? 104 : 72, depth: 30, seed: 20 + i } })),
+      { type: 'ice_vault', at: { s: 601, h: 16 }, yaw: 'route', params: { span: 72, depth: 16, seed: 29 } },
       ...Array.from({ length: 10 }, (_, i) => [-1, 1].map(sd => ({ type: 'ice_wall', at: { s: 345 + i * 30, l: sd * (i < 3 ? 48 : 33) },
                                                                     yaw: 'route', params: { length: 32, h: 22, seed: 60 + i * 2 + (sd > 0 ? 1 : 0) } }))).flat(),
+      // the trench ends at the shaft: cross walls close the gaps between the moulin and the side walls (the way on is up)
+      ...[-1, 1].map(sd => ({ type: 'ice_wall', at: { s: 629, l: sd * 24 }, yaw: { face: { s: 629, l: sd * 80 } }, params: { length: 16, h: 22, seed: 84 + (sd > 0 ? 1 : 0) } })),
       { id: 'cutterWreck', type: 'cutter_wreck', at: { s: 345, l: 12 }, yaw: az(150) },
       { id: 'alcove', type: 'moth_alcove', at: { s: 377, l: -26 }, yaw: az(63), state: 'sealed' },
       { type: 'founders_pod', at: { s: 430, l: 26 }, yaw: az(200), params: { size: 1 } },
       { type: 'founders_pod', at: { s: 540, l: -26 }, yaw: az(40), params: { size: 1.2 } },
       ...[[505, -14], [515, 12], [528, -4], [540, 18]].map(([s, l], i) => ({ type: 'ice_pillar', at: { s, l }, params: { h: 18, r: 4, seed: 80 + i } })),
-      { id: 'shaft', type: 'shaft_ring', at: { s: 625 }, params: { r: 12, h: 34 } },
+      { id: 'shaft', type: 'shaft_ring', at: { s: 625 }, yaw: 'route', params: { r: 12, h: 34, door: 11 } },
     ] },
 
   { id: 'z_teeth', range: [640, 1350], name: 'The Teeth', card: { title: 'THE TEETH', sub: 'Pressure ridges' },
@@ -359,7 +365,7 @@ const HINT = {
   rise: { desktop: 'Hold Space to rise', touch: 'Hold JUMP to rise' },
 };
 // earlier triggers whose conditions are true further along the route (cold starts disable them; see the header)
-const SEG_Z2 = ['t_look', 't_block1_near', 't_raid', 't_raid_failsafe', 't_collapse'];
+const SEG_Z2 = ['t_look', 't_block1_near', 't_raid', 't_raid_go', 't_raid_hit', 't_raid_failsafe', 't_collapse'];
 const SEG_Z3 = [...SEG_Z2, 't_name', 't_signal', 't_shaft', 't_out', 't_kitflare'];
 const SEG_Z4 = [...SEG_Z3, 't_pin', 't_qb', 't_tear', 't_tear_failsafe', 't_gleaners', 't_blade', 't_abeyance_view', 't_idle_north', 't_pin_clear', 't_burn'];
 const SEG_Z5 = [...SEG_Z4, 't_apron', 't_repair', 't_floor2', 't_stencil', 't_crown', 't_hold_sled', 't_enemy_flares', 't_surge'];
@@ -380,11 +386,14 @@ const triggers = [
       { wait: 2 }, { music: { stinger: 'dread' } }, { call: 'skiffLights' }, { comms: 'c_lights', wait: true },
       { call: 'kite', args: { land: true } },
       { call: 'tick', args: { path: [{ s: 200, l: 120 }, { s: 300, l: 60 }, { s: 330, l: 300 }], speed: 16, hideAtEnd: true } },
-      { spawn: 'e_raid' }, { music: { theme: DREDGE } }, { call: 'vitals', args: { spike: 128 } },
+      { spawn: 'e_raid' }, ...flags('p:raid') ] },
+  // the raid proper: t 0 is the skiffs sailing in (L1 §5 E1); the fail-safe counts from here, not from the lights
+  { id: 't_raid_go', when: { flag: 'p:raid' }, after: 't_raid', do: [
+      { music: { theme: DREDGE } }, { call: 'vitals', args: { spike: 128 } },
       { wait: 4 }, { comms: 'c_raid_sled' },
       { wait: 4 }, { comms: 'c_raid_gully' }, ...add('o_gully') ] },
-  { id: 't_raid_hit', when: { custom: 'playerHit' }, after: 't_raid', do: [{ comms: 'c_raid_hit' }] },
-  { id: 't_raid_failsafe', when: { all: [{ timer: 25, since: 't_raid' }, { not: { pass: 260 } }] }, after: 't_raid', do: [
+  { id: 't_raid_hit', when: { custom: 'playerHit' }, after: 't_raid_go', do: [{ comms: 'c_raid_hit' }] },
+  { id: 't_raid_failsafe', when: { all: [{ timer: 25, since: 't_raid_go' }, { not: { pass: 260 } }] }, after: 't_raid_go', do: [
       { call: 'raidTowCutter', args: { to: { s: 324 } } }] },          // onto the snow bridge: the collapse follows
   { id: 't_collapse', when: { pass: 318 }, after: 't_raid', do: [{ event: 'collapse' }] },
 
@@ -394,7 +403,8 @@ const triggers = [
   { id: 't_shaft', when: { all: [{ enter: { at: { s: 625 }, r: 26 } }, { flag: 'p:awake' }] }, do: [
       { call: 'abilities', args: { preset: 'jump' } }, { comms: 'c_shaft' }, { hint: HINT.jump },
       ...done('o_up'), ...add('o_climb') ] },
-  { id: 't_out', when: { all: [{ custom: 'aboveY', args: { y: 8, near: { s: 625 }, r: 40 } }, { flag: 'p:awake' }] }, after: 't_shaft', do: [
+  // out of the shaft: standing on the shelf (or the rim) above the trench, however the player got there
+  { id: 't_out', when: { all: [{ custom: 'onSurface', args: { y: -4, near: { s: 625 }, r: 80 } }, { flag: 'p:awake' }] }, after: 't_shaft', do: [
       ...flags('outOfShaft'), ...done('o_climb'), { checkpoint: 'cp_ridges' }, { music: { theme: NIGHT } },
       { call: 'tick', args: { park: { s: 900, l: 70 }, pinned: true, show: true } }, { call: 'kite', args: { follow: 'tick', h: 80 } },
       { comms: 'c_kit_reconnect', wait: true }, ...add('o_kit') ] },
@@ -589,7 +599,8 @@ const def = {
     toneMapping: 'aces',
     surface: { snow: 0.6, snowSlope: [0.35, 0.6], gloss: 0.35, rockSlope: [0.35, 0.6], strataHeight: 3, sparkle: 0.4 },
     skyline: [
-      { kind: 'smoke', at: [600, -200], size: 1.2, color: '#ffb04a' },   // the Icebreaker's lit steam plume
+      // the Icebreaker's steam column (P1's plume is 1.6 km at size 1: 0.2 gives L1 §2.5's ~300 m), lit from below by sodium
+      { kind: 'smoke', at: [600, -200], size: 0.2, color: '#a89484' },
     ],
     ambience: [],
     scatter: [
@@ -894,7 +905,7 @@ const def = {
       ...add('o_kit') ],
     cp_abeyance: [
       { call: 'restoreCommon', args: { cp: 'cp_abeyance' } },
-      ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron'), ...disable(...SEG_Z4),
+      ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron'), ...disable(...SEG_Z4, 't_apron'),
       { art: ART_ABEY, blend: 0 }, { call: 'abilities', args: { preset: 'missiles' } },
       { call: 'tick', args: { park: { s: 1360, l: 50 }, show: true } }, { call: 'kite', args: { follow: 'tick', h: 90, show: true } },
       ifNone('sexton', [{ spawn: 'e_apron' }]), { music: { theme: DREDGE } },
@@ -902,11 +913,11 @@ const def = {
     cp_cutline: [
       { call: 'restoreCommon', args: { cp: 'cp_cutline' } },
       ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron', 'p:sexton', 'crown', 'p:field'),
-      ...disable(...SEG_Z5, 't_heads_hint'),
+      ...disable(...SEG_Z5, 't_field', 't_heads_hint'),
       { art: ART_PREDAWN, blend: 0 }, { call: 'abilities', args: { preset: 'full' } },
       { call: 'tick', args: { hide: true } }, { call: 'kite', args: { follow: 'player', h: 90, show: true } },
       ifNone('field', [{ spawn: 'e_field' }]), ifNone('icebreaker', [{ spawn: 'e_icebreaker' }]),
-      { music: { theme: DREDGE, intensity: 1 } }, ...add('o_heads'), { wait: 15 }, { comms: 'c_heads_hint' } ],
+      { music: { theme: DREDGE, intensity: 1 } }, ...add('o_heads'), { comms: 'c_pa1' }, { wait: 15 }, { comms: 'c_heads_hint' } ],
     cp_harvest: [
       { call: 'restoreCommon', args: { cp: 'cp_harvest' } },
       ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron', 'p:sexton', 'crown', 'p:field'),
@@ -919,7 +930,7 @@ const def = {
       { call: 'restoreCommon', args: { cp: 'cp_floes' } },
       ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron', 'p:sexton', 'crown',
                'p:field', 'p:finale', 'surfaced', 'p:sprint'),
-      ...disable(...SEG_Z6),
+      ...disable(...SEG_Z6, 't_sink'),                                // the hulk is already gone (L1 §9)
       { call: 'vitals', args: { mode: 'locked', bpm: 60 } }, { art: ART_DAWN, blend: 0 }, { art: ART_FLOES, blend: 0 },
       { call: 'abilities', args: { preset: 'full' } },
       { call: 'tick', args: { hide: true } }, { call: 'kite', args: { follow: 'player', h: 90, show: true } },

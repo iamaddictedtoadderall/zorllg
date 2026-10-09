@@ -2,7 +2,8 @@
 //   node tools/playtest.mjs --scenario p1-look --port 8320 --out /tmp/campaign-playtest/P1-p1-look
 // One load of levels/test.js, then inline art overrides and runtime tier switches (High → Medium → Low → High):
 //  1. per tier: gameplay camera at the start, an 80 m vista along the route, a sun-facing shot; the far fade reaches the
-//     fog colour before the far plane and no seam shows at the horizon (numeric scan of the canvas)
+//     fog colour before the far plane, and land beyond the far-fade end renders exactly as the sky behind it (the vista
+//     is rendered with and without the level, and every sampled pixel whose terrain hit lies past the fade is compared)
 //  2. galleries: every library material, every FX recipe, every weather type
 //  3. High post overhead ≤ 30 calls; High → Low → High → Low → High raises no errors and the program count is stable
 //  4. every SFX plays (mute=1, after unlock) and renders non-silent offline; music themes, intensity and stingers
@@ -22,7 +23,7 @@ const L1_NIGHT = {
          moon: { size: 0 } },
   fog: { color: '#141d33', density: 0.0011, heightFalloff: 0.02, heightBase: -10, inscatter: 0.3, sunColor: '#4a7f8a' },
   light: { sun: 0.9, sunColor: '#8fd8c8', hemiSky: '#3a5a8c', hemiGround: '#0a1020', hemi: 1.3, rim: 1.4, rimColor: '#6a7fb0',
-           exposure: 1.15, env: 0.5 },
+           exposure: 1.3, env: 0.6 },
   grade: { contrast: 1.08, saturation: 0.92, lift: [0, 0.01, 0.03], gain: [0.95, 1.0, 1.08], shadowsTint: [0.85, 0.95, 1.15],
            vignette: 0.34, grain: 0.035 },
   bloom: { strength: 1.0, radius: 0.65, threshold: 0.8 },
@@ -56,6 +57,8 @@ export default async function (g) {
   // ------------------------------------------------------------------ in-page helpers
   await g.eval(() => {
     const G = window.__game, c = G.ctx;
+    // clean review shots: hide the comms panel too (scenario-only style; the game's own CSS is untouched)
+    const st = document.createElement('style'); st.textContent = '#game.shot-clean #comms{display:none!important}'; document.head.appendChild(st);
     window.__p1 = {
       /** luminance stats of a canvas region (CSS px); call right after a render (preserveDrawingBuffer in debug) */
       stats(x, y, w, h) {
@@ -208,24 +211,68 @@ export default async function (g) {
     const b = await g.eval(() => window.__p1.route(1500, 0, 20));
     await cam(a, b, 66);
     await shot(`${tier}-vista`, { hud: false });
-    // horizon seam scan: no hard luminance step in the band just under the horizon
+    // horizon seam: wherever the land lies beyond the far-fade end, the frame must equal the sky alone (render the
+    // same view with and without the level, grain and weather off, and compare those pixels). A ray march against
+    // world.groundHeight finds each sampled pixel's terrain distance.
     const seam = await g.eval(() => {
-      const c = window.__game.ctx, P = window.__p1;
-      const camP = c.camera.position, fwd = new c.THREE.Vector3(); c.camera.getWorldDirection(fwd);
-      const far = camP.clone().addScaledVector(new c.THREE.Vector3(fwd.x, 0, fwd.z).normalize(), 5000);
-      const hz = P.project([far.x, camP.y, far.z])[1];
-      let worst = 0;
-      for (const x of [160, 400, 640, 880, 1120]) {
-        const col = P.column(x, Math.max(0, hz - 2), Math.min(c.canvas.clientHeight - 1, hz + 28));
-        for (let i = 1; i < col.length; i++) {
-          const d = Math.abs(col[i][0] - col[i - 1][0]) + Math.abs(col[i][1] - col[i - 1][1]) + Math.abs(col[i][2] - col[i - 1][2]);
-          worst = Math.max(worst, d);
+      const c = window.__game.ctx, T = c.THREE, P = window.__p1, G = window.__game, cam = c.camera;
+      // grain, bloom and AO off for the comparison: bloom from the bright foreground and AO are smooth, frame-wide
+      // effects (not edges), and they legitimately differ between the two renders
+      const gr = c.pipeline.grade, keep = { grain: gr.grain, chroma: gr.chroma }, bl = c.pipeline.bloom.strength;
+      c.pipeline.setGrade({ grain: 0, chroma: 0 }); c.pipeline.setBloom({ strength: 0 });
+      const ao = (c.pipeline.composer?.passes || []).filter(p => p.constructor.name.includes('GTAO'));
+      ao.forEach(p => { p.enabled = false; });
+      const hide = ['weather', 'particles-add', 'particles-smoke', 'glows'].map(n => c.scene.getObjectByName(n)).filter(Boolean);
+      const vis = hide.map(o => o.visible); hide.forEach(o => { o.visible = false; });
+      const W = c.canvas.clientWidth, H = c.canvas.clientHeight, sy = c.canvas.height / H;
+      const fwd = new T.Vector3(); cam.getWorldDirection(fwd);
+      const farPt = cam.position.clone().addScaledVector(new T.Vector3(fwd.x, 0, fwd.z).normalize(), 5000);
+      const hz = P.project([farPt.x, cam.position.y, farPt.z])[1];
+      const y0 = Math.max(0, Math.round(hz - 70)), y1 = Math.min(H - 1, Math.round(hz + 70));
+      const xs = []; for (let x = 40; x < W; x += 60) xs.push(x);
+      G.render();
+      const A = xs.map(x => P.column(x, y0, y1));
+      const lv = c.levelRoot.visible; c.levelRoot.visible = false;
+      G.render();
+      const B = xs.map(x => P.column(x, y0, y1));
+      c.levelRoot.visible = lv;
+      hide.forEach((o, i) => { o.visible = vis[i]; });
+      c.pipeline.setGrade(keep); c.pipeline.setBloom({ strength: bl });
+      ao.forEach(p => { p.enabled = true; });
+      const farEnd = c.atmosphere.fogUniforms.uFogFarEnd.value, maxD = cam.far;
+      const gh = (x, z) => c.world.groundHeight(x, z);
+      const o = cam.position, dir = new T.Vector3(), p = new T.Vector3();
+      function hit(px, py) {
+        dir.set(px / W * 2 - 1, -(py / H) * 2 + 1, 0.5).unproject(cam).sub(o).normalize();
+        let prev = 0;
+        for (let t = 4; t < maxD; t += Math.max(4, t * 0.02)) {
+          p.copy(o).addScaledVector(dir, t);
+          if (p.y < gh(p.x, p.z)) return (prev + t) / 2;
+          prev = t;
         }
+        return Infinity;
       }
-      return { hz, worst };
+      let worst = 0, n = 0, at = null;
+      const diffs = [];
+      xs.forEach((x, i) => {
+        for (let r = 0; r < A[i].length; r++) {
+          const y = y0 + r / sy, d = hit(x, y);
+          if (!(d > farEnd + 25) || d === Infinity) continue;
+          const a = A[i][r], b = B[i][r], diff = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+          n++; diffs.push(diff);
+          if (diff > worst) { worst = diff; at = [x, +y.toFixed(1), Math.round(d)]; }
+        }
+      });
+      diffs.sort((p, q) => p - q);
+      const pct = (q) => (diffs.length ? diffs[Math.min(diffs.length - 1, Math.floor(diffs.length * q))] : 0);
+      const mean = diffs.reduce((p, q) => p + q, 0) / Math.max(1, diffs.length);
+      return { hz, n, worst, p90: pct(0.9), p98: pct(0.98), mean, at, farEnd };
     });
-    g.log(`${tier} horizon scan`, JSON.stringify(seam));
-    g.assert(seam.worst < 0.12, `${tier}: no seam at the horizon (max row step ${seam.worst.toFixed(3)})`);
+    g.log(`${tier} horizon seam`, JSON.stringify(seam));
+    // a star behind a sampled pixel, or an anti-aliased pixel where a nearer ridge meets the faded land, may differ
+    // alone; an edge or a band would lift the mean and the 90th percentile
+    g.assert(seam.n > 0 && seam.mean < 0.01 && seam.p90 < 0.03,
+             `${tier}: no terrain edge at the horizon (land beyond ${seam.farEnd} m equals the sky behind it: ${seam.n} px, mean diff ${seam.mean.toFixed(4)}, p90 ${seam.p90.toFixed(3)}, max ${seam.worst.toFixed(3)})`);
     // the far fade reaches the fog colour before the far plane
     const fade = await g.eval(() => {
       const c = window.__game.ctx, A = c.atmosphere, p = c.camera.position.clone();
@@ -249,6 +296,12 @@ export default async function (g) {
   await tierShots('high');
   const perfHigh = await g.eval(() => { window.__game.render(); return window.__game.perf(); });
   g.log('high perf (vista area)', JSON.stringify(perfHigh));
+  const progs = await g.eval(() => {
+    const m = {};
+    for (const p of window.__game.ctx.renderer.info.programs || []) { const k = (p.name || '?').replace(/\d+$/, ''); m[k] = (m[k] || 0) + 1; }
+    return m;
+  });
+  g.log('programs by material type (session total)', JSON.stringify(progs));
   g.assert(perfHigh.post <= 30, `High post overhead ≤ 30 calls (${perfHigh.post}; main ${perfHigh.main}, shadow ${perfHigh.shadow}, ao ${perfHigh.ao})`);
   lap('high shots');
 
@@ -451,13 +504,13 @@ export default async function (g) {
     const st = await g.eval(() => {
       const A = window.__game.ctx.atmosphere, s = A.sunDir;
       const az = (Math.atan2(s.x, -s.z) * 180 / Math.PI + 360) % 360, el = Math.asin(s.y) * 180 / Math.PI;
-      return { az, el, aur: A.skyUniforms.uAur.value, exp: window.__game.ctx.renderer.toneMappingExposure, blending: A.blending };
+      return { az, el, aur: A.skyUniforms.uAur.value, exp: window.__game.ctx.renderer.toneMappingExposure, blending: A.blending, info: A.blendInfo?.() };
     });
     blendLog.push(st);
     await shot(`blend-${i}`, { hud: false, settle: false });
     if (i < 4) await g.step(i === 3 ? 125 : 120);   // 2 s per stage (a little past the end on the last)
   }
-  g.log('night → dawn', JSON.stringify(blendLog.map(b => [b.az.toFixed(1), b.el.toFixed(1), b.aur.toFixed(2), b.exp.toFixed(2)])));
+  g.log('night → dawn', JSON.stringify(blendLog.map(b => [b.az.toFixed(1), b.el.toFixed(1), b.aur.toFixed(2), b.exp.toFixed(2), b.blending, b.info])));
   const mids = blendLog.slice(1, 4).map(b => b.az);
   const viaNorth = mids.every(a => a > 340 || a < 100) && mids.some(a => a < 90 && a > 5);
   g.assert(viaNorth, `set() blends the sun azimuth along the shortest arc (350° → 95° through north: ${mids.map(a => a.toFixed(0)).join(', ')})`);

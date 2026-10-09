@@ -269,7 +269,7 @@ function createRuntime(ctx, m, DATA, opts) {
     on('level:start', (e) => L.reset(e));
     on('level:cleared', () => L.dispose());
     on('player:damaged', () => { if (L.counters) L.counters.playerHits++; });
-    on('trigger:fired', (e) => { if (e.id === 't_raid' && L.counters) L.counters.playerHits = 0; });
+    on('trigger:fired', (e) => { if (e.id === 't_raid_go' && L.counters) L.counters.playerHits = 0; });
     on('target:damaged', (e) => {
       if (!L.counters) return;
       if (e.staggered && e.target !== ctx.player) L.counters.staggered++;
@@ -771,6 +771,12 @@ function registerConditions(L) {
     if (!a.near) return true;
     const c = L.resolve(a.near, _c);
     return Math.hypot(p.pos.x - c.x, p.pos.z - c.z) <= (a.r ?? 40);
+  });
+  reg('onSurface', (a) => {
+    const p = P(); if (!p || !p.onGround || p.pos.y < (a.y ?? -4)) return false;
+    if (!a.near) return true;
+    const c = L.resolve(a.near, _c);
+    return Math.hypot(p.pos.x - c.x, p.pos.z - c.z) <= (a.r ?? 60);
   });
   reg('nearAnchor', (a) => {
     const p = P(); if (!p) return false;

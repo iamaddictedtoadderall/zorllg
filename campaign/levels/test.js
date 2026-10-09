@@ -17,7 +17,7 @@ export default {
   briefing: {
     header: 'DEV · PROVING', title: 'Proving Ground', subtitle: 'Systems shakedown',
     body: 'Walk the proving ground from the drop point to the far marker.\nDrones will test your reflexes on the way. A relay on the ridge needs taking down.',
-    objectives: ['Reach the far marker', 'Destroy the relay (optional)'], fine: 'Development level. Not part of the campaign.',
+    objectives: ['Reach the far marker', 'Destroy the relay (optional)'], fine: 'Development level. Not part of the campaign.', showMap: true,
   },
   intro: [{ style: 'terminal', text: 'PROVING GROUND // SYSTEMS SHAKEDOWN\nAll channels open. Range is live.' }],
   outro: [{ style: 'black', text: 'Proving run logged.' }],
@@ -90,6 +90,8 @@ export default {
     { id: 'o_doomed', text: 'Keep the decoy standing', kind: 'manual', failIf: { flag: 'p5.failObj' }, onFail: [{ flag: ['p5.doomedFailed', true] }] },
     { id: 'o_waves', text: 'Survive the waves', kind: 'kill', target: { encounter: 'e_waves' }, showCount: true },
     { id: 'o_timed', text: 'Reach the bunker in time', kind: 'reach', at: { s: 1800, l: -100 }, r: 30, seconds: 30, showTimer: true },
+    { id: 'o_scrub', text: 'Calibrate the range lights', kind: 'manual' },
+    { id: 'o_temp', text: 'Wait for range control', kind: 'manual', marker: { s: 960, l: -40 } },
   ],
   encounters: [
     { id: 'e_drones', tag: 'drones', units: [{ kind: 'drone', count: 3, at: { s: 700, l: -40 }, spread: 40 }] },
@@ -161,6 +163,8 @@ export default {
       { comms: 'c_check' },
       { objective: { add: 'o_manual' } }, { objective: { text: ['o_manual', 'Report to range control'] } },
       { objective: { add: 'o_beacons' } }, { objective: { add: 'o_doomed' } },
+      { objective: { add: 'o_scrub' } }, { objective: { fail: 'o_scrub' } },
+      { objective: { add: 'o_temp' } }, { objective: { remove: 'o_temp' } },
       { marker: { id: 'm_tower', at: { s: 900, l: 110, h: 24 }, label: 'Tower', kind: 'poi' } },
       { marker: { id: 'm_tmp', at: { s: 950, l: -50 }, label: 'Temp', kind: 'waypoint' } }, { marker: { remove: 'm_tmp' } },
       { flag: ['p5.persisted', 7], persist: true },
@@ -172,6 +176,7 @@ export default {
       { fx: { explosion: { at: { s: 820, l: 200 }, scale: 1.2 } } },
       { fx: { emitter: { kind: 'smoke', at: { s: 800, l: 160 }, id: 'smk' } } }, { fx: { emitter: { kind: 'fire', at: { s: 800, l: 170 }, id: 'fire' } } },
       { fx: { stop: 'fire' } },
+      { fx: { ambient: { kind: 'battle', at: { s: 2000, l: 700 }, radius: 300, intensity: 0.5, id: 'amb' } } }, { fx: { stop: 'amb' } },
       { structure: { id: 'gate_a', state: 'open' } }, { structure: { id: 'barricade_a', state: 'destroyed' } },
       { codex: 'test_codex' }, { unlock: 'mg_r12' },
       { player: { heal: 500, refill: true, freeze: false } }, { player: { yaw: 'route' } },
@@ -199,8 +204,8 @@ export default {
     ],
   },
   cinematics: {
-    overlook: { keys: [{ t: 0, pos: { s: 1690, l: 190, h: 25 }, look: { s: 1800, l: -130, h: 6 }, fov: 50 },
-                       { t: 3, pos: { s: 1740, l: 200, h: 34 }, look: { s: 2300, l: 100, h: 20 }, fov: 42, ease: 'inOut' }] },
+    overlook: { keys: [{ t: 0, pos: { s: 1680, l: 170, h: 52 }, look: { s: 1860, l: -80, h: 6 }, fov: 52 },
+                       { t: 3, pos: { s: 1760, l: 180, h: 66 }, look: { s: 2300, l: 100, h: 22 }, fov: 40, ease: 'inOut' }] },
     sweep: { letterbox: true, hideHud: true, skippable: false, blendOut: 0.5, keys: [
       { t: 0, pos: { s: 1200, l: -120, h: 30 }, look: { s: 1300 }, fov: 55 },
       { t: 1.5, pos: { s: 1260, l: -40, h: 22 }, look: { s: 1400, l: 40 }, fov: 50 },

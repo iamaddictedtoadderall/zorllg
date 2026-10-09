@@ -16,9 +16,10 @@ import { FRAMES, PARTS, validate, computeStats, DEFAULT_LOADOUT, PAINT_PRESETS }
 import * as KIT from '../art/kit.js';
 import { esc, clone, injectCSS, clamp, lerp, damp, mulberry32, hashString } from '../core/util.js';
 
-// AD §5.7 asks for "about 2,500 cd"; with r170 physical units that is ~30 lux on the frame 9 m below against a 0.6 fill,
-// which clips. 420 cd gives ~5 lux (sun-like) with the warm pool and deep falloff the AD describes. (P3 decision.)
-const BENCH_LAMP_CD = 420;
+// AD §5.7 / A3.6 ask for "about 2,500 cd"; with r170 physical units that is ~30 lux on the frame below against a 0.6
+// fill, which clips the white ceramic to a bloom halo. 300 cd keeps the warm pool and deep falloff the AD describes and
+// lets Moth's shoulders hold their bevels (P3 decision, reviewed against bench-fit.png).
+const BENCH_LAMP_CD = 300;
 const SLOT_TABS = [['FRAME', null], ['R-ARM', 'R'], ['L-ARM', 'L'], ['SHOULDER', 'S'], ['UTILITY', 'U'], ['PAINT', null]];
 const BENCH_TABS = ['FIT', 'HAUL', 'WAKE', 'LATTICE'];
 const SLOT_NAME = { R: 'R-ARM', L: 'L-ARM', S: 'SHOULDER', U: 'UTILITY' };
@@ -216,6 +217,7 @@ export function install(ctx) {
   }
 
   injectCSS('garage', CSS);
+  injectCSS('bench', BENCH_CSS);
   const screenEl = () => document.getElementById('screen');
   function mount(cls, html) {
     ctx.screens?.hide?.();
@@ -307,7 +309,7 @@ export function install(ctx) {
       else w.parts[id] = 'locker';
     }
   }
-  function snapshot() { bench.undo.push(JSON.stringify({ parts: bench.w.parts, spares: bench.w.spares, fitted: bench.w.fitted, water: bench.w.water, arms: bench.w.arms, ledger: bench.w.ledger })); }
+  function snapshot() { bench.undo.push(JSON.stringify({ parts: bench.w.parts, spares: bench.w.spares, fitted: bench.w.fitted, water: bench.w.water, arms: bench.w.arms, ledger: bench.w.ledger, given: bench.givenThisVisit })); }
   /** A3.5 rule 2: can `id` be fitted to `slot` now? Returns null or the reason it can't. */
   function fitBlock(slot, id) {
     const w = bench.w;
@@ -365,9 +367,9 @@ export function install(ctx) {
   }
   function doUndo() {
     if (!bench || bench.closing || !bench.undo.length) return false;
-    const s = JSON.parse(bench.undo.pop());
+    const { given, ...s } = JSON.parse(bench.undo.pop());
     Object.assign(bench.w, s);
-    bench.givenThisVisit = Math.max(0, bench.givenThisVisit - 1);
+    bench.givenThisVisit = given ?? bench.givenThisVisit;   // undoing a fit leaves the gives alone
     sfx('uiBack');
     setMech(campaignLoadoutOf(bench.w.fitted));
     renderBench();
@@ -663,7 +665,7 @@ export function install(ctx) {
 }
 
 // ================================================================ dressings (built with the kit, merged per material)
-function lampAssembly(B, parent, mats, pos, dir, r, color, size) {
+function lampAssembly(B, parent, mats, pos, dir, r, color, size, base) {
   const g = new THREE.Group();
   g.position.set(...pos);
   g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir).normalize());
@@ -673,6 +675,7 @@ function lampAssembly(B, parent, mats, pos, dir, r, color, size) {
   B.add(KIT.lampLens(r), mats.lens, lens);
   const sp = glowSprite(color, size);
   const p = new THREE.Vector3(0, r * 1.5, 0).applyMatrix4(g.matrix);
+  if (base) p.applyMatrix4(base);   // B was a sub-builder view (B.under(base)): the sprite lives in the root's space
   sp.position.copy(p);
   parent.add(sp);
   return sp;
@@ -686,7 +689,7 @@ function buildHangar(ctx, M) {
     housing: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }), lens: M('lightAmber', null) || ctx.materials?.emissive?.('#ffb36b', 3),
     rust: M('rust', { color: '#7a4128', roughness: 0.88, metalness: 0.35 }),
   };
-  const B = new KIT.GeoBuilder(77);
+  const B = new KIT.GeoBuilder(77), lights = [];
   // turntable: drum, chamfered rim, hazard ring, lamp strip
   B.add(KIT.cylinder(9.3, 9.8, 0.7, 64, 0.12), mats.plate, { pos: [0, -0.35, 0] });
   B.add(KIT.ring(8.95, 0.5, 0.18, 64), mats.stripe, { pos: [0, 0.04, 0] });
@@ -695,22 +698,30 @@ function buildHangar(ctx, M) {
   // floor: ribbed deck plates in an irregular grid, with service trenches
   // (a separate, non-shadow-casting builder: the deck only receives; ribbed near the turntable, plain further out)
   const rng = mulberry32(5), F = new KIT.GeoBuilder(78);
-  for (let x = -40; x < 40; x += 10) for (let z = -35; z < 35; z += 10) {
+  for (let x = -40; x < 40; x += 10) for (let z = -40; z < 40; z += 10) {
     const r = Math.hypot(x + 5, z + 5);
     if (r < 11) continue;
     F.add(r < 30 ? KIT.ribbedPlate(9.8, 9.8, 0.25, { pitch: rng() < 0.5 ? 2.2 : 2.9, axis: rng() < 0.5 ? 'x' : 'y' }) : KIT.plateBox(9.8, 9.8, 0.25, 0.05),
           mats.floor, { pos: [x + 5, -0.12, z + 5], rot: [-Math.PI / 2, 0, 0], tint: 0.07 });
   }
   for (const s of [-1, 1]) B.add(KIT.plateBox(0.6, 0.06, 70, 0.02), mats.stripe, { pos: [s * 14, 0.02, 2] });
-  // back wall with pilasters, coping and a bay door frame
-  for (let i = 0; i < 9; i++) {
-    const x = -40 + i * 10;
-    B.add(KIT.panelBox(9.6, 22, 1.2, Math.abs(x + 5) < 22 ? { cols: 2, rows: 3, deps: 1 } : { cols: 1, rows: 3, deps: 1 }), mats.wall, { pos: [x + 5, 11, 26], tint: 0.07 });
-    B.add(KIT.slab(1.6, 24, 2.4, { taper: 0.82 }), mats.plate, { pos: [x, 12, 25.4] });
+  // the back wall of the bay (outside the camera's orbit, r 26): panelled bays between tapered pilasters, a coping and a
+  // hazard band over the main door; the rest of the bay stays in darkness. (Four lit walls were tried: they fill the
+  // whole frame with the kit shader and cost ~20 s per frame under software rendering, which broke the title screenshot
+  // in smoke; the dark bay is also the AD's "studio" read.) A separate receive-only builder, like the deck.
+  const WALL = 38, Wb = new KIT.GeoBuilder(79);
+  for (let side = 0; side < 1; side++) {
+    const ry = side * Math.PI / 2, m = new THREE.Matrix4().makeRotationY(ry), V = Wb.under(m);
+    for (let i = 0; i < 8; i++) {
+      const x = -40 + i * 10;
+      V.add(KIT.panelBox(9.6, 22, 1.2, { cols: 1, rows: 3, deps: 1 }), mats.wall, { pos: [x + 5, 11, WALL], tint: 0.07 });
+      V.add(KIT.slab(1.6, 24, 2.4, { taper: 0.82 }), mats.plate, { pos: [x, 12, WALL - 0.6] });
+      if (i % 2 === 1 && (i < 3 || i > 5)) lights.push(lampAssembly(V, root, mats, [x, 14, WALL - 1.6], [0, -0.35, -1], 0.4, '#ffb36b', 2.6, m));
+    }
+    V.add(KIT.slab(82, 1.4, 3.2), mats.plate, { pos: [0, 23.2, WALL - 0.8] });
   }
-  B.add(KIT.slab(82, 1.4, 3.2), mats.plate, { pos: [0, 23.2, 25.2] });
-  B.add(KIT.slab(26, 2.2, 1.8), mats.stripe, { pos: [0, 17.8, 24.8] });
-  for (let i = 0; i < 7; i++) B.add(KIT.plateBox(3.2, 0.5, 0.4, 0.06), mats.dark, { pos: [-9.6 + i * 3.2, 17.8, 23.8] });
+  B.add(KIT.slab(26, 2.2, 1.8), mats.stripe, { pos: [0, 17.8, WALL - 1.2] });
+  for (let i = 0; i < 7; i++) B.add(KIT.plateBox(3.2, 0.5, 0.4, 0.06), mats.dark, { pos: [-9.6 + i * 3.2, 17.8, WALL - 2.2] });
   // gantry crane overhead and two lattice towers with walkways
   B.add(KIT.truss(60, 3, 3.2, 12, 0.32), mats.rust, { pos: [0, 19, 8] });
   for (const s of [-1, 1]) {
@@ -722,11 +733,11 @@ function buildHangar(ctx, M) {
     B.add(KIT.ribbedPlate(12, 5.4, 4.8, { pitch: 1.1 }), s < 0 ? mats.rust : mats.plate, { pos: [s * 30, 2.7, 16 - s * 4], rot: [0, Math.PI / 2 + s * 0.08, 0] });
     for (let k = 0; k < 4; k++) B.add(KIT.drum(0.65, 1.7, 2), k % 2 ? mats.rust : mats.dark, { pos: [s * 24 + (k % 2) * 1.5, 0, 20 - Math.floor(k / 2) * 1.5] });
   }
-  const lights = [];
   for (const x of [-12, 0, 12]) lights.push(lampAssembly(B, root, mats, [x, 18.2, 8], [0, -1, 0], 0.7, '#ffb36b', 5));
   for (const s of [-1, 1]) lights.push(lampAssembly(B, root, mats, [s * 19, 12.8, 13.8], [-s * 0.3, -0.4, -1], 0.45, '#ffb36b', 3));
   const built = B.build({ name: 'hangarMerged' }), deck = F.build({ name: 'hangarDeck', castShadow: false, receiveShadow: true });
-  for (const g of [built, deck]) { g.traverse(m => { if (m.isMesh) { m.matrixAutoUpdate = false; m.updateMatrix(); } }); root.add(g); }
+  const walls = Wb.build({ name: 'hangarWalls', castShadow: false, receiveShadow: true });
+  for (const g of [built, deck, walls]) { g.traverse(m => { if (m.isMesh) { m.matrixAutoUpdate = false; m.updateMatrix(); } }); root.add(g); }
   return { root };
 }
 function buildBench(ctx, M) {
@@ -848,8 +859,6 @@ const CSS = `
 .gx-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
 .gx-head .eyebrow{flex:1 0 100%}
 .gx-head h2{margin:2px 0 8px;font-size:clamp(34px,4.6vw,54px);line-height:.9;letter-spacing:.03em;text-transform:uppercase;font-weight:700}
-.gx-water{margin-left:auto;font:500 13px var(--f-mono);color:var(--hud-dim);letter-spacing:.12em}
-.gx-water b{color:var(--en);font-size:20px;margin-left:6px}
 .gx .tabs{flex:none}
 .gx .tabs button{padding:8px 11px;white-space:nowrap}
 .gx .tabs .ct{font:600 11px var(--f-mono);color:var(--accent);font-style:normal}
@@ -881,6 +890,29 @@ const CSS = `
 .gx-stage{pointer-events:auto;flex:1;position:relative;cursor:grab;touch-action:none}
 .gx-stage:active{cursor:grabbing}
 .gx-hint{position:absolute;right:28px;bottom:22px;font:500 11px var(--f-mono);letter-spacing:.2em;text-transform:uppercase;color:var(--hud-dim)}
+@media (max-height:500px),(max-width:760px){
+  .gx-panel{width:min(56vw,460px);margin:8px 0 8px max(8px,var(--safe-l));padding:10px 12px;max-height:calc(100% - 16px)}
+  .gx-head h2{font-size:26px;margin:0 0 4px}
+  .gx-head .eyebrow{font-size:9px}
+  .gx .tabs{flex-wrap:nowrap;overflow-x:auto}
+  .gx .tabs button{font-size:11px;padding:6px 8px;letter-spacing:.14em}
+  .gx-list{margin-top:6px;gap:4px}
+  .gx-card{padding:6px 9px}
+  .gx-card .nm{font-size:14px}
+  .gx-card .ds{font-size:10px}
+  .gx-card .ks{font-size:10px;gap:2px 8px}
+  .gx-stats{margin-top:6px;padding-top:6px;font-size:10px}
+  .gx-row{grid-template-columns:repeat(8,auto)}
+  .gx-meter{margin-top:4px}
+  .gx .actions{margin-top:8px;gap:8px}
+  .gx .actions .btn{font-size:13px;padding:8px 14px}
+  .gx-hint{display:none}
+}
+`;
+// Bench-only rules (A3.6: injectCSS('bench', …)), layered on the shared garage panel styles
+const BENCH_CSS = `
+.gx-water{margin-left:auto;font:500 13px var(--f-mono);color:var(--hud-dim);letter-spacing:.12em}
+.gx-water b{color:var(--en);font-size:20px;margin-left:6px}
 .gx-slot{display:grid;gap:5px;margin-bottom:6px}
 .gx-slotname,.gx-sub{font:600 12px var(--f-display);letter-spacing:.26em;color:var(--accent);margin-top:6px}
 .gx-sub.dim{color:var(--hud-dim);letter-spacing:.1em;font:400 11px var(--f-mono);margin-top:12px}
@@ -920,25 +952,9 @@ const CSS = `
 .gx-confirm{pointer-events:auto;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(12,11,14,.55)}
 .gx-confirm h3{margin:0 0 6px;font:700 36px var(--f-display);text-transform:uppercase;letter-spacing:.04em}
 @media (max-height:500px),(max-width:760px){
-  .gx-panel{width:min(56vw,460px);margin:8px 0 8px max(8px,var(--safe-l));padding:10px 12px;max-height:calc(100% - 16px)}
-  .gx-head h2{font-size:26px;margin:0 0 4px}
-  .gx-head .eyebrow{font-size:9px}
-  .gx .tabs{flex-wrap:nowrap;overflow-x:auto}
-  .gx .tabs button{font-size:11px;padding:6px 8px;letter-spacing:.14em}
-  .gx-list{margin-top:6px;gap:4px}
-  .gx-card{padding:6px 9px}
-  .gx-card .nm{font-size:14px}
-  .gx-card .ds{font-size:10px}
-  .gx-card .ks{font-size:10px;gap:2px 8px}
-  .gx-stats{margin-top:6px;padding-top:6px;font-size:10px}
-  .gx-row{grid-template-columns:repeat(8,auto)}
-  .gx-meter{margin-top:4px}
-  .gx .actions{margin-top:8px;gap:8px}
-  .gx .actions .btn{font-size:13px;padding:8px 14px}
   .gx-comms{width:min(330px,38vw);right:max(8px,var(--safe-r));bottom:8px;padding:6px 10px}
   .gx-comms .line{font-size:13px}
   .gx-fixed,.gx-frags,.gx-roll{grid-template-columns:1fr}
   .gx-big b{font-size:24px}
-  .gx-hint{display:none}
 }
 `;

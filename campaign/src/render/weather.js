@@ -9,12 +9,12 @@ import { FOG_PARS } from './glsl.js';
 const TYPES = {
   //        size m       fall m/s  sway  streak  box xz/y   alpha  additive  colour            lit
   clear:     { size: [0.05, 0.1], fall: 0, sway: 0, streak: 0, box: [60, 30], alpha: 0, add: 0, color: '#ffffff' },
-  ash:       { size: [0.08, 0.18], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8' },
+  ash:       { size: [0.05, 0.13], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8' },
   snow:      { size: [0.06, 0.15], fall: 1.4, sway: 0.6, streak: 0, box: [56, 34], alpha: 0.85, add: 0, color: '#f4f8ff' },
   rain:      { size: [0.014, 0.022], fall: 12, sway: 0, streak: 0.07, box: [26, 20], alpha: 0.55, add: 0, color: '#dfe8f2' },
   dust:      { size: [0.03, 0.08], fall: -0.05, sway: 0.4, streak: 0, box: [40, 24], alpha: 0.9, add: 1, color: '#fff0d8' },
   embers:    { size: [0.04, 0.07], fall: -1.8, sway: 0.8, streak: 0, box: [50, 30], alpha: 1, add: 1, color: '#ff8a3a' },
-  sandstorm: { size: [0.04, 0.1], fall: 0.6, sway: 0.3, streak: 0.05, box: [30, 18], alpha: 0.55, add: 0, color: '#d8c7a8' },
+  sandstorm: { size: [0.02, 0.06], fall: 0.6, sway: 0.3, streak: 0.016, box: [30, 18], alpha: 0.4, add: 0, color: '#d8c7a8' },
 };
 
 const VS = /* glsl */`
@@ -59,7 +59,7 @@ void main() {
   float fwd = pow(max(dot(vd, uLightDir), 0.0), 6.0);
   vec3 light = uHemiC * 0.6 + uSunC * (0.35 + 1.2 * fwd);
   float edge = 1.0 - smoothstep(0.35, 0.5, max(abs(rel.x) / uBox.x, max(abs(rel.y) / uBox.y, abs(rel.z) / uBox.z)));
-  float near = smoothstep(1.0, 3.5, -mv.z);
+  float near = smoothstep(1.5, 5.0, -mv.z);
   float f = cFogAmount(wp);
   vCol = vec4(uColor * light, uAlpha * fade * edge * near * (1.0 - f * 0.8));
   gl_Position = clip;
@@ -72,7 +72,7 @@ varying float vStreak;
 void main() {
   float a;
   if (vStreak > 0.5) a = smoothstep(0.5, 0.12, abs(vUv.x - 0.5)) * smoothstep(0.5, 0.15, abs(vUv.y - 0.5)) * vCol.a;
-  else a = smoothstep(1.0, 0.2, length(vUv - 0.5) * 2.0) * vCol.a;
+  else { float r = length(vUv - 0.5) * 2.0; a = (smoothstep(1.0, 0.6, r) * 0.75 + smoothstep(0.6, 0.0, r) * 0.25) * vCol.a; }
   if (a < 0.003) discard;
   if (uAdd > 0.5) gl_FragColor = vec4(vCol.rgb * a, 1.0);
   else gl_FragColor = vec4(vCol.rgb, a);

@@ -289,8 +289,6 @@ export function install(ctx) {
       const scene = view || ctx.scene, cam = viewCam || ctx.camera;
       r.info.reset();
       counters.shadow = 0; counters.shadowTris = 0;
-      const ub = ctx.materials?.uniforms?.uBeat;
-      if (ub) ub.value = ctx.clock.time;
       if (scene === ctx.scene) ctx.atmosphere?.prepare?.(cam);
       ctx.particles?.prepare?.(scene, cam);
       if (composer) {

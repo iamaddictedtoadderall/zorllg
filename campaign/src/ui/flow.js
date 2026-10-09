@@ -15,8 +15,8 @@ import { formatTime } from '../core/util.js';
 
 const SIM = { playing: true, dead: true, complete: true };
 const SUSPENDED = { paused: true, interstitial: true, loading: true };   // a level end is held, not dropped
-const KEEP_OVERLAYS = { paused: true, interstitial: true };              // leaving 'playing' for these keeps fade/letterbox
-const DEATH_LINES = ['Signal lost.', 'Frame down. Recovery beacon active.', 'AP depleted. Systems offline.'];
+const KEEP_OVERLAYS = { paused: true, interstitial: true, complete: true };   // leaving 'playing' for these keeps fade/letterbox
+const DEATH_LINES = ['Signal lost.'];   // L1 §10.5: the generic, spoiler-safe line; a level may set def.deathLine
 const CREDITS = ['DAWNWAKE', 'Follow the thaw. Carry what you can.', 'Built with three.js.',
                  'Every model, texture, sound and note is generated in code.', 'Thank you for playing.'];
 export const CAMPAIGN_FALLBACK = Object.freeze({ version: 1, startWater: 4, lockerSize: 4, speakers: {}, fixed: [], fragments: [], roll: [], legs: {} });
@@ -252,32 +252,56 @@ export function install(ctx) {
     }
   }
 
-  /** the pause menu's tactical map: the heightfield's shaded relief, cropped to the route, with route, checkpoints,
-   *  markers and the frame. Assumes renderMap() maps heightfield.bounds onto the whole canvas (arch §4.2 stub). */
+  /** the pause menu's tactical map: the heightfield's shaded relief with the route, checkpoints, markers and the frame.
+   *  renderMap() returns its framing ({ x0, z0, scale }: world = x0 + px × scale) and draws the route itself; an
+   *  implementation that returns nothing is assumed to map heightfield.bounds onto the whole canvas (the arch §4.2
+   *  stub), so the map is rendered into a bounds-shaped canvas, cropped to the route, and the route drawn here.
+   *  The relief is cached per world and canvas size (terrain doesn't change during a level). */
+  let mapCache = null;
   function drawMap(c) {
     const w = ctx.world, hf = w?.heightfield;
     if (!hf || !w.route) return;
-    const b = hf.bounds, BW = b.x1 - b.x0, BH = b.z1 - b.z0;
-    const big = document.createElement('canvas');
-    const k = 900 / Math.max(BW, BH);
-    big.width = Math.max(32, Math.round(BW * k)); big.height = Math.max(32, Math.round(BH * k));
-    hf.renderMap(big, { route: w.route });
-    // crop: the route's bounding box plus a margin, aspect-fit into the visible canvas
-    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
-    for (const p of w.route.sample(40)) { x0 = Math.min(x0, p.x); z0 = Math.min(z0, p.z); x1 = Math.max(x1, p.x); z1 = Math.max(z1, p.z); }
-    const pad = 380; x0 -= pad; z0 -= pad; x1 += pad; z1 += pad;
-    const W = c.width, H = c.height, sc = Math.min(W / (x1 - x0), H / (z1 - z0));
-    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-    const X = (x) => W / 2 + (x - cx) * sc, Y = (z) => H / 2 + (z - cz) * sc;
-    const g = c.getContext('2d');
-    g.fillStyle = '#0c0b0e'; g.fillRect(0, 0, W, H);
-    g.imageSmoothingEnabled = true;
-    g.drawImage(big, (X(b.x0)), (Y(b.z0)), BW * sc, BH * sc);
-    g.fillStyle = 'rgba(12,11,14,.28)'; g.fillRect(0, 0, W, H);
-    // route
-    g.strokeStyle = 'rgba(224,145,60,.9)'; g.lineWidth = 2; g.setLineDash([6, 5]); g.beginPath();
-    w.route.sample(30).forEach((p, i) => { if (i) g.lineTo(X(p.x), Y(p.z)); else g.moveTo(X(p.x), Y(p.z)); });
-    g.stroke(); g.setLineDash([]);
+    const W = c.width, H = c.height, g = c.getContext('2d');
+    if (!mapCache || mapCache.hf !== hf || mapCache.w !== W || mapCache.h !== H) {
+      const base = document.createElement('canvas');
+      base.width = W; base.height = H;
+      const bg = base.getContext('2d');
+      bg.fillStyle = '#0c0b0e'; bg.fillRect(0, 0, W, H);
+      let T = null;
+      const tmp = document.createElement('canvas'); tmp.width = W; tmp.height = H;
+      const r = hf.renderMap(tmp, { route: w.route });
+      if (r && Number.isFinite(r.x0) && Number.isFinite(r.z0) && r.scale > 0) {
+        T = { X: (x) => (x - r.x0) / r.scale, Y: (z) => (z - r.z0) / r.scale, sc: 1 / r.scale, routeDrawn: true };
+        // only the generated area: outside heightfield.bounds the relief is edge-clamped (streaks)
+        const b = hf.bounds;
+        if (b && Number.isFinite(b.x0)) {
+          const bx0 = Math.max(0, T.X(b.x0)), by0 = Math.max(0, T.Y(b.z0)), bx1 = Math.min(W, T.X(b.x1)), by1 = Math.min(H, T.Y(b.z1));
+          if (bx1 > bx0 && by1 > by0) bg.drawImage(tmp, bx0, by0, bx1 - bx0, by1 - by0, bx0, by0, bx1 - bx0, by1 - by0);
+        } else bg.drawImage(tmp, 0, 0);
+      } else {
+        const b = hf.bounds, BW = b.x1 - b.x0, BH = b.z1 - b.z0;
+        const big = document.createElement('canvas');
+        const k = 900 / Math.max(BW, BH);
+        big.width = Math.max(32, Math.round(BW * k)); big.height = Math.max(32, Math.round(BH * k));
+        hf.renderMap(big, { route: w.route });
+        let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+        for (const p of w.route.sample(40)) { x0 = Math.min(x0, p.x); z0 = Math.min(z0, p.z); x1 = Math.max(x1, p.x); z1 = Math.max(z1, p.z); }
+        const pad = 380; x0 -= pad; z0 -= pad; x1 += pad; z1 += pad;
+        const sc = Math.min(W / (x1 - x0), H / (z1 - z0)), cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+        T = { X: (x) => W / 2 + (x - cx) * sc, Y: (z) => H / 2 + (z - cz) * sc, sc, routeDrawn: false };
+        bg.imageSmoothingEnabled = true;
+        bg.drawImage(big, T.X(b.x0), T.Y(b.z0), BW * sc, BH * sc);
+      }
+      bg.fillStyle = 'rgba(12,11,14,.22)'; bg.fillRect(0, 0, W, H);
+      if (!T.routeDrawn) {
+        bg.strokeStyle = 'rgba(224,145,60,.9)'; bg.lineWidth = 2; bg.setLineDash([6, 5]); bg.beginPath();
+        w.route.sample(30).forEach((p, i) => { if (i) bg.lineTo(T.X(p.x), T.Y(p.z)); else bg.moveTo(T.X(p.x), T.Y(p.z)); });
+        bg.stroke(); bg.setLineDash([]);
+      }
+      mapCache = { hf, w: W, h: H, base, T };
+    }
+    const { X, Y, sc } = mapCache.T;
+    g.drawImage(mapCache.base, 0, 0);
     // checkpoints
     const m = ctx.mission;
     for (const cp of m?.def?.checkpoints || []) {
@@ -285,26 +309,27 @@ export function install(ctx) {
       g.fillStyle = cp.id === m.checkpoint ? '#8fd2c6' : 'rgba(143,210,198,.45)';
       g.fillRect(X(p.x) - 3, Y(p.z) - 3, 6, 6);
     }
-    // markers (objective first)
-    for (const mk of H()?.markers || []) {
+    // markers
+    for (const mk of H_markers()) {
       const p = typeof mk.pos === 'function' ? mk.pos() : mk.pos;
       if (!p) continue;
       g.save(); g.translate(X(p.x), Y(p.z)); g.rotate(Math.PI / 4);
       g.strokeStyle = mk.kind === 'threat' ? '#ff5b2e' : mk.kind === 'ally' ? '#7fc6ff' : mk.kind === 'poi' ? '#8fd2c6' : '#e0913c';
       g.lineWidth = 2; g.strokeRect(-5, -5, 10, 10); g.restore();
     }
-    // the frame
+    // the frame (heading: yaw 0 faces −Z, which is up on a north-up map)
     const pl = ctx.player;
     if (pl?.active) {
       g.save(); g.translate(X(pl.pos.x), Y(pl.pos.z)); g.rotate(-pl.yaw);
-      g.fillStyle = '#e9e3d3'; g.beginPath(); g.moveTo(0, -9); g.lineTo(6, 7); g.lineTo(0, 3); g.lineTo(-6, 7); g.closePath(); g.fill();
+      g.fillStyle = '#e9e3d3'; g.strokeStyle = 'rgba(12,11,14,.8)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(0, -9); g.lineTo(6, 7); g.lineTo(0, 3); g.lineTo(-6, 7); g.closePath(); g.stroke(); g.fill();
       g.restore();
     }
-    g.fillStyle = 'rgba(233,227,211,.7)'; g.font = '600 12px "IBM Plex Mono",monospace'; g.fillText('N', W - 18, 18);
-    // scale bar: 500 m
-    g.fillStyle = 'rgba(233,227,211,.6)'; g.fillRect(14, H - 16, 500 * sc, 2);
-    g.font = '500 10px "IBM Plex Mono",monospace'; g.fillText('500 M', 14, H - 22);
+    g.fillStyle = 'rgba(233,227,211,.7)'; g.font = '600 12px "IBM Plex Mono",monospace'; g.textBaseline = 'alphabetic'; g.fillText('N', W - 18, 18);
+    const bar = 500 * sc;   // scale bar: 500 m
+    if (bar > 10 && bar < W * 0.6) { g.fillStyle = 'rgba(233,227,211,.6)'; g.fillRect(14, H - 16, bar, 2); g.font = '500 10px "IBM Plex Mono",monospace'; g.fillText('500 M', 14, H - 22); }
   }
+  const H_markers = () => H()?.markers || [];
 
   const flow = {
     state: 'boot',
@@ -407,6 +432,7 @@ export function install(ctx) {
   };
 
   ctx.events.on('input:focuslost', () => { if (flow.state === 'playing') flow.pause(); });
+  ctx.events.on('level:cleared', () => { mapCache = null; });
   ctx.events.on('player:died', () => {
     if (flow.state !== 'playing') return;
     set('dead');
@@ -429,8 +455,15 @@ export function install(ctx) {
     onFailed(e);
   });
   ctx.events.on('level:complete', (e) => {
-    if (flow.state !== 'playing') { holdEnd('complete', e); return; }
+    if (flow.state !== 'playing' && flow.state !== 'complete') { holdEnd('complete', e); return; }
     onComplete(e);
+  });
+  // §8.1 'complete': the level's complete.do plays with the sim running, the HUD up and gameplay input off. The frame
+  // can no longer be destroyed (a death here would have no screen to go to).
+  ctx.events.on('mission:completing', () => {
+    if (flow.state !== 'playing') return;
+    set('complete');
+    if (ctx.player?.active) ctx.player.invuln = true;
   });
   function onComplete({ levelId, result }) {
     const def = flow.def;

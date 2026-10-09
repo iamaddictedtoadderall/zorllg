@@ -371,10 +371,12 @@ export function ribbedPlate(w, h, t, o = {}) {
     const parts = [bevelBox(w, h, t, clamp(Math.min(w, h, t) * 0.15, 0.01, 0.3))];
     const L = axis === 'x' ? w : h, n = Math.max(1, Math.floor((L - pitch * 0.5) / pitch));
     const span = (n - 1) * pitch;
+    // ribs are chamfered bars (bevelled along their length, flat-cut ends): ~28 triangles each instead of ~100, so
+    // corrugated containers, decks and roofs stay cheap (the ends are sub-pixel at any distance a rib is seen from)
     for (let i = 0; i < n; i++) {
       const s = -span / 2 + i * pitch;
-      const g = axis === 'x' ? plateBox(rib, h * 0.96, rd) : plateBox(w * 0.96, rib, rd);
-      parts.push([g, { pos: axis === 'x' ? [s, 0, t / 2 + rd / 2 - 0.01] : [0, s, t / 2 + rd / 2 - 0.01] }]);
+      if (axis === 'x') parts.push([bar(r4(h * 0.96), rd, rib), { pos: [s, 0, t / 2 + rd / 2 - 0.01], rot: [0, 0, Math.PI / 2] }]);
+      else parts.push([bar(r4(w * 0.96), rd, rib), { pos: [0, s, t / 2 + rd / 2 - 0.01] }]);
     }
     return kitMerge(parts);
   });
@@ -455,7 +457,9 @@ export function ring(r, w, t, seg) {
 export function flange(r, t, w, seg) { return ring(r + w / 2, w, t, seg ?? segFor(r + w, 10, 40)); }
 /** Barrel / water drum of radius r, height h (base at y = 0), with `ribs` rolling hoops and a recessed lid. */
 export function drum(r, h, ribs = 2, seg) {
-  const s = seg ?? segFor(r, 10, 32);
+  // drums are seen up close (camp props, the Bench, mech racks): rounder than the AD minimum so the silhouette never
+  // reads as a polygon at 10 m
+  const s = seg ?? clamp(Math.round(r * 16), 14, 40);
   return cached(keyOf('drum', r, h, ribs, s), () => {
     const prof = [[0, 0], [r * 0.9, 0], [r, 0.03 * h]];
     const rh = Math.min(0.025 * h, r * 0.08), rw = 0.035 * h;
@@ -549,7 +553,9 @@ export function pipe(points, radius, radial = 8) {
 /** Truss along x (length), height along y (base at y = 0), two faces `width` apart in z (0 = a single face).
  *  bays: number of bays. bar: member size; a 5th-argument object is read as { bar, pattern: 'warren'|'pratt'|'k' }. */
 function gussetGeo(B) {
-  return cached(keyOf('gusset', B), () => kitFinalize(new THREE.BoxGeometry(B * 2.4, B * 2.0, B * 0.3), { edgeAll: 1 }));
+  // a chamfered gusset plate (AD §2.5: "chamfered plates of 2.5 × bar"); no cap bevel at this size (sub-pixel), the
+  // clipped corners carry the read. Whole plate tagged as edge so the wear patch chips it.
+  return cached(keyOf('gusset', B), () => kitFinalize(plateGeo(chamferRect(B * 2.4, B * 2.0, B * 0.5).map(p => [r4(p[0]), r4(p[1])]), B * 0.3, 'front', 0).clone(), { edgeAll: 1 }));
 }
 export function truss(length, width, height, bays, barSize = 0.25) {
   const o = typeof barSize === 'object' && barSize ? barSize : { bar: barSize };
@@ -770,16 +776,18 @@ export function pressureRidge(path, h = 10, o = {}) {
   return cached(keyOf('ridge', P, h, o.seed ?? 1, o.width ?? 0, o.density ?? 1), () => {
     const rng = mulberry32((o.seed ?? 1) * 7919 + 13);
     const width = o.width ?? h * 0.9, parts = [];
+    // slab sizes follow AD §2.12 (4–12 × 2–6 × 0.6–1.5 m) for ridges of 8 to 25 m; small ridges scale them down
+    const ks = clamp(h / 10, 0.3, 1);
     for (let i = 0; i < P.length - 1; i++) {
       const [x0, z0] = P[i], [x1, z1] = P[i + 1], L = Math.hypot(x1 - x0, z1 - z0);
       const dx = (x1 - x0) / L, dz = (z1 - z0) / L, yaw = Math.atan2(-dz, dx);
-      const step = 3.2 / (o.density ?? 1);
+      const step = 3.2 * ks / (o.density ?? 1);
       for (let s = 0; s < L; s += step * lerp(0.7, 1.3, rng())) {
         const lat = (rng() - 0.5) * width * 0.6, hh = h * (0.35 + 0.65 * Math.sin(Math.PI * (s / L) * 0.8 + 0.3) * lerp(0.6, 1, rng()));
         const cx = x0 + dx * s - dz * lat, cz = z0 + dz * s + dx * lat;
         const deep = 2 + Math.floor(rng() * 2);
         for (let k = 0; k < deep; k++) {
-          const sw = lerp(4, 12, rng()) * (hh / h * 0.6 + 0.4), sh = lerp(2, 6, rng()) * (hh / h * 0.5 + 0.5), st = lerp(0.6, 1.5, rng());
+          const sw = lerp(4, 12, rng()) * ks * (hh / h * 0.6 + 0.4), sh = lerp(2, 6, rng()) * ks * (hh / h * 0.5 + 0.5), st = lerp(0.6, 1.5, rng()) * Math.sqrt(ks);
           const tilt = lerp(20, 70, rng()) * Math.PI / 180 * (rng() < 0.5 ? -1 : 1);
           const y = k * hh / deep * 0.6 + sh * 0.3;
           parts.push([plateBox(r4(sw), r4(sh), r4(st), 0.12), { pos: [cx + (rng() - 0.5) * 2, y, cz + (rng() - 0.5) * 2],

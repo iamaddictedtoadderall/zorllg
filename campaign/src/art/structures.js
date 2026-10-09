@@ -529,6 +529,7 @@ export function matLib(ctx) {
 
 // ================================================================== builders shared by the catalogue
 const PI = Math.PI, HALF = PI / 2;
+const r2 = (v) => Math.round(v * 100) / 100;
 const P = (x, y, z, rx = 0, ry = 0, rz = 0, extra) => ({ pos: [x, y, z], rot: [rx, ry, rz], ...(extra || {}) });
 const GEO = new Map();
 function geo(key, fn) { let g = GEO.get(key); if (!g) { g = fn(); g.userData.shared = true; GEO.set(key, g); } return g; }
@@ -587,6 +588,20 @@ function panelWall(B, M, rng, L, H, T, o = {}) {
   }
 }
 const dir3 = (a) => [Math.sin(a), 0, Math.cos(a)];
+/** a ground pad of w × d as cast slabs on an irregular grid with real expansion joints (no 60 m plain face, and the
+ *  joints break the concrete texture's repeat); top at y, thickness t; the joint gaps show the dark sub-base */
+function pad(B, M, rng, w, d, y, t = 0.6, o = {}) {
+  const mat = o.mat || M.concreteDark, base = o.base || M.dark, gap = o.gap ?? 0.22;
+  B.add(KIT.slab(w, t * 0.5, d, { bevel: 0.1 }), base, P(0, y - t * 0.75, 0));
+  B.add(KIT.slab(w, t, d, { bevel: 0.2 }), mat, P(0, y - t / 2, 0, 0, 0, 0, { lod1: true }));
+  const cols = KIT.split(w, rng, o.min ?? 7, o.max ?? 11), rows = KIT.split(d, rng, o.min ?? 7, o.max ?? 11);
+  let x = -w / 2;
+  for (const cw of cols) {
+    let z = -d / 2;
+    for (const rd of rows) { B.add(KIT.slab(cw - gap, t, rd - gap, { bevel: Math.min(0.12, t * 0.2) }), mat, P(x + cw / 2, y - t / 2, z + rd / 2, 0, 0, 0, { tint: 0.06, lod0: true })); z += rd; }
+    x += cw;
+  }
+}
 
 // ================================================================== the catalogue (Appendix C.3)
 const DREDGE_PLATE = (A) => A.M.concrete;
@@ -606,6 +621,7 @@ export const CATALOG = {
       // pilasters on the long faces
       for (const s of [-1, 1]) for (let i = 0; i < 4; i++) {
         const x = -w * 0.36 + i * w * 0.24;
+        if (s < 0 && Math.abs(x) < w * 0.33) continue;   // the slit facade owns the middle of the front face
         B.add(KIT.slab(1.3, h - 0.6, 1.4, { taper: 0.75 }), M.concreteDark, P(x, (h - 0.6) / 2 + 0.6, s * (d / 2 - 0.5), s * 0.12, 0, 0));
       }
       // front facade (−z) with the firing slit (a real hole) and a dark interior behind it
@@ -624,13 +640,15 @@ export const CATALOG = {
       B.add(KIT.greeble('junction', 0.9, 1.1, 0.35), M.ironBlack, P(4.2, 2.4, bz + 0.62));
       A.lamp(B, [0, 6.8, bz + 1.1], [0, -0.4, 1], 0.28, 'lightSodium');
       // roof: vents, hatch, whip antenna, a stack of sandbag-like slabs
-      B.add(KIT.greeble('vent', 2.2, 1.6, 0.5), M.ironBlack, P(-w * 0.2, h + 0.4, 0, -HALF));
-      B.add(KIT.greeble('vent', 1.6, 1.6, 0.5), M.ironBlack, P(w * 0.08, h + 0.4, d * 0.15, -HALF));
-      B.add(KIT.ring(0.8, 0.22, 0.3), M.ironBlack, P(w * 0.22, h + 0.45, -d * 0.12));
-      B.add(KIT.disc(0.7, 0.16), M.concreteDark, P(w * 0.22, h + 0.5, -d * 0.12));
-      B.add(KIT.cylinder(0.05, 0.03, 6, 6), M.ironBlack, P(-w * 0.32, h + 3.4, d * 0.2), { lod0: true });
-      B.add(KIT.cylinder(0.25, 0.3, 0.4, 8), M.ironBlack, P(-w * 0.32, h + 0.5, d * 0.2));
-      B.add(KIT.greebles(rng, w * 0.5, 2.2, 0.6), M.ironBlack, P(w * 0.05, h + 0.35, -d * 0.32, -HALF), { lod0: true });
+      const rt = h + 0.62;   // top of the roof cap
+      B.add(KIT.greeble('vent', 2.2, 1.6, 0.5), M.ironBlack, P(-w * 0.2, rt, 0, -HALF));
+      B.add(KIT.greeble('vent', 1.6, 1.6, 0.5), M.ironBlack, P(w * 0.08, rt, d * 0.15, -HALF));
+      B.add(KIT.ring(0.8, 0.22, 0.3), M.ironBlack, P(w * 0.22, rt + 0.12, -d * 0.12));
+      B.add(KIT.disc(0.7, 0.16), M.concreteDark, P(w * 0.22, rt + 0.16, -d * 0.12));
+      B.add(KIT.cylinder(0.05, 0.03, 6, 6), M.ironBlack, P(-w * 0.32, rt + 3.2, d * 0.2), { lod0: true });
+      B.add(KIT.cylinder(0.25, 0.3, 0.4, 8), M.ironBlack, P(-w * 0.32, rt + 0.18, d * 0.2));
+      B.add(KIT.greebles(rng, w * 0.4, 1.8, 0.6), M.ironBlack, P(w * 0.02, rt, -d * 0.3, -HALF), { lod0: true });
+      for (const s of [-1, 1]) B.add(KIT.pipeRun([[s * w * 0.42, rt + 0.3, d * 0.28], [s * w * 0.42, rt + 0.3, -d * 0.1], [s * w * 0.3, rt + 0.3, -d * 0.1]], 0.14, { flangeEnds: true }), M.ironBlack, null, { lod0: true });
     },
   },
   // ---------------------------------------------------------------- watchtower: battered shaft, ladder cage, cab with window band
@@ -679,7 +697,9 @@ export const CATALOG = {
     build(A, p) {
       const { B, M, rng } = A, L = p.length, H = p.h, T = p.thickness, dmg = p.damaged || 0;
       B.add(frustum(L + 1.2, T + 2.2, 2.4, 0.94, 0.4), M.concreteDark, P(0, -1.5, 0));
-      panelWall(B, M, rng, L, H - 0.6, T, { damage: dmg });
+      // params.panel 'large': a coarser panel grid (composites such as the outpost, which must fit one 60k LOD0)
+      const big = p.panel === 'large';
+      panelWall(B, M, rng, L, H - 0.6, T, { damage: dmg, ...(big ? { colMin: 4.6, colMax: 7.2, rowMin: 3.2, rowMax: 4.6 } : {}) });
       const nb = Math.max(1, Math.round(L / 8));
       for (let i = 0; i <= nb; i++) {
         const x = -L / 2 + L * i / nb;
@@ -760,7 +780,13 @@ export const CATALOG = {
         B.add(KIT.slab(W + 1.5, 1.6, 7.5, { bevel: 0.35 }), M.concreteDark, P(0, H - 0.8, z));
         hazard(B, M, 5, 0.8, 0.3, [0, H * 0.35, z - 4.4]);
       }
-      for (const s of [-1, 1]) B.add(frustum(W + 4, 12, H + 3, 0.9, 1.2), M.concreteDark, P(0, -3, s * (L / 2 + 5)));
+      for (const s of [-1, 1]) {
+        const az = s * (L / 2 + 5);
+        B.add(frustum(W + 4, 12, H + 3, 0.9, 1.2), M.concreteDark, P(0, -3, az));
+        B.add(KIT.slab(W + 3, 1.2, 11, { bevel: 0.35, chamfer: 0.4 }), M.concrete, P(0, H + 0.2, az));            // coping
+        for (let y = 2; y < H; y += 5) B.add(frustum((W + 4) * (1 - (y + 3) / (H + 3) * 0.1) + 0.5, 12.5 - (y + 3) / (H + 3) * 1.2, 0.5, 0.99, 0.5), M.concrete, P(0, y, az));   // pour lines
+        for (const x of [-W * 0.32, 0, W * 0.32]) B.add(KIT.slab(2.2, H + 2, 1.6, { taper: 0.8 }), M.concrete, P(x, (H + 2) / 2 - 2.5, az + s * 6.1, s * -0.05, 0, 0));   // buttresses on the outer face
+      }
       B.add(KIT.ribbedPlate(W, L, 0.9, { pitch: 4, axis: 'y' }), M.steelDark, P(0, H + 0.95, 0, -HALF));
       B.add(KIT.slab(W - 1, 0.5, L, { bevel: 0.12 }), M.concreteDark, P(0, H + 1.4, 0));
       for (const s of [-1, 1]) {
@@ -836,7 +862,7 @@ export const CATALOG = {
     build(A, p) {
       const { B, M, rng } = A;
       B.add(frustum(23, 23, 2.6, 0.97, 0.6), M.concrete, P(0, -1.2, 0));
-      B.add(KIT.plateBox(23.4, 0.5, 23.4, 0.12), M.concreteDark, P(0, 1.35, 0, 0, 0, 0, { lod1: true }));
+      pad(B, M, rng, 23.4, 23.4, 1.6, 0.5, { min: 5, max: 8 });
       for (const s of [-1, 1]) { railing(B, M, [-11, 1.4, s * 11], [11, 1.4, s * 11]); railing(B, M, [s * 11, 1.4, -11], [s * 11, 1.4, 11]); }
       hazard(B, M, 22, 0.35, 0.25, [0, 1.25, -11.6]);
       B.add(KIT.panelBox(6, 3.4, 4.5, { cols: 2, rows: 1 }), M.ironBlack, P(-6, 3.1, 6.5));
@@ -869,11 +895,11 @@ export const CATALOG = {
     hit: p => ({ center: [0, 6, 0], r: Math.max(...farmSize(p.tanks)) * 0.5 }),
     build(A, p) {
       const { B, M, rng } = A, [w, d] = farmSize(p.tanks);
-      B.add(KIT.slab(w + 2, 0.6, d + 2, { bevel: 0.2 }), M.concreteDark, P(0, 0.05, 0));
+      pad(B, M, rng, w + 2, d + 2, 0.35, 0.6, { min: 6, max: 9 });
       for (const s of [-1, 1]) { B.add(KIT.slab(w + 4, 1.6, 1.2), M.concreteDark, P(0, 0.6, s * (d / 2 + 2))); B.add(KIT.slab(1.2, 1.6, d + 4), M.concreteDark, P(s * (w / 2 + 2), 0.6, 0)); }
       const spots = farmSpots(p.tanks);
       spots.forEach(([x, z], i) => {
-        tankInto(B, M, x, z, 6, 12.5, i % 2 ? M.oxide : M.ceramicAged, rng);
+        tankInto(B, M, x, z, 6, 12.5, [M.oxide, M.steel, M.ironBlack][i % 3], rng);
         if (i > 0) { const [px, pz] = spots[i - 1]; B.add(KIT.pipeRun([[px, 1.4, pz + 6.6], [px, 1.4, pz + 8], [x, 1.4, pz + 8], [x, 1.4, z + 6.6]], 0.35), M.ironBlack, null, { lod0: true }); }
       });
       B.add(KIT.panelBox(3, 2.2, 2.4, { cols: 2, rows: 1 }), M.ironBlack, P(w / 2 - 1, 1.5, -d / 2 + 1));
@@ -892,8 +918,8 @@ export const CATALOG = {
     hit: p => ({ center: [0, 8, 0], r: p.size * 0.45 }),
     build(A, p) {
       const { B, M, rng } = A, S = p.size, L = refLayout(S);
-      B.add(KIT.slab(S, 0.6, S, { bevel: 0.25 }), M.concreteDark, P(0, 0.05, 0));
-      L.tanks.forEach(([x, z, r], i) => tankInto(B, M, x, z, r, r * 1.7, i % 2 ? M.oxide : M.ceramicAged, rng));
+      pad(B, M, rng, S, S, 0.35, 0.6);
+      L.tanks.forEach(([x, z, r], i) => tankInto(B, M, x, z, r, r * 1.7, [M.oxide, M.steel, M.ironBlack][i % 3], rng));
       // process column with platforms every 6 m and a ladder
       const [cx, cz] = L.col;
       B.add(geo('refColumn', () => KIT.latheHard([[0, 0], [2.6, 0], [2.6, 0.5], [2.2, 0.7], [2.2, 28], [1.6, 29.5], [0.6, 30.2], [0, 30.3]], 24, { edgeLen: 0.6 })), M.steelDark, P(cx, 0, cz));
@@ -920,10 +946,21 @@ export const CATALOG = {
         B.add(KIT.cylinder(0.15, 0.2, 7, 8), M.ironBlack, P(x, 3.5, z), { lod0: true });
         A.lamp(B, [x, 7.3, z], [0, -1, 0], 0.4, 'lightSodium');
       }
+      // control hut with a door, window band, roof unit and lamp; a couple of containers by the gate
+      const hx = -S * 0.06, hz = S * 0.32;
+      B.add(KIT.panelBox(9, 4.2, 6, { cols: 3, rows: 1 }), M.ironBlack, P(hx, 2.45, hz));
+      B.add(KIT.slab(9.8, 0.5, 6.8, { bevel: 0.15 }), M.concreteDark, P(hx, 4.8, hz));
+      B.add(KIT.plateBox(6, 0.9, 0.25, 0.04), M.darkGlass, P(hx + 0.8, 3.1, hz - 3.08));
+      hazard(B, M, 2.2, 0.35, 0.2, [hx - 3.2, 4.25, hz - 3.15]);
+      B.add(KIT.panelBox(1.6, 2.6, 0.3, { cols: 1, rows: 2 }), M.oxide, P(hx - 3.2, 1.65, hz - 3.1));
+      B.add(KIT.greeble('vent', 2.4, 1.4, 0.5), M.steelDark, P(hx + 1.5, 5.05, hz, -HALF));
+      A.lamp(B, [hx - 3.2, 4.6, hz - 3.6], [0, -0.4, -1], 0.26, 'lightSodium');
+      for (const [x, z, ry] of [[S * 0.38, S * 0.3, 0.03], [S * 0.38 - 5.1, S * 0.3 + 0.4, -0.04]]) container(B, M, ry > 0 ? M.oxide : M.steelDark, x, 0.35, z, HALF + ry);
       // horizontal heat exchangers on saddles
       for (let i = 0; i < 2; i++) {
         const z = -S * 0.32 + i * 3.4;
-        B.add(KIT.cylinder(1.2, 1.2, 9, 16), M.ceramicAged, P(S * 0.3, 2.2, z, 0, 0, HALF));
+        B.add(KIT.cylinder(1.2, 1.2, 9, 16), M.steel, P(S * 0.3, 2.2, z, 0, 0, HALF));
+        for (const k of [-3.2, 0, 3.2]) B.add(KIT.ring(1.24, 0.12, 0.28, 16), M.ironBlack, P(S * 0.3 + k, 2.2, z, 0, 0, HALF), { lod0: true });
         for (const s of [-1, 1]) B.add(KIT.slab(0.6, 1.4, 2.6), M.ironBlack, P(S * 0.3 + s * 3, 0.9, z));
       }
     },
@@ -1224,6 +1261,23 @@ export const CATALOG = {
             P(x * 1.02, y, e.z + dir * lerp(1, 4, rng()), (rng() - 0.5) * 0.9, (rng() - 0.5) * 0.6, (rng() - 0.5) * 1.2));
         }
         for (const s2 of [-1, 1]) V.add(KIT.bar(e.h * 0.9, 0.9, 0.9), M.rust, P(s2 * e.w * 0.25, e.top - e.h * 0.45, e.z + dir * 0.6, 0, 0, HALF));
+        // hull breaches (AD §2.11): a torn hole in the side plating showing the dark hold, exposed frames across it and
+        // plates peeled back around the rim
+        for (let b = 0; b < 2; b++) {
+          const sec = list[1 + Math.floor(rng() * (list.length - 2))], sd = rng() < 0.5 ? -1 : 1;
+          const ylo = sec.top - sec.h + sec.w * 0.3, yhi = sec.top - sec.w * 0.06;
+          if (yhi - ylo < 6) continue;
+          const bw = lerp(9, 15, rng()), bh = Math.min(lerp(5, 8, rng()), (yhi - ylo) * 0.8), yc = lerp(ylo + bh / 2, yhi - bh / 2, rng()), x = sd * (sec.w / 2 + 0.15);
+          const hole = [];
+          for (let k = 0; k < 14; k++) { const a = k / 14 * PI * 2, rr = lerp(0.72, 1.0, rng()); hole.push([Math.cos(a) * bw / 2 * rr, Math.sin(a) * bh / 2 * rr]); }
+          V.add(KIT.plateGeo(hole.map(([a, c]) => [r2(a), r2(c)]), 0.5, 'side', 0.05), M.dark, P(x, yc, sec.z));
+          for (let f = -bw / 2 + 2; f < bw / 2 - 1; f += 3) V.add(KIT.barBetween([x + sd * 0.25, yc - bh * 0.42, sec.z + f], [x + sd * 0.25, yc + bh * 0.42, sec.z + f], 0.45, 0.55), M.rust);
+          for (let k = 0; k < 4; k++) {
+            const a = rng() * PI * 2;
+            V.add(KIT.plateBox(lerp(2.5, 4.5, rng()), 0.22, lerp(1.5, 3, rng()), 0.05), M.oxide,
+              P(x + sd * 0.8, yc + Math.sin(a) * bh * 0.5, sec.z + Math.cos(a) * bw * 0.5, 0, 0, sd * lerp(0.4, 1.1, rng())));
+          }
+        }
       };
       const VS = B.under(mStern), VB = B.under(mBow);
       piece(VS, secs.slice(iB), 'stern', 'start');
@@ -1273,9 +1327,16 @@ export const CATALOG = {
       const col = geo('megaLeg|' + H, () => { const g = KIT.loft(secs); g.rotateX(-HALF); return g; });
       B.add(col, M.concreteDark);
       B.add(frustum(96, 96, 30, 0.7, 14), M.concreteDark, P(0, -10, 0));
+      // corner members and a rib down the middle of each face (no 25 m-wide plain face), in 6 straight runs that follow
+      // the leg's curved taper so they sit on the hull all the way up
+      const rAt = (u) => lerp(36, 17, Math.pow(u, 0.8));
       for (let i = 0; i < 8; i++) {
-        const a = i / 8 * PI * 2 + PI / 8;
-        B.add(KIT.barBetween([Math.cos(a) * 37, 0, Math.sin(a) * 37], [Math.cos(a) * 18, H, Math.sin(a) * 18], 4.5, 4.5), M.steelDark);
+        const a = i / 8 * PI * 2 + PI / 8, am = a + PI / 8, cm = Math.cos(PI / 8);
+        for (let k = 0; k < 6; k++) {
+          const u0 = k / 6, u1 = (k + 1) / 6, r0 = rAt(u0) + 1, r1 = rAt(u1) + 1;
+          B.add(KIT.barBetween([Math.cos(a) * r0, u0 * H, Math.sin(a) * r0], [Math.cos(a) * r1, u1 * H, Math.sin(a) * r1], 4.5, 4.5), M.steelDark);
+          B.add(KIT.barBetween([Math.cos(am) * (r0 * cm + 0.2), u0 * H, Math.sin(am) * (r0 * cm + 0.2)], [Math.cos(am) * (r1 * cm + 0.2), u1 * H, Math.sin(am) * (r1 * cm + 0.2)], 2.2, 2.6), M.steelDark);
+        }
       }
       for (let y = 60; y < H; y += 60) {
         const r = lerp(36, 17, Math.pow(y / H, 0.8)) + 2.5;
@@ -1407,11 +1468,11 @@ function moveColliders(list, x, z, yaw) {
 function outpostParts(size) {
   const h = size / 2, L = size - 8;
   return [
-    ['wall', 0, h - 2, 0, { length: L, h: 9, thickness: 2.6 }],
-    ['wall', -(h - 2), 0, HALF, { length: L, h: 9, thickness: 2.6 }],
-    ['wall', h - 2, 0, HALF, { length: L, h: 9, thickness: 2.6 }],
-    ['wall', -(L / 4 + 6), -(h - 2), 0, { length: L / 2 - 12, h: 9, thickness: 2.6 }],
-    ['wall', L / 4 + 6, -(h - 2), 0, { length: L / 2 - 12, h: 9, thickness: 2.6 }],
+    ['wall', 0, h - 2, 0, { length: L, h: 9, thickness: 2.6, panel: 'large' }],
+    ['wall', -(h - 2), 0, HALF, { length: L, h: 9, thickness: 2.6, panel: 'large' }],
+    ['wall', h - 2, 0, HALF, { length: L, h: 9, thickness: 2.6, panel: 'large' }],
+    ['wall', -(L / 4 + 6), -(h - 2), 0, { length: L / 2 - 12, h: 9, thickness: 2.6, panel: 'large' }],
+    ['wall', L / 4 + 6, -(h - 2), 0, { length: L / 2 - 12, h: 9, thickness: 2.6, panel: 'large' }],
     ['bunker', 4, 6, PI, { w: 20, d: 14, h: 7 }],
     ['watchtower', -(h - 7), h - 7, 0, { h: 20 }],
     ['watchtower', h - 7, -(h - 7), 0, { h: 20 }],

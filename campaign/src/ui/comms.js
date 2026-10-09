@@ -32,6 +32,7 @@ const CSS = `
 #comms[data-font=monoCaps] .line{text-transform:uppercase;letter-spacing:.07em;font-size:13px}
 #comms[data-font=sans] .line{font-family:var(--f-display);font-size:18px;line-height:1.35;letter-spacing:.02em}
 #comms[data-font=serif] .line{font-family:Georgia,"Iowan Old Style","Times New Roman",serif;font-size:16px;line-height:1.45}
+#comms.upright .line{font-style:normal}
 #comms.italic .line{font-style:italic}
 #comms[data-style=system]{background:linear-gradient(90deg,rgba(6,7,9,.86),rgba(6,7,9,.4));border-left-style:solid}
 #comms[data-style=system] .line{letter-spacing:.06em}
@@ -99,6 +100,9 @@ export function install(ctx) {
       box.dataset.style = sp.style || 'radio';
       box.dataset.font = FONTS.has(sp.font) ? sp.font : 'mono';
       box.classList.toggle('italic', !!sp.italic);
+      // a speaker with an explicit `font` has its typography fully specified: upright unless `italic` (the 'internal'
+      // style's default italic applies only to speakers without a font)
+      box.classList.toggle('upright', FONTS.has(sp.font) && !sp.italic);
       box.classList.toggle('noname', name === '');
     }
     if (nameEl) nameEl.textContent = name;
@@ -218,7 +222,7 @@ export function install(ctx) {
     if (!SHOW.has(to)) setVisible(false);
     else if (cur && cur.wait === undefined) setVisible(true);
   });
-  ctx.events.on('level:cleared', () => api.clear());
+  ctx.events.on('level:cleared', () => { api.clear(); api.log.length = 0; });   // a checkpoint restart keeps the log
   ctx.addSystem({ name: 'comms', phase: 'ui', when: 'sim', update: (dt) => api.update(dt) });
   ctx.comms = api;
   return api;

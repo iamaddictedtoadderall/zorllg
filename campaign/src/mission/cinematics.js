@@ -154,6 +154,7 @@ export function install(ctx) {
     if (!fb.alive) return;
     fb.alive = false;
     flybys.delete(fb);
+    fb.rig?.root?.parent?.remove(fb.rig.root);   // dispose() frees GPU data; removing the root is ours to do
     fb.rig?.dispose?.();
     fb.resolve();
   }

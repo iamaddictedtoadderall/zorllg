@@ -435,21 +435,35 @@ type('founders_pod', {
   },
 });
 
+// The moulin: a ring of ice walls, open to the sky, entered at the bottom through a doorway on local +z (the trench side
+// with yaw 'route'): the door segment of the collider ring is a lintel from `door` m up, so the way out is the climb.
 type('shaft_ring', {
-  params: { r: 12, h: 34 },
+  params: { r: 12, h: 34, door: 11 },
   footprint: (p) => fp('circle', p.r + 6, 0, 0),
   colliders: (p) => {
     const out = [], R = p.r + 2.5, n = 10, hw = PI * R / n + 0.6;
-    for (let i = 0; i < n; i++) { const a = i / n * PI * 2; out.push({ type: 'obox', x: Math.sin(a) * R, z: Math.cos(a) * R, hw, hd: 2.2, yaw: a, top: p.h, bottom: -4, surface: 'ice' }); }
+    for (let i = 0; i < n; i++) {
+      const a = i / n * PI * 2;
+      out.push({ type: 'obox', x: Math.sin(a) * R, z: Math.cos(a) * R, hw: i === 0 ? hw - 1.2 : hw, hd: 2.2, yaw: a, top: p.h,
+                 bottom: i === 0 ? p.door : -4, surface: 'ice' });
+    }
     return out;
   },
   build(ctx, p) {
     const M = mats(ctx);
-    const ring = part(ctx, `shaft:${p.r}:${p.h}`, (B) => {
+    const ring = part(ctx, `shaft:${p.r}:${p.h}:${p.door}`, (B) => {
       const rng = rngFor('shaft'), R = p.r + 2.5, n = 10;
       for (let i = 0; i < n * 2; i++) {
         const a = i / (n * 2) * PI * 2, w = q5(2 * PI * R / (n * 2) + 1.5), h = q5(p.h * (0.9 + rng() * 0.15));
-        B.add(slab(w, h, q5(3 + rng() * 2), 0.4), rng() < 0.5 ? M.ice : M.iceDeep, Math.sin(a) * (R + 0.5), h / 2 - 2, Math.cos(a) * (R + 0.5), (rng() - 0.5) * 0.1, a, (rng() - 0.5) * 0.08);
+        const t = q5(3 + rng() * 2), mat = rng() < 0.5 ? M.ice : M.iceDeep, rx = (rng() - 0.5) * 0.1, rz = (rng() - 0.5) * 0.08;
+        const door = i === 0 || i === 1 || i === n * 2 - 1;
+        if (door) {   // the doorway: a lintel of ice over the opening, icicles hanging from it
+          const lh = h - p.door;
+          B.add(slab(w, lh, t, 0.4), mat, Math.sin(a) * (R + 0.5), p.door + lh / 2 - 2 + 0.5, Math.cos(a) * (R + 0.5), rx, a, rz);
+          for (let k = 0; k < 4; k++) B.add(cyl(0.3, 0.02, q5(1.5 + rng() * 2.5), 5), M.ice, Math.sin(a) * (R + 0.5) + (rng() - 0.5) * w * Math.cos(a), p.door - 2.5, Math.cos(a) * (R + 0.5) - (rng() - 0.5) * w * Math.sin(a));
+          continue;
+        }
+        B.add(slab(w, h, t, 0.4), mat, Math.sin(a) * (R + 0.5), h / 2 - 2, Math.cos(a) * (R + 0.5), rx, a, rz);
       }
       for (let i = 0; i < 14; i++) {   // the raised rim: rafted slabs tilted outward
         const a = i / 14 * PI * 2 + rng() * 0.2, w = q5(4 + rng() * 4);
@@ -457,8 +471,9 @@ type('shaft_ring', {
       }
     });
     // a cone of cold starlight falling into the dark (additive, no shadows)
-    const cone = new THREE.Mesh(coneGeo(p.r * 0.75, p.r * 1.05, p.h + 50), coneMat(ctx, '#7fb6ff', 0.10));
-    cone.position.y = (p.h + 50) / 2 - 1; cone.castShadow = cone.receiveShadow = false; cone.renderOrder = 2; cone.name = 'lightCone';
+    // (it ends just above the rim: from the surface the moulin reads as a hole, not a pillar of light)
+    const cone = new THREE.Mesh(coneGeo(p.r * 0.75, p.r * 1.05, p.h + 4), coneMat(ctx, '#7fb6ff', 0.10));
+    cone.position.y = (p.h + 4) / 2 - 1; cone.castShadow = cone.receiveShadow = false; cone.renderOrder = 2; cone.name = 'lightCone';
     ring.root.add(cone);
     return ring;
   },

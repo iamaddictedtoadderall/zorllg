@@ -27,6 +27,8 @@
 //  · Encounters with `persist: false` are stored as 'pending' in snapshots. Kill tallies of an encounter that is
 //    re-spawned in full on a restart are rolled back with it.
 //  · Without a `complete` block and without any `{ complete: true }` action, the level completes at the route end.
+//  · When `complete.when` holds, the mission emits the extra event 'mission:completing' { levelId } and runs
+//    `complete.do`; 'level:complete' follows when that list ends (flow shows the 'complete' state meanwhile).
 //  · Level-registered actions and conditions (registered while a level is loaded, e.g. from custom.install) are
 //    dropped on 'level:cleared'.
 import * as THREE from 'three';
@@ -678,15 +680,20 @@ export function install(ctx) {
     if (z.onEnter && (z.repeat || !zonesEntered.has(z.id))) m.run(z.onEnter);
     zonesEntered.add(z.id);
   }
+  /** §5.11 hysteresis: a zone is entered once s is 10 m inside [s0, s1) (from either end) and left once s is 10 m
+   *  outside it. The first zone has no lower margin and the last no upper one (the route ends there). Because entry and
+   *  exit margins match, two neighbouring zones are never both entered, whichever way the player walks. */
   function checkZones() {
     const s = routeS();
     const len = W()?.route?.length ?? Infinity;
     for (const z of m.def.zones || []) {
       const [s0, s1] = z.range;
       const inNow = zonesIn.has(z.id);
-      const lo = s0 > 0 ? s0 + 10 : s0, hi = s1 >= len ? Infinity : s1 + 10;
-      if (!inNow && s >= lo && s < hi && s >= s0) enterZone(z);
-      else if (inNow && (s < (s0 > 0 ? s0 - 10 : -Infinity) || s > hi)) {
+      const last = s1 >= len - 1, mg = Math.min(10, (s1 - s0) / 4);
+      const enterLo = s0 > 0 ? s0 + mg : -Infinity, enterHi = last ? Infinity : s1 - mg;
+      const exitLo = s0 > 0 ? s0 - mg : -Infinity, exitHi = last ? Infinity : s1 + mg;
+      if (!inNow && s >= enterLo && s < enterHi) enterZone(z);
+      else if (inNow && (s < exitLo || s > exitHi)) {
         zonesIn.delete(z.id);
         ctx.events.emit('zone:exited', { id: z.id, name: z.name });
       }
@@ -1022,8 +1029,12 @@ export function install(ctx) {
       elapsed = useSnap?.elapsed ?? 0;
       completed = false; failed = false; completing = false; trigAcc = 0; running = true; markerSig = ''; promptSig = null; progressSig = null;
       if (fresh) ctx.combat?.resetStats?.();
+      else if (useSnap?.stats && ctx.combat?.stats) Object.assign(ctx.combat.stats, useSnap.stats);   // the run as it stood at the checkpoint
       resetPlayerExtras();
       ctx.hud?.resetLevel?.();
+      // speakers back to the level's own definitions: a mid-level rename (A5.2) must not survive a restart to a point
+      // before it (L1: the frame's label is CANTOR 7 until the naming, A2 #6)
+      ctx.comms?.defineSpeakers?.(def.speakers || {});
       // restore state
       m.flags = clone(useSnap?.flags ?? {});
       objectives = new Map();
@@ -1079,11 +1090,18 @@ export function install(ctx) {
       if (fresh) ctx.save?.setCheckpoint(def.id, null);
       // A5.2: level:start fires once flags, objectives and structures are restored and the player has spawned
       ctx.events.emit('level:start', { levelId: def.id, checkpoint: m.checkpoint, fresh });
-      // the zone at the spawn point is entered now (art instantly), so the level script's own art and music win
-      const z = zoneAt(W()?.route ? W().playArea(pos.x, pos.z).s : 0);
+      // the zone at the spawn point is entered now (art instantly), so the level script's own art and music win. The art
+      // of the zones before it is applied first, in route order, as walking there would have (zone art is a partial
+      // override, so a later zone may rely on an earlier one's values).
+      const spawnS = W()?.route ? W().playArea(pos.x, pos.z).s : 0;
+      const z = zoneAt(spawnS);
       musicCur = def.music?.theme ?? 'ambient';
       if (sameWorld && !z?.music) ctx.music?.setTheme?.(musicCur, 1);
-      if (z) enterZone(z, { instant: true });
+      if (z) {
+        const before = (def.zones || []).filter(x => x !== z && x.art && x.range[0] < z.range[0]).sort((a, b) => a.range[0] - b.range[0]);
+        for (const x of before) { ctx.atmosphere?.set?.(x.art, 0); if (x.art.palette) ctx.materials?.applyPalette?.(x.art.palette); }
+        enterZone(z, { instant: true });
+      }
       m._autoComplete = !def.complete && !staticCompletes(def);
       m.run(fresh ? def.start || [] : def.onCheckpoint?.[m.checkpoint] || []);
     },
@@ -1238,6 +1256,7 @@ export function install(ctx) {
         player: ctx.player?.snapshot?.() ?? null,
         elapsed, zonesEntered: [...zonesEntered],
         markers: [...actionMarkers.values()].map(a => clone(a)),
+        stats: ctx.combat?.stats ? { ...ctx.combat.stats } : undefined,   // extra: kills/shots/damage for the debrief
       };
     },
     complete() {
@@ -1309,6 +1328,8 @@ export function install(ctx) {
         if (m.def.complete?.when) {
           if (!completing && m.check(m.def.complete.when)) {
             completing = true;
+            // extra event: flow enters the 'complete' state (sim on, input off) while complete.do plays (§8.1)
+            ctx.events.emit('mission:completing', { levelId: m.def.id });
             const g = gen;
             whenSettled(m.run(m.def.complete.do || [], g), () => { if (g === gen) m.complete(); });
           }

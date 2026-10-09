@@ -27,6 +27,8 @@ export function install(ctx) {
 
   const world = {
     def: null, route: null, heightfield: null, terrain: null, scatter: null,
+    /** extra: true once load() has finished (streaming runs only then) */
+    ready: false,
     focus: new THREE.Vector3(),
     /** extra: timings of the last load (ms) and the resolved stamps */
     timings: null,
@@ -43,6 +45,7 @@ export function install(ctx) {
         ctx.events.emit('level:loading', { levelId: def.id, progress: p, label });
       };
       world.def = def;
+      world.ready = false;
       progress(0.01, 'Route');
       // 1. route
       world.route = new Route(def.route.points, { halfWidth: def.route.halfWidth });
@@ -119,6 +122,7 @@ export function install(ctx) {
       ctx.structures?.settle?.(spawn);
       world.scatter.settle(spawn);
       lap('settle');
+      world.ready = true;
       world.loadMs = performance.now() - t0;
       world.timings = { ...T, total: Math.round(world.loadMs), heightfieldCached: !!world.heightfield.stats.cached };
       progress(1, 'Ready');
@@ -133,6 +137,7 @@ export function install(ctx) {
       ctx.collision.ground = null;
       world.def = world.route = world.heightfield = world.terrain = world.scatter = null;
       world.stamps = [];
+      world.ready = false;
     },
     groundHeight(x, z) { return world.heightfield ? world.heightfield.groundHeight(x, z) : 0; },
     normalAt(x, z, out = new THREE.Vector3()) { return world.heightfield ? world.heightfield.normalAt(x, z, out) : out.set(0, 1, 0); },
@@ -210,7 +215,7 @@ export function install(ctx) {
     },
     update(dt) {
       if (ctx.cameraRig) world._focusNow(world.focus);
-      if (!world.def || !world.terrain) return;
+      if (!world.ready || !world.terrain) return;       // nothing streams while a level is loading
       world.terrain.update(world.focus, ctx.camera.position, ctx.tier.terrainBuildMs);
       world.scatter?.update(world.focus);
     },

@@ -56,6 +56,19 @@ function sensor(eyes, parent, M, r, x, y, z, ry = 0) {
   return eye(eyes, parent, M, KIT.lampLens(r), x - Math.sin(ry) * r * 1.24, y, z - Math.cos(ry) * r * 1.24, -HALF, ry);
 }
 
+/** a long side band split into plates with real seams (AD law 1: no long plain face). Profile in (z, y) like `side`,
+ *  given as a z range [z0, z1] (z0 < z1) and y range [y0, y1]; n plates, gap between them, extruded `d` across x. */
+function sideBand(parent, mat, x, z0, z1, y0, y1, d, n, gap = 0.14, bevel = 0.04, slope = 0) {
+  const L = z1 - z0, w = (L - gap * (n - 1)) / n;
+  for (let i = 0; i < n; i++) {
+    const a = z0 + i * (w + gap), b = a + w, s0 = i === 0 ? slope : 0, s1 = i === n - 1 ? slope : 0;
+    mk(parent, side([[b - s1, y1], [a + s0, y1], [a, y0], [b, y0]].map(([zz, yy]) => [Math.round(zz * 1e3) / 1e3, Math.round(yy * 1e3) / 1e3]), d, bevel), mat, x);
+  }
+}
+/** a row of bolt heads on a ±x face, along z */
+function boltRow(parent, mat, x, s, y, z0, z1, n, r = 0.07) {
+  for (let i = 0; i < n; i++) mk(parent, KIT.cylinder(r, r * 1.15, 0.08, 6), mat, x + s * 0.04, y, lerp(z0, z1, n > 1 ? i / (n - 1) : 0.5), 0, 0, HALF);
+}
 /** Track unit along z: guard, road wheels (each a bone), sprocket and idler, tread runs (bones that scroll). */
 function trackUnit(rig, parent, M, sx, len, h, w, key) {
   const T = group(parent, 'track' + key, sx, 0, 0);
@@ -92,7 +105,9 @@ function trackUnit(rig, parent, M, sx, len, h, w, key) {
   }
   // guard plate over the top, side skirt with bolts
   mk(T, side([[len / 2 + 0.2, h + 0.05], [len / 2 - 0.3, h + 0.3], [-len / 2 + 0.6, h + 0.3], [-len / 2 - 0.25, h - 0.05], [-len / 2 - 0.15, h - 0.25], [len / 2 + 0.1, h - 0.15]], w * 1.12, 0.06), M.mid);
-  mk(T, side([[len / 2 - 0.4, h - 0.15], [-len / 2 + 0.7, h - 0.15], [-len / 2 + 1.1, h * 0.35], [len / 2 - 0.8, h * 0.35]], 0.14, 0.04), M.shell, sx > 0 ? w * 0.58 : -w * 0.58);
+  const sxo = sx > 0 ? w * 0.58 : -w * 0.58, ss = Math.sign(sx) || 1;
+  sideBand(T, M.shell, sxo, -len / 2 + 0.9, len / 2 - 0.6, h * 0.35, h - 0.15, 0.14, 3, 0.12, 0.04, 0.3);
+  boltRow(T, M.dark, sxo + ss * 0.07, ss, h - 0.32, -len / 2 + 1.4, len / 2 - 1.0, 7, 0.06);
   rig._tracks.push({ wheels, runs, pitch, r: rW });
   return T;
 }
@@ -167,6 +182,10 @@ export function buildUnit(ctx, kind, faction, o = {}) {
         mk(tk, side([[1.9, 0], [1.9, 1.0], [1.3, 1.38], [-1.3, 1.38], [-2.05, 0.75], [-1.7, 0]], 3.1, 0.1), M.shell);
         mk(tk, side([[1.5, 1.36], [1.1, 1.55], [-0.9, 1.55], [-1.2, 1.36]], 2.2, 0.06), M.mid);
         mk(tk, KIT.panelBox(2.2, 0.7, 0.9, { cols: 3, rows: 1 }), M.accent, 0, 0.75, 2.2);
+        for (const s of [-1, 1]) {   // stowage bins on the turret flanks, strapped
+          mk(tk, KIT.panelBox(0.42, 0.6, 1.6, { cols: 1, rows: 1, deps: 2, inset: 0.04 }), M.mid, s * 1.76, 0.6, 0.95);
+          for (const z of [0.5, 1.4]) mk(tk, KIT.bar(0.5, 0.06, 0.08), M.dark, s * 1.76, 0.92, z, 0, 0, 0);
+        }
         for (const s of [-1, 1]) for (let i = 0; i < 3; i++) mk(tk, KIT.cylinder(0.09, 0.09, 0.5, 8), M.dark, s * (1.62 + i * 0.01), 0.95 + i * 0.16, -0.9, 0.5, 0, -s * HALF);
         mk(tk, KIT.ring(0.42, 0.14, 0.12), M.dark, 0.6, 1.6, 0.4);
         mk(tk, KIT.disc(0.38, 0.1), M.mid, 0.6, 1.62, 0.4);
@@ -194,6 +213,7 @@ export function buildUnit(ctx, kind, faction, o = {}) {
       for (const s of [-1, 1]) {
         mk(head, KIT.drum(0.48, 0.55, 1, 12), M.accent, s * 1.42, -0.3, 0.2, 0, 0, s * HALF);
         mk(head, front(KIT.chamferRect(0.5, 0.6, 0.12), 1.4, 0.05), M.mid, s * 0.62, -0.2, -1.6);
+        mk(head, KIT.armourPlate(KIT.chamferRect(1.7, 0.55, 0.14), 0.08), M.mid, s * 1.18, 0.42, -0.15, 0, s * HALF, 0);   // cheek plate
         muzzles.push(barrel(head, M, s * 0.62, -0.2, -2.1, 0.13, 2.1, { rings: [0.3, 0.7] }));
       }
       sensor(eyes, head, M, 0.2, 0, 0.45, -1.32);
@@ -208,6 +228,12 @@ export function buildUnit(ctx, kind, faction, o = {}) {
       mk(body, side([[-1.0, 1.1], [-2.8, 1.0], [-3.75, 0.4], [-3.4, 0.25], [-1.2, 0.85]], 1.5, 0.06), M.dark);   // canopy
       eye(eyes, body, M, side([[-2.9, 0.92], [-3.6, 0.42], [-3.45, 0.38], [-2.8, 0.85]], 1.56, 0.02), 0, 0, 0);
       mk(body, side([[2.2, 1.15], [1.5, 1.6], [-0.6, 1.6], [-1.1, 1.15]], 1.9, 0.08), M.mid);   // engine hump
+      for (const s of [-1, 1]) for (const [z, w] of [[-1.9, 1.5], [0.15, 2.1], [2.3, 1.2]]) {   // flank armour, two layers
+        mk(body, KIT.armourPlate(KIT.chamferRect(w, 1.15, 0.22), 0.1, { lip: 0.1 }), M.shell, s * (z > 2 ? 1.3 : 1.42), 0.12, z, 0, s * HALF + (z > 2 ? s * 0.18 : 0), 0);
+      }
+      mk(body, KIT.bar(3.2, 0.32, 0.12), M.dark, 0, 1.16, -2.4, 0, HALF, 0);   // dorsal spine strip
+      mk(body, KIT.cylinder(0.04, 0.03, 1.1, 5), M.dark, -0.4, 2.1, 0.9);
+      mk(body, KIT.greeble('dome', 0.5, 0.5, 0.2), M.dark, 0.35, 1.62, 0.2, -HALF);
       for (const s of [-1, 1]) mk(body, KIT.greeble('vent', 0.9, 0.6, 0.15), M.dark, s * 0.96, 1.4, 0.6, 0, s * HALF);
       mk(body, KIT.bar(4.5, 0.55, 0.6), M.shell, 0, 0.45, 6.6, 0, HALF);   // tail boom
       mk(body, side([[8.2, 0.5], [9.0, 2.4], [8.6, 2.5], [7.5, 0.6]], 0.16, 0.04), M.mid);
@@ -270,7 +296,10 @@ export function buildUnit(ctx, kind, faction, o = {}) {
       mk(chassis, side([[3.4, 3.38], [3.0, 3.62], [-1.9, 3.62], [-2.3, 3.38]], 2.6, 0.08), M.mid);
       mk(chassis, KIT.armourPlate(KIT.chamferRect(3.2, 1.6, 0.3), 0.15), M.mid, 0, 2.55, -3.62, -0.85);
       for (const s of [-1, 1]) {
-        mk(chassis, side([[4.3, 2.5], [-4.0, 2.5], [-4.2, 1.2], [4.2, 1.2]], 0.16, 0.05), M.accent, s * 1.86);
+        sideBand(chassis, M.accent, s * 1.86, -4.2, 4.3, 1.2, 2.5, 0.16, 4, 0.12, 0.05, 0.2);
+        boltRow(chassis, M.dark, s * 1.95, s, 2.36, -3.9, 4.0, 9, 0.06);
+        for (const z of [-1.6, 1.9]) { const hm = mk(chassis, KIT.greeble('hatch', 0.9, 0.9, 0.18), M.dark, s * 1.8, 2.95, z); hm.rotation.y = s * HALF; }
+        for (const z of [-3.0, 0.2, 3.2]) mk(chassis, KIT.armourPlate(KIT.chamferRect(0.55, 0.28, 0.08), 0.1), M.dark, s * 1.72, 3.05, z, 0, s * HALF, 0);
         for (let i = 0; i < 4; i++) {
           const z = -3.0 + i * 2.05;
           const w = group(chassis, 'wheel', s * 1.75, 0.82, z);
@@ -298,8 +327,12 @@ export function buildUnit(ctx, kind, faction, o = {}) {
       mk(body, side([[-7.5, 2.2], [-9.4, 1.9], [-10.8, 0.9], [-10.3, 0.7], [-7.8, 1.6]], 3.4, 0.08), M.dark);
       eye(eyes, body, M, side([[-9.6, 1.75], [-10.6, 1.0], [-10.4, 0.92], [-9.4, 1.65]], 3.46, 0.03), 0, 0, 0);
       mk(body, side([[8, 2.5], [6, 3.3], [-5, 3.3], [-6.5, 2.5]], 5.2, 0.15), M.mid);
+      for (const [z, w] of [[-3.6, 2.4], [-0.6, 3.0], [2.6, 2.8]]) for (const s of [-1, 1])   // roof plates with seams
+        mk(body, KIT.armourPlate(KIT.chamferRect(2.3, w, 0.3), 0.14, { lip: 0.14 }), M.shell, s * 1.25, 3.36, z, -HALF, 0, 0);
+      mk(body, KIT.greeble('fins', 1.6, 2.2, 0.35), M.dark, 0, 3.3, 5.2, -HALF);
       for (const s of [-1, 1]) {
-        mk(body, side([[5.5, 0.4], [-2.5, 0.4], [-3.4, -0.2], [5.5, -0.3]], 14, 0.1), M.mid, 0, 1.1, 0);
+        if (s > 0) mk(body, side([[5.5, 0.4], [-2.5, 0.4], [-3.4, -0.2], [5.5, -0.3]], 14, 0.1), M.mid, 0, 1.1, 0);   // both wings, one plate
+        for (const x of [5.0, 6.3]) mk(body, KIT.bar(6.4, 0.16, 0.18), M.dark, s * x, 1.58, 1.4, 0, HALF, 0);   // wing fences
         mk(body, KIT.panelBox(0.6, 3.6, 16, { cols: 1, rows: 2, inset: 0.1 }), M.accent, s * 4.15, 0.2, 0);
         mk(body, side([[12.6, 0.8], [13.6, 4.4], [12.8, 4.6], [10.6, 1.4]], 0.3, 0.06), M.mid, s * 2.4, 0.6, 0, 0, 0, -s * 0.25);
         for (let i = 0; i < 3; i++) mk(body, KIT.greeble('vent', 1.6, 1.0, 0.25), M.dark, s * 4.14, 2.2, -4 + i * 3.6, 0, s * HALF);

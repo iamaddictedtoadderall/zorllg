@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { deepMerge, DEG, clamp, smooth } from '../core/util.js';
 import * as KIT from '../art/kit.js';
-import { FOG_PARS, NOISE_PARS } from './glsl.js';
+import { FOG_PARS, NOISE_PARS, SKY_PARS } from './glsl.js';
 
 /** Default level art (every LevelArt field, plus the addendum's). Prototype "cinder basin" look in r170 light units. */
 export const DEFAULT_ART = {
@@ -61,66 +61,35 @@ void main() {
 const SKY_FS = /* glsl */`
 ${FOG_PARS}
 ${NOISE_PARS}
-uniform vec3 uSunDir, uSunCol; uniform float uSunSize, uSunGlow;
-uniform vec3 uTop, uMid, uHor;
-uniform float uCover, uCloudSpeed, uCloudOct; uniform vec3 uCloudCol;
-uniform float uTime, uStars;
+${SKY_PARS}
+uniform float uSunSize;
+uniform float uStars;
 uniform vec3 uMoonDir, uMoonCol; uniform float uMoonSize;
-uniform float uRidgeH, uRidgeLayers; uniform vec3 uRidgeCol;
-uniform float uRim, uRimW, uRimH; uniform vec3 uRimCol, uRimCol2; uniform vec2 uRimDir;
 uniform float uAur, uAurH, uAurSpeed, uAurBands; uniform vec3 uAurA, uAurB; uniform vec2 uAurF;
 uniform float uFlash;
 varying vec3 vDir;
-float fbmN(vec2 p, float oct) {
-  float s = 0.0, a = 0.5, n = 0.0;
-  for (int i = 0; i < 5; i++) { if (float(i) >= oct) break; s += a * cNoise(p); n += a; p = p * 2.03 + 17.1; a *= 0.5; }
-  return s / max(n, 1e-3);
-}
 void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
   vec3 fogC = cFogColor(d);
+  float hd = cSkyDeg(d);
+  float ridgeAA = max(fwidth(hd), 0.003) * 1.2;
+  float starPx = length(fwidth(d * 230.0)) * 0.6;
   // 1. gradient: fog colour at (and below) the horizon → horizon → mid → top
-  vec3 c = mix(fogC, uHor, smoothstep(0.0, 0.06, h));
-  c = mix(c, uMid, smoothstep(0.02, 0.24, h));
-  c = mix(c, uTop, smoothstep(0.2, 0.78, h));
-  float s = dot(d, uSunDir), sp = max(s, 0.0);
-  float hd = degrees(asin(clamp(h, -1.0, 1.0)));
-  // 2. dawn rim: a band hugging the horizon toward its azimuth, visible whatever the sun does; hides stars
-  float rimHide = 0.0;
-  if (uRim > 0.001) {
-    vec2 dz = normalize(d.xz + vec2(1e-5));
-    float ad = acos(clamp(dot(dz, uRimDir), -1.0, 1.0));
-    float aw = exp(-pow(ad / max(radians(uRimW), 0.01), 2.0) * 1.3);
-    float vert = exp(-max(hd, 0.0) / max(uRimH, 0.05)) * smoothstep(-0.25, 0.25, hd);
-    vec3 rc = mix(uRimCol, uRimCol2, smoothstep(0.0, uRimH * 2.2, hd));
-    float k = uRim * vert * aw;
-    c += rc * k + rc * uRim * aw * 0.12 * exp(-max(hd, 0.0) / max(uRimH * 5.0, 0.2)) * smoothstep(-0.25, 0.25, hd);
-    rimHide = clamp(k * 3.0, 0.0, 1.0);
-  }
-  // 3. clouds: two fbm layers on a high plane, lit from the sun side, silver lining
-  float cl = 0.0;
-  if (uCover > 0.001 && h > 0.0) {
-    vec2 cp = d.xz / (h + 0.12);
-    vec2 w = vec2(0.012, 0.004) * uTime * uCloudSpeed;
-    float n1 = fbmN(cp * 1.6 + w, uCloudOct);
-    float n2 = fbmN(cp * 4.3 + vec2(5.2, 1.3) - w * 1.7, max(uCloudOct - 1.0, 1.0));
-    float n = n1 * 0.72 + n2 * 0.28;
-    float th = 1.0 - uCover * 0.85;
-    cl = smoothstep(th - 0.1, th + 0.2, n) * smoothstep(0.0, 0.14, h);
-    float thick = smoothstep(th + 0.05, th + 0.45, n);
-    vec3 lit = uCloudCol * (0.8 + 0.6 * pow(sp, 2.0)) + uSunCol * pow(sp, 8.0) * 0.5 * (1.0 - thick);
-    vec3 cc = mix(lit, uCloudCol * 0.5, thick * 0.55);
-    cc += uSunCol * pow(sp, 5.0) * cl * (1.0 - thick) * 1.6 * uSunGlow;
-    cc = mix(cc, fogC, (1.0 - smoothstep(0.0, 0.3, h)) * 0.65);
-    c = mix(c, cc, cl * 0.88);
-  }
+  vec3 c = cSkyGradient(d, fogC);
+  float s = dot(d, uFogSunDir), sp = max(s, 0.0);
+  // 2. dawn rim (hides the stars behind it)
+  float rimHide;
+  c += cSkyRim(d, hd, rimHide);
+  // 3. clouds
+  float cl;
+  c = cSkyClouds(d, fogC, c, cl);
   // 4. aurora: folded curtains with vertical rays, a sharp lower edge, teal low and violet high
   if (uAur > 0.001 && h > 0.0) {
     vec2 rgt = vec2(-uAurF.y, uAurF.x);
     vec2 q = vec2(dot(d.xz, rgt), dot(d.xz, uAurF)) / (h + 0.25);
     float yc = cos(radians(uAurH)) / (sin(radians(uAurH)) + 0.25);
-    float t = uTime * uAurSpeed;
+    float t = uSkyTime * uAurSpeed;
     vec3 acc = vec3(0.0);
     for (int i = 0; i < 3; i++) {
       if (float(i) >= uAurBands) break;
@@ -146,14 +115,14 @@ void main() {
       float hs = cHash13(cell);
       if (hs > 0.991) {
         vec3 off = (vec3(cHash13(cell + 1.3), cHash13(cell + 2.7), cHash13(cell + 4.1)) - 0.5) * 0.55;
-        float px = length(fwidth(p)) * 0.6;
+        float px = starPx;
         float br = pow((hs - 0.991) / 0.009, 2.0);
-        float st = smoothstep(max(px, 0.05), 0.0, length(f - off)) * (0.25 + 1.75 * br) * (0.7 + 0.3 * sin(uTime * (1.3 + hs * 31.0) + hs * 600.0));
+        float st = smoothstep(max(px, 0.05), 0.0, length(f - off)) * (0.25 + 1.75 * br) * (0.7 + 0.3 * sin(uSkyTime * (1.3 + hs * 31.0) + hs * 600.0));
         vec3 tint = mix(vec3(0.72, 0.84, 1.0), vec3(1.0, 0.88, 0.72), cHash13(cell + 9.0));
         c += tint * st * vis * 1.8;
       }
       float mw = dot(d, normalize(vec3(0.35, 0.62, -0.7)));
-      c += vec3(0.5, 0.56, 0.74) * exp(-mw * mw * 26.0) * (0.3 + 0.7 * fbmN(d.xz / (abs(d.y) + 0.3) * 6.0, 3.0)) * 0.03 * vis;
+      c += vec3(0.5, 0.56, 0.74) * exp(-mw * mw * 26.0) * (0.3 + 0.7 * cFbm(d.xz / (abs(d.y) + 0.3) * 6.0, 3.0)) * 0.03 * vis;
     }
   }
   // 6. moon: a lit sphere with a mottled face
@@ -167,7 +136,7 @@ void main() {
       float r2 = dot(q, q);
       float disk = 1.0 - smoothstep(0.9, 1.0, sqrt(r2));
       vec3 n = normalize(q.x * mu + q.y * mv - sqrt(max(0.0, 1.0 - r2)) * uMoonDir);
-      float lit = max(dot(n, uSunDir), 0.0);
+      float lit = max(dot(n, uFogSunDir), 0.0);
       float mare = 0.75 + 0.3 * cNoise(q * 3.0 + 7.0) - 0.2 * smoothstep(0.55, 0.75, cNoise(q * 6.0 + 2.0));
       vec3 mc = uMoonCol * (0.06 + 1.25 * lit) * mare;
       c = mix(c, mc, disk * (1.0 - cl * 0.85));
@@ -175,28 +144,11 @@ void main() {
     }
   }
   // 7. sun halo and disc (above the horizon only, so the horizon matches the fogged terrain)
-  float above = smoothstep(0.0, 0.025, h);
-  c += uSunCol * (pow(sp, 6.0) * 0.32 * uSunGlow + pow(sp, 60.0) * 0.55 * uSunGlow) * above * (1.0 - cl * 0.5);
+  c += cSkyHalo(d, cl);
   float disc = smoothstep(1.0 - 0.0007 * uSunSize, 1.0 - 0.0003 * uSunSize, s) * step(0.01, uSunSize);
-  c += uSunCol * disc * 6.0 * (1.0 - cl * 0.85) * smoothstep(-0.004, 0.004, h);
+  c += uSkySunCol * disc * 6.0 * min(uSunSize, 1.0) * (1.0 - cl * 0.85) * smoothstep(-0.004, 0.004, h);   // a shrinking disc dims too
   // 8. ridge silhouettes: the land continues above the horizon in fog-coloured layers
-  if (uRidgeH > 0.01 && hd > -0.5 && hd < uRidgeH + 0.5) {
-    float az = atan(d.x, -d.z);
-    vec2 ring = vec2(cos(az), sin(az));
-    for (int i = 0; i < 3; i++) {
-      if (float(i) >= uRidgeLayers) break;
-      float fi = float(i);
-      vec2 rp = ring * (2.3 + fi * 1.9) + vec2(fi * 7.31 + 3.0, fi * 3.17 + 1.0);
-      float n = 0.0, a = 0.55, f = 1.0;
-      for (int o = 0; o < 5; o++) { float v = 1.0 - abs(cNoise(rp * f) * 2.0 - 1.0); n += a * v * v; f *= 2.13; a *= 0.48; }
-      float lh = uRidgeH * (0.18 + 0.82 * clamp(n, 0.0, 1.0)) * (1.0 - fi * 0.3);
-      float aa = max(fwidth(hd), 0.003) * 1.2;
-      float m = (1.0 - smoothstep(lh - aa, lh + aa, hd)) * smoothstep(-0.3, 0.05, hd);
-      vec3 lc = mix(fogC, uRidgeCol, 0.32 + 0.3 * fi);
-      lc = mix(lc, fogC, smoothstep(lh * 0.7, 0.0, hd));
-      c = mix(c, lc, m * (1.0 - cl * 0.3));
-    }
-  }
+  c = cSkyRidges(d, hd, c, fogC, cl, ridgeAA);
   c += vec3(0.62, 0.68, 0.85) * uFlash * (0.25 + 0.75 * cl);
   gl_FragColor = vec4(max(c, 0.0), 1.0);
   #include <tonemapping_fragment>
@@ -304,24 +256,38 @@ export function install(ctx) {
     r.ground.set(pal.ground || '#5b4d45');
     return r;
   }
+  // The visible sun disc, halo and moon blend biased toward the smaller value, so a hidden key light (L1's starlight
+  // sun: size 0, high in the sky) never shows as a disc crossing the sky mid-blend: the disc only grows in over the
+  // last 30% of the blend, as the key nears its dawn position, and shrinks away in the first 30% going the other way.
+  const BIASED = new Set(['sunSize', 'sunGlow', 'moonSize']);
   function lerpR(a, b, t, out) {
-    for (const k of NUM_KEYS) out[k] = AZ_KEYS.has(k) ? lerpAz(a[k], b[k], t) : a[k] + (b[k] - a[k]) * t;
+    for (const k of NUM_KEYS) {
+      if (AZ_KEYS.has(k)) { out[k] = lerpAz(a[k], b[k], t); continue; }
+      let u = t;
+      if (BIASED.has(k)) u = b[k] > a[k] ? smooth(0.7, 1, t) : smooth(0, 0.3, t);
+      out[k] = a[k] + (b[k] - a[k]) * u;
+    }
     for (const k of COLOR_KEYS) out[k].copy(a[k]).lerp(b[k], t);
     out.ridgeLayers = t < 0.5 ? a.ridgeLayers : b.ridgeLayers;
   }
   function copyR(src, out) { for (const k of NUM_KEYS) out[k] = src[k]; for (const k of COLOR_KEYS) out[k].copy(src[k]); }
 
   // ---------------------------------------------------------------- sky dome
+  // the far-sky uniforms (SKY_PARS) are shared by the sky dome and every patched material's far fade
+  const skyFarUniforms = {
+    uSkyTop: { value: new THREE.Color() }, uSkyMid: { value: new THREE.Color() }, uSkyHor: { value: new THREE.Color() },
+    uSkySunCol: { value: new THREE.Color() }, uSkySunGlow: { value: 1 },
+    uSkyRim: { value: 0 }, uSkyRimW: { value: 35 }, uSkyRimH: { value: 3 }, uSkyRimCol: { value: new THREE.Color() },
+    uSkyRimCol2: { value: new THREE.Color() }, uSkyRimDir: { value: new THREE.Vector2(0, -1) },
+    uSkyRidgeH: { value: 0 }, uSkyRidgeLayers: { value: 2 }, uSkyRidgeCol: { value: new THREE.Color() },
+    uSkyCover: { value: 0 }, uSkyCloudSpeed: { value: 1 }, uSkyCloudOct: { value: 5 }, uSkyCloudCol: { value: new THREE.Color() },
+    uSkyTime: { value: 0 },
+  };
   const skyU = {
-    ...fogUniforms,
-    uSunDir: { value: sunDir }, uSunCol: { value: new THREE.Color() }, uSunSize: { value: 1 }, uSunGlow: { value: 1 },
-    uTop: { value: new THREE.Color() }, uMid: { value: new THREE.Color() }, uHor: { value: new THREE.Color() },
-    uCover: { value: 0 }, uCloudSpeed: { value: 1 }, uCloudOct: { value: 5 }, uCloudCol: { value: new THREE.Color() },
-    uTime: { value: 0 }, uStars: { value: 0 },
+    ...fogUniforms, ...skyFarUniforms,
+    uSunSize: { value: 1 },
+    uStars: { value: 0 },
     uMoonDir: { value: new THREE.Vector3(0, -1, 0) }, uMoonCol: { value: new THREE.Color() }, uMoonSize: { value: 0 },
-    uRidgeH: { value: 0 }, uRidgeLayers: { value: 2 }, uRidgeCol: { value: new THREE.Color() },
-    uRim: { value: 0 }, uRimW: { value: 35 }, uRimH: { value: 3 }, uRimCol: { value: new THREE.Color() }, uRimCol2: { value: new THREE.Color() },
-    uRimDir: { value: new THREE.Vector2(0, -1) },
     uAur: { value: 0 }, uAurH: { value: 55 }, uAurSpeed: { value: 1 }, uAurBands: { value: 3 },
     uAurA: { value: new THREE.Color() }, uAurB: { value: new THREE.Color() }, uAurF: { value: new THREE.Vector2(0, -1) },
     uFlash: { value: 0 },
@@ -359,15 +325,22 @@ export function install(ctx) {
       _c.copy(R.hemiSky).multiplyScalar(R.hemi * 0.35 / Math.PI).add(_c2.copy(R.lSunColor).multiplyScalar(sunK));
       groundMat.color.copy(R.ground).multiply(_c).lerp(R.fogColor, 0.25);
       // render the sky into a small HDR cube, then prefilter it (a 128² cube is plenty for blurred reflections)
+      // 256² on High/Medium keeps a small bright sky feature (moon, halo core) from turning into texel squares on
+      // mirror-like metal; 128² on Low
+      const cs = ctx.tier.name === 'low' ? 128 : 256;
+      if (cubeRT && cubeRT.width !== cs) { envScene.remove(cubeCam); cubeRT.dispose(); cubeRT = null; }
       if (!cubeRT) {
-        cubeRT = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType, generateMipmaps: false });
+        cubeRT = new THREE.WebGLCubeRenderTarget(cs, { type: THREE.HalfFloatType, generateMipmaps: false });
         cubeCam = new THREE.CubeCamera(0.1, 100, cubeRT);
         envScene.add(cubeCam);
       }
-      const flash = skyU.uFlash.value; skyU.uFlash.value = 0;
+      // no lightning flash and no sun disc in the cube: a 1° disc becomes texel squares on mirrors; the direct sun
+      // light draws the glint instead
+      const flash = skyU.uFlash.value, disc = skyU.uSunSize.value;
+      skyU.uFlash.value = 0; skyU.uSunSize.value = 0;
       cubeCam.update(renderer, envScene);
       const rt = pmrem.fromCubemap(cubeRT.texture);
-      skyU.uFlash.value = flash;
+      skyU.uFlash.value = flash; skyU.uSunSize.value = disc;
       if (envRT) envRT.dispose();
       envRT = rt;
       api.envMap = rt.texture;
@@ -389,8 +362,8 @@ export function install(ctx) {
 
   function silMat(color, haze, h, plume = false) {
     const m = new THREE.ShaderMaterial({
-      uniforms: { ...fogUniforms, uCol: { value: new THREE.Color(color) }, uLightDir: { value: lightDir }, uSunC: { value: skyU.uSunCol.value },
-                  uHaze: { value: haze }, uH: { value: h }, uAlpha: { value: 1 }, uTime: skyU.uTime },
+      uniforms: { ...fogUniforms, uCol: { value: new THREE.Color(color) }, uLightDir: { value: lightDir }, uSunC: { value: skyU.uSkySunCol.value },
+                  uHaze: { value: haze }, uH: { value: h }, uAlpha: { value: 1 }, uTime: skyU.uSkyTime },
       vertexShader: SKYLINE_VS, fragmentShader: plume ? PLUME_FS : SKYLINE_FS, fog: false,
       transparent: plume, depthWrite: !plume, side: plume ? THREE.DoubleSide : THREE.FrontSide,
     });
@@ -566,17 +539,17 @@ export function install(ctx) {
     const el = Math.max(r.sunEl, r.minEl, 3);
     dirAzEl(r.sunAz, Math.min(el, 89), lightDir);
     // sky
-    skyU.uSunCol.value.copy(r.sunColor); skyU.uSunSize.value = r.sunSize; skyU.uSunGlow.value = r.sunGlow;
-    skyU.uTop.value.copy(r.top); skyU.uMid.value.copy(r.mid); skyU.uHor.value.copy(r.hor);
-    skyU.uCover.value = r.cover; skyU.uCloudCol.value.copy(r.cloudColor); skyU.uCloudSpeed.value = r.cloudSpeed;
+    skyU.uSkySunCol.value.copy(r.sunColor); skyU.uSunSize.value = r.sunSize; skyU.uSkySunGlow.value = r.sunGlow;
+    skyU.uSkyTop.value.copy(r.top); skyU.uSkyMid.value.copy(r.mid); skyU.uSkyHor.value.copy(r.hor);
+    skyU.uSkyCover.value = r.cover; skyU.uSkyCloudCol.value.copy(r.cloudColor); skyU.uSkyCloudSpeed.value = r.cloudSpeed;
     skyU.uStars.value = r.stars;
     dirAzEl(r.moonAz, r.moonEl, skyU.uMoonDir.value); skyU.uMoonCol.value.copy(r.moonColor);
     skyU.uMoonSize.value = r.moonEl > -10 ? r.moonSize : 0;
-    skyU.uRidgeH.value = r.ridgeH; skyU.uRidgeLayers.value = r.ridgeLayers; skyU.uRidgeCol.value.copy(r.ridgeColor);
+    skyU.uSkyRidgeH.value = r.ridgeH; skyU.uSkyRidgeLayers.value = r.ridgeLayers; skyU.uSkyRidgeCol.value.copy(r.ridgeColor);
     skyU.uAur.value = r.aur; skyU.uAurA.value.copy(r.aurA); skyU.uAurB.value.copy(r.aurB); skyU.uAurH.value = r.aurH;
     skyU.uAurSpeed.value = r.aurSpeed; skyU.uAurF.value.set(Math.sin(r.aurAz * DEG), -Math.cos(r.aurAz * DEG));
-    skyU.uRim.value = r.rim; skyU.uRimCol.value.copy(r.rimColor); skyU.uRimCol2.value.copy(r.rimColor2);
-    skyU.uRimDir.value.set(Math.sin(r.rimAz * DEG), -Math.cos(r.rimAz * DEG)); skyU.uRimW.value = r.rimW; skyU.uRimH.value = r.rimH;
+    skyU.uSkyRim.value = r.rim; skyU.uSkyRimCol.value.copy(r.rimColor); skyU.uSkyRimCol2.value.copy(r.rimColor2);
+    skyU.uSkyRimDir.value.set(Math.sin(r.rimAz * DEG), -Math.cos(r.rimAz * DEG)); skyU.uSkyRimW.value = r.rimW; skyU.uSkyRimH.value = r.rimH;
     // fog
     fogUniforms.uFogColor.value.copy(r.fogColor); fogUniforms.uFogHeightFalloff.value = r.fogFalloff;
     fogUniforms.uFogHeightBase.value = r.fogBase; fogUniforms.uFogSunColor.value.copy(r.fogSunColor);
@@ -609,6 +582,7 @@ export function install(ctx) {
 
   // ---------------------------------------------------------------- blends
   let blend = null;                          // { t, dur }
+  let setCount = 0;
   let target = deepMerge(DEFAULT_ART, {});   // art at the end of the current blend
   let ambience = [];
 
@@ -629,18 +603,31 @@ export function install(ctx) {
     // declare only what the shader doesn't already declare (another package's patch may share a uniform name)
     let out = '';
     for (const [name, decl] of DECLS) if (!new RegExp('uniform\\s+\\w+\\s+' + name + '\\s*;').test(src)) out += decl + '\n';
-    return out + FOG_FUNCS;
+    out += FOG_FUNCS;
+    if (!src.includes('cHash12')) out += NOISE_PARS;
+    if (!src.includes('cSkyFar')) out += SKY_PARS;
+    return out;
   }
+  // Height fog and inscatter toward the fog colour; past uFogFarStart the target colour itself turns into the sky
+  // behind the surface (gradient, dawn rim, sun halo, ridge bands), so the far edge of the land is never visible.
+  const FOG_BLOCK = `{
+    vec3 cv_ = vFogWorld - cameraPosition; float cl_ = length(cv_); vec3 cd_ = cv_ / max(cl_, 1e-4);
+    float caa_ = max(fwidth(cSkyDeg(cd_)), 0.003) * 1.2;
+    float cf_ = cFogAmount(vFogWorld);
+    vec3 cc_ = cFogColor(cd_);
+    float cff_ = smoothstep(uFogFarStart, uFogFarEnd, cl_);
+    if (cff_ > 0.001) cc_ = mix(cc_, cSkyFar(cd_, caa_), cff_);
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, cc_, cf_);
+  }`;
   function fogPatch(sh, m) {
     if (m.fog === false) return;
     for (const k of Object.keys(fogUniforms)) sh.uniforms[k] = fogUniforms[k];
+    for (const k of Object.keys(skyFarUniforms)) sh.uniforms[k] = skyFarUniforms[k];
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vFogWorld;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvFogWorld = (mvPosition.xyz - viewMatrix[3].xyz) * mat3(viewMatrix);');
     const additive = m.blending === THREE.AdditiveBlending;
-    const block = additive
-      ? '{ float cf_ = cFogAmount(vFogWorld); gl_FragColor.rgb *= 1.0 - cf_; }'
-      : '{ float cf_ = cFogAmount(vFogWorld); gl_FragColor.rgb = mix(gl_FragColor.rgb, cFogColor(normalize(vFogWorld - cameraPosition)), cf_); }';
+    const block = additive ? '{ float cf_ = cFogAmount(vFogWorld); gl_FragColor.rgb *= 1.0 - cf_; }' : FOG_BLOCK;
     let fs = sh.fragmentShader;
     if (!fs.includes('vFogWorld')) fs = fs.replace('#include <common>', '#include <common>\nvarying vec3 vFogWorld;\n' + fogPars(fs));
     if (fs.includes('#include <opaque_fragment>')) {
@@ -680,6 +667,7 @@ export function install(ctx) {
     },
     set(p = {}, blendSeconds = 0) {
       p = p || {};
+      setCount++;
       const dur = Math.max(0, +blendSeconds || 0);
       // the blend starts from wherever the art is now (mid-blend included)
       if (blend) copyR(R, RA); else resolve(api.art, RA);
@@ -736,6 +724,8 @@ export function install(ctx) {
     registerSkyline(name, fn) { skylineBuilders.set(name, fn); },
     /** extra: true while an art blend runs */
     get blending() { return !!blend; },
+    /** extra (tests): the running blend's progress, or null */
+    blendInfo() { return blend ? { t: blend.t, dur: blend.dur, sets: setCount } : { t: 0, dur: 0, sets: setCount }; },
     /** extra (pipeline): per-render placement for whichever camera renders the main scene */
     prepare(cam) {
       cam = cam || ctx.camera;
@@ -743,7 +733,7 @@ export function install(ctx) {
       placeSkyline(cam);
     },
     update(dt = 0) {
-      skyU.uTime.value = ctx.clock.realTime;
+      skyU.uSkyTime.value = ctx.clock.realTime;
       if (blend) {
         blend.t += dt;
         const k = blend.dur > 0 ? Math.min(1, blend.t / blend.dur) : 1;
@@ -766,12 +756,12 @@ export function install(ctx) {
   ctx.events.on('tier:changed', ({ tier }) => {
     shadowCam();
     fogUniforms.uFogFarStart.value = tier.fogFarStart ?? 1820; fogUniforms.uFogFarEnd.value = tier.fogFarEnd ?? 2550;
-    skyU.uCloudOct.value = tier.name === 'high' ? 5 : tier.name === 'medium' ? 4 : 3;
+    skyU.uSkyCloudOct.value = tier.name === 'high' ? 5 : tier.name === 'medium' ? 4 : 3;
     skyU.uAurBands.value = tier.name === 'low' ? 1 : 3;
   });
   ctx.events.on('level:cleared', () => { clearSkyline(); for (const h of ambience) h?.stop?.(); ambience = []; });
   shadowCam();
-  skyU.uCloudOct.value = ctx.tier.name === 'high' ? 5 : ctx.tier.name === 'medium' ? 4 : 3;
+  skyU.uSkyCloudOct.value = ctx.tier.name === 'high' ? 5 : ctx.tier.name === 'medium' ? 4 : 3;
   skyU.uAurBands.value = ctx.tier.name === 'low' ? 1 : 3;
   ctx.addSystem({ name: 'atmosphere', phase: 'fx', when: 'always', update: (dt) => api.update(dt) });
   ctx.atmosphere = api;
