@@ -1,21 +1,37 @@
-// ui/flow.js (P5) — P0 STUB: a working game state machine (§8): title → (select) → briefing → loading → playing ⇄ paused
-// → complete → debrief → title, dead → retry, plus garage, settings, credits and interstitials.
+// ui/flow.js (P5): the game state machine (§8): boot → title → (select) → briefing ⇄ garage → loading →
+// [intro] → playing ⇄ paused → complete → debrief → [bench → count] → [outro] → next briefing | credits | title,
+// and playing → dead → retry (checkpoint restart) | title. Save integration, ranks (built by the mission), campaign
+// state (addendum A3.4, A3.7): the campaign loadout, `pending` and `ledger` at level end, the Bench (or its fallback),
+// the Morning Count, and resetting #fade and the letterbox when leaving 'playing' or 'complete' for anything other
+// than 'paused' or 'interstitial' (L1 ends on a fade to black).
+//
 // A level end (level:complete / level:failed) that arrives while the level is suspended ('paused', 'interstitial',
-// 'loading': the mission can still settle things then, e.g. a debug call or a list started during loading) is held and
-// handled at the first tick back in 'playing', never dropped: mission.complete() runs once per start, so a dropped
-// level:complete would leave the level unable to finish. In 'dead' a level end is dropped (the death screen decides;
-// retry restarts the mission). A checkpoint restart, a new level or quitting discards a held end.
+// 'loading') is held and handled at the first tick back in 'playing', never dropped: mission.complete() runs once per
+// start. In 'dead' a level end is dropped (the death screen decides). A restart, a new level or quitting discards it.
 import { ACT } from '../core/input.js';
 import { LEVELS, loadLevel, nextLevel } from '../../levels/index.js';
+import * as LO from '../combat/loadout.js';
+import { formatTime } from '../core/util.js';
 
 const SIM = { playing: true, dead: true, complete: true };
-const SUSPENDED = { paused: true, interstitial: true, loading: true };   // a level end is held, not dropped (header)
-const DEATH_LINES = ['Frame down. Recovery beacon active.', 'AP depleted. Systems offline.', 'Contact lost with the frame.'];
-const CREDITS = ['DAWNWAKE', 'Follow the thaw. Carry what you can.', 'Built with three.js', 'Every model, texture and sound is generated in code.'];
+const SUSPENDED = { paused: true, interstitial: true, loading: true };   // a level end is held, not dropped
+const KEEP_OVERLAYS = { paused: true, interstitial: true };              // leaving 'playing' for these keeps fade/letterbox
+const DEATH_LINES = ['Signal lost.', 'Frame down. Recovery beacon active.', 'AP depleted. Systems offline.'];
+const CREDITS = ['DAWNWAKE', 'Follow the thaw. Carry what you can.', 'Built with three.js.',
+                 'Every model, texture, sound and note is generated in code.', 'Thank you for playing.'];
+export const CAMPAIGN_FALLBACK = Object.freeze({ version: 1, startWater: 4, lockerSize: 4, speakers: {}, fixed: [], fragments: [], roll: [], legs: {} });
+/** A3.4: the campaign state anyone uses when the save flag is missing */
+export function defaultCampaign(data) {
+  return { v: 1, day: 0, water: data?.startWater ?? 4, arms: 0, parts: {}, spares: [], fitted: { R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4' },
+           lost: [], fragments: {}, kernel: 4, benchVisits: 0, tearCount: 0, pending: null, ledger: null };
+}
+const deepCopy = (o) => (typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
 
 export function install(ctx) {
   let menuToken = 0;
   let heldEnd = null;   // ['complete' | 'failed', payload] that arrived while suspended
+  let campaignP = null;
+  const perf = { t: 0, samples: [], done: false };
   const S = () => ctx.screens, H = () => ctx.hud;
 
   function set(to) {
@@ -25,6 +41,7 @@ export function install(ctx) {
     ctx.input.enabled = to === 'playing';
     if (!SIM[to]) ctx.simRunning = false;
     document.getElementById('hud')?.classList.toggle('dim', to === 'paused');
+    if ((from === 'playing' || from === 'complete') && !KEEP_OVERLAYS[to]) { H()?.fade(0, 0); H()?.letterbox(false, 0); H()?.setCinematic?.(false); }
     ctx.events.emit('state:changed', { from, to });
   }
   function levelList() {
@@ -39,9 +56,8 @@ export function install(ctx) {
     ctx.pipeline?.setView(ctx.garage.scene, ctx.garage.camera);
     ctx.garage?.showcase(true);
   }
-  /** the prototype clears #fade at every mission start; a fade/letterbox left by the stopped run must not persist.
-   *  Called before mission.start/restart: a superseded fade settles while the sim is stopped, so its stale list stays held. */
-  function clearOverlays() { H()?.fade(0, 0); H()?.letterbox(false, 0); }
+  /** a fade/letterbox left by the stopped run must not persist (called before mission.start/restart) */
+  function clearOverlays() { H()?.fade(0, 0); H()?.letterbox(false, 0); H()?.setCinematic?.(false); }
   function teardown() {
     heldEnd = null;
     if (!ctx.world?.def && !ctx.mission?.def) return;
@@ -54,6 +70,74 @@ export function install(ctx) {
     ctx.clearLevel();
     ctx.save.write();
     flow.levelId = null; flow.def = null;
+  }
+
+  // ---------------------------------------------------------------- campaign (A3)
+  /** levels/campaign.js (P6), or the A3.3 fallback when it is missing */
+  function campaignData() {
+    if (!campaignP) campaignP = import('../../levels/campaign.js').then(m => m.default || CAMPAIGN_FALLBACK).catch(() => CAMPAIGN_FALLBACK);
+    return campaignP;
+  }
+  function getCampaign(data) {
+    const s = ctx.save.getFlag('campaign');
+    return s && typeof s === 'object' ? deepCopy(s) : defaultCampaign(data);
+  }
+  function putCampaign(st) { ctx.save.setFlag('campaign', deepCopy(st)); }
+  function campaignLoadout(st) {
+    if (typeof LO.campaignLoadout === 'function') return LO.campaignLoadout(st.fitted);
+    const lo = ctx.save.getLoadout();
+    return { ...lo, frame: LO.FRAMES?.moth ? 'moth' : lo.frame };
+  }
+  /** A3.4: at level:complete of a campaign level, before the debrief */
+  function writePending(levelId, result, data) {
+    const st = getCampaign(data);
+    const sledges = result?.water ?? 0, tears = result?.tears ?? 0;
+    st.pending = { levelId, haul: [...(result?.haul ?? [])], tears, sledges };
+    st.ledger = { levelId, before: st.water, sledges, gives: 0 };
+    st.water += sledges;
+    st.tearCount = (st.tearCount || 0) + tears;
+    putCampaign(st);
+    return st;
+  }
+  /** A3.7 step 4 without bench mode: A3.5 rule 1 applied to `pending`, then cleared */
+  function benchFallback() {
+    const st = getCampaign();
+    for (const part of st.pending?.haul || []) {
+      const s = st.parts[part];
+      if (s === 'fitted' || s === 'locker') st.spares.push(part);
+      else st.parts[part] = 'locker';
+    }
+    st.pending = null;
+    putCampaign(st);
+  }
+  /** A3.5 rule 6, save, then the Morning Count card */
+  async function runCount(levelId, token) {
+    const data = await campaignData();
+    if (token !== menuToken) return;
+    const st = getCampaign(data);
+    const leg = data.legs?.[levelId] || {};
+    const draw = leg.draw ?? 0;
+    const day = leg.day ?? ((st.day || 0) + 1);
+    const ledger = st.ledger || { before: st.water, sledges: 0, gives: 0 };
+    const roll = Array.isArray(data.roll) ? data.roll : [];
+    let after = st.water - draw, short = 0;
+    const lostNow = [];
+    if (after < 0) {
+      short = -after;
+      let toLose = 2 * short;
+      for (let i = roll.length - 1; i >= 0 && toLose > 0; i--) {
+        const r = roll[i];
+        if (r.protected || st.lost.includes(r.id)) continue;
+        st.lost.push(r.id); lostNow.push(r.name); toLose--;
+      }
+      after = 0;
+    }
+    st.water = after; st.day = day; st.ledger = null;
+    putCampaign(st);
+    const walking = roll.filter(r => !st.lost.includes(r.id));
+    flow.lastCount = { day, water: { before: ledger.before, sledges: ledger.sledges, gives: ledger.gives || 0, draw, after, short },
+                       rigs: walking.length, souls: walking.reduce((a, r) => a + (r.souls || 0), 0), lost: lostNow, log: leg.log || '', edgeLat: leg.edgeLat };
+    await S().showMorningCount(flow.lastCount);
   }
 
   async function titleLoop(token) {
@@ -84,15 +168,19 @@ export function install(ctx) {
       } else if (r == null) return;   // replaced by something else (tests, direct start)
     }
   }
-  /** briefing for a level; resolves true when the level was started */
+  /** briefing for a level; resolves true when the level was started (or the menu was taken over) */
   async function briefing(id, token) {
-    const def = await loadLevel(id);
+    const def = typeof id === 'string' ? await loadLevel(id) : id;
     while (token === menuToken) {
       set('briefing');
-      const r = await S().showBriefing({ level: def });
+      const r = await S().showBriefing({ level: def, canFit: !def.campaign });
       if (token !== menuToken) return true;
       if (r === 'start') { await flow.startLevel(def); return true; }
-      if (r === 'garage') { set('garage'); ctx.music?.setTheme('garage'); await ctx.garage.open({ context: 'briefing', levelId: id }); continue; }
+      if (r === 'garage' && !def.campaign) {
+        set('garage'); ctx.music?.setTheme('garage');
+        await ctx.garage.open({ context: 'briefing', levelId: def.id });
+        continue;
+      }
       return false;
     }
     return true;
@@ -101,7 +189,8 @@ export function install(ctx) {
   async function onDeathScreen(line) {
     ctx.simRunning = false;
     ctx.input.exitPointerLock();
-    const r = await S().showDeath({ line, hasCheckpoint: !!ctx.mission?.checkpoint && ctx.mission.checkpoint !== ctx.mission.def?.checkpoints?.[0]?.id });
+    const m = ctx.mission;
+    const r = await S().showDeath({ line, hasCheckpoint: !!m?.checkpoint && m.checkpoint !== m.def?.checkpoints?.[0]?.id });
     if (flow.state !== 'dead') return;
     if (r === 'retry') await flow.restartCheckpoint();
     else if (r === 'quit') await flow.quitToTitle();
@@ -129,7 +218,12 @@ export function install(ctx) {
     await ctx.world.load(def, { onProgress: (p, label) => loader.set(p * 0.9, label), spawnAt: cp?.at });
     if (token !== menuToken) return;
     def.custom?.install?.(ctx, ctx.mission);
-    ctx.player.setLoadout(ctx.save.getLoadout());
+    if (def.campaign) {
+      const data = await campaignData();
+      if (token !== menuToken) return;
+      if (!ctx.save.getFlag('campaign')) putCampaign(defaultCampaign(data));   // A3.4: created when a campaign level starts
+      ctx.player.setLoadout(campaignLoadout(getCampaign(data)));
+    } else ctx.player.setLoadout(ctx.save.getLoadout());
     const snap = ctx.save.getCheckpoint(def.id);
     const fresh = !(snap && snap.checkpoint === cp?.id) && (!checkpointId || checkpointId === def.checkpoints?.[0]?.id);
     ctx.mission.start(def, cp?.id, snap);
@@ -149,6 +243,7 @@ export function install(ctx) {
     H()?.show(true);
     set('playing');
     ctx.simRunning = true;
+    perf.t = 0; perf.samples.length = 0; perf.done = false;
     ctx.input.requestPointerLock();
     ctx.events.emit('level:ready', { levelId: def.id });
     if (ctx.input.isTouch && !navigator.webdriver && !document.fullscreenElement && document.documentElement.requestFullscreen) {
@@ -157,10 +252,66 @@ export function install(ctx) {
     }
   }
 
+  /** the pause menu's tactical map: the heightfield's shaded relief, cropped to the route, with route, checkpoints,
+   *  markers and the frame. Assumes renderMap() maps heightfield.bounds onto the whole canvas (arch §4.2 stub). */
+  function drawMap(c) {
+    const w = ctx.world, hf = w?.heightfield;
+    if (!hf || !w.route) return;
+    const b = hf.bounds, BW = b.x1 - b.x0, BH = b.z1 - b.z0;
+    const big = document.createElement('canvas');
+    const k = 900 / Math.max(BW, BH);
+    big.width = Math.max(32, Math.round(BW * k)); big.height = Math.max(32, Math.round(BH * k));
+    hf.renderMap(big, { route: w.route });
+    // crop: the route's bounding box plus a margin, aspect-fit into the visible canvas
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (const p of w.route.sample(40)) { x0 = Math.min(x0, p.x); z0 = Math.min(z0, p.z); x1 = Math.max(x1, p.x); z1 = Math.max(z1, p.z); }
+    const pad = 380; x0 -= pad; z0 -= pad; x1 += pad; z1 += pad;
+    const W = c.width, H = c.height, sc = Math.min(W / (x1 - x0), H / (z1 - z0));
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const X = (x) => W / 2 + (x - cx) * sc, Y = (z) => H / 2 + (z - cz) * sc;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0c0b0e'; g.fillRect(0, 0, W, H);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(big, (X(b.x0)), (Y(b.z0)), BW * sc, BH * sc);
+    g.fillStyle = 'rgba(12,11,14,.28)'; g.fillRect(0, 0, W, H);
+    // route
+    g.strokeStyle = 'rgba(224,145,60,.9)'; g.lineWidth = 2; g.setLineDash([6, 5]); g.beginPath();
+    w.route.sample(30).forEach((p, i) => { if (i) g.lineTo(X(p.x), Y(p.z)); else g.moveTo(X(p.x), Y(p.z)); });
+    g.stroke(); g.setLineDash([]);
+    // checkpoints
+    const m = ctx.mission;
+    for (const cp of m?.def?.checkpoints || []) {
+      const p = w.resolve(cp.at);
+      g.fillStyle = cp.id === m.checkpoint ? '#8fd2c6' : 'rgba(143,210,198,.45)';
+      g.fillRect(X(p.x) - 3, Y(p.z) - 3, 6, 6);
+    }
+    // markers (objective first)
+    for (const mk of H()?.markers || []) {
+      const p = typeof mk.pos === 'function' ? mk.pos() : mk.pos;
+      if (!p) continue;
+      g.save(); g.translate(X(p.x), Y(p.z)); g.rotate(Math.PI / 4);
+      g.strokeStyle = mk.kind === 'threat' ? '#ff5b2e' : mk.kind === 'ally' ? '#7fc6ff' : mk.kind === 'poi' ? '#8fd2c6' : '#e0913c';
+      g.lineWidth = 2; g.strokeRect(-5, -5, 10, 10); g.restore();
+    }
+    // the frame
+    const pl = ctx.player;
+    if (pl?.active) {
+      g.save(); g.translate(X(pl.pos.x), Y(pl.pos.z)); g.rotate(-pl.yaw);
+      g.fillStyle = '#e9e3d3'; g.beginPath(); g.moveTo(0, -9); g.lineTo(6, 7); g.lineTo(0, 3); g.lineTo(-6, 7); g.closePath(); g.fill();
+      g.restore();
+    }
+    g.fillStyle = 'rgba(233,227,211,.7)'; g.font = '600 12px "IBM Plex Mono",monospace'; g.fillText('N', W - 18, 18);
+    // scale bar: 500 m
+    g.fillStyle = 'rgba(233,227,211,.6)'; g.fillRect(14, H - 16, 500 * sc, 2);
+    g.font = '500 10px "IBM Plex Mono",monospace'; g.fillText('500 M', 14, H - 22);
+  }
+
   const flow = {
     state: 'boot',
     levelId: null,
     def: null,
+    /** extra: the last Morning Count shown (tests) */
+    lastCount: null,
     async boot() {
       const lvl = ctx.params.get('level');
       if (lvl && LEVELS.some(l => l.id === lvl)) { await flow.startLevel(lvl, ctx.params.get('cp') || undefined, { skipIntro: true }); return; }
@@ -204,12 +355,13 @@ export function install(ctx) {
       set('paused');
       ctx.input.exitPointerLock();
       ctx.input.releaseAll?.();
+      ctx.audio?.duck?.(0.5, 0.3);
       const token = ++menuToken;
       (async () => {
         while (flow.state === 'paused' && token === menuToken) {
           const r = await S().showPause({
             title: flow.def?.title || '', objectives: ctx.mission?.objectives() || [], commsLog: ctx.comms?.log || [],
-            drawMap: ctx.world?.heightfield ? (c) => ctx.world.heightfield.renderMap(c, { route: ctx.world.route }) : undefined,
+            drawMap: ctx.world?.heightfield?.renderMap ? drawMap : undefined,
           });
           if (flow.state !== 'paused' || token !== menuToken) return;
           if (r === 'resume') { flow.resume(); return; }
@@ -239,9 +391,18 @@ export function install(ctx) {
     async quitToTitle() {
       await flow.toTitle();
     },
-    update() {
+    update(dt) {
       if (flow.state === 'playing' && heldEnd) { const [kind, e] = heldEnd; heldEnd = null; (kind === 'complete' ? onComplete : onFailed)(e); return; }
-      if (flow.state === 'playing' && ctx.input.pressed(ACT.PAUSE)) flow.pause();
+      if (flow.state === 'playing' && ctx.input.pressed(ACT.PAUSE)) { flow.pause(); return; }
+      // §7.4: suggest a lower tier if the median frame time over the first 10 s of play exceeds 22 ms (never silently)
+      if (flow.state === 'playing' && !perf.done && !ctx.debugPaused) {
+        perf.t += dt; perf.samples.push(dt);
+        if (perf.t >= 10) {
+          perf.done = true;
+          const s = perf.samples.slice().sort((a, b) => a - b), med = s[s.length >> 1] || 0;
+          if (med > 0.022 && ctx.tier.name !== 'low' && !ctx.forcedTier) H()?.hint('Frame rate is low. A lower graphics quality in Settings may help.', 9);
+        }
+      }
     },
   };
 
@@ -250,7 +411,9 @@ export function install(ctx) {
     if (flow.state !== 'playing') return;
     set('dead');
     ctx.save.data.stats.deaths++;
-    const line = DEATH_LINES[Math.floor(Math.random() * DEATH_LINES.length)];
+    const dl = flow.def?.deathLine;
+    const lines = Array.isArray(dl) ? dl : dl ? [dl] : DEATH_LINES;
+    const line = lines[Math.floor(Math.random() * lines.length)];
     ctx.timers.after(2.6, () => { if (flow.state === 'dead') onDeathScreen(line).catch(e => { if (!e?._recorded) ctx.recordError('flow', e); }); });
   });
   /** a level end outside 'playing': held while suspended (handled back in 'playing'), otherwise dropped */
@@ -274,27 +437,63 @@ export function install(ctx) {
     set('complete');
     ctx.simRunning = false;
     ctx.input.exitPointerLock();
+    const camp = def?.campaign || null;
     const unl = [...(def?.unlocks?.levels || []), ...(def?.unlocks?.parts || [])];
-    ctx.save.completeLevel(levelId, result, def?.unlocks);
+    if (camp && campaignP == null) campaignData();
     const token = ++menuToken;
     (async () => {
       set('debrief');
       H()?.show(false);
       ctx.music?.setTheme('debrief');
-      const r = await S().showDebrief({ level: def, result, unlocks: unl });
-      if (token !== menuToken) return;
-      if (def?.outro?.length) { set('interstitial'); await S().showInterstitial(def.outro, { skippable: true }); }
+      let r;
+      if (camp) {
+        const data = await campaignData();
+        if (token !== menuToken) return;
+        writePending(levelId, result, data);   // A3.4: before the debrief
+        ctx.save.completeLevel(levelId, result, def?.unlocks);
+        const leg = data.legs?.[levelId] || {};
+        const haul = (result.haul || []).map(id => LO.PARTS?.[id]?.name || id);
+        const rows = [
+          { label: 'Time', value: formatTime(result.time) },
+          { label: 'Kills', value: String(result.kills ?? 0) },
+          { label: 'Damage taken', value: String(Math.round(result.damageTaken || 0)) },
+          { label: 'Haul', value: haul.length ? haul.join(', ') : '—' },
+          { label: 'Sledges flagged', value: `${result.water ?? 0} / ${result.waterMax ?? 0}` },
+          { label: 'Rank', value: result.rank || '-' },
+        ];
+        r = await S().showDebrief({ level: def, result, unlocks: [], title: leg.debriefTitle || def.title, rows,
+                                    actions: [{ key: 'next', label: camp.bench === false ? 'Continue' : 'To the Bench' }] });
+      } else {
+        ctx.save.completeLevel(levelId, result, def?.unlocks);
+        r = await S().showDebrief({ level: def, result, unlocks: unl });
+      }
       if (token !== menuToken) return;
       teardown();
+      if (camp) {
+        if (camp.bench !== false) {
+          if (Array.isArray(ctx.garage?.contexts) && ctx.garage.contexts.includes('bench')) {
+            set('bench'); ctx.music?.setTheme('garage');
+            await ctx.garage.open({ context: 'bench', levelId });
+          } else benchFallback();
+          if (token !== menuToken) return;
+        }
+        set('count');
+        ctx.pipeline?.setView(ctx.garage.scene, ctx.garage.camera);
+        await runCount(levelId, token);
+        if (token !== menuToken) return;
+      }
+      if (def?.outro?.length) { set('interstitial'); await S().showInterstitial(def.outro, { skippable: true }); }
+      if (token !== menuToken) return;
       if (r === 'next') {
         const nx = nextLevel(levelId);
-        if (nx) { const t2 = ++menuToken; titleView(); if (await briefing(nx, t2)) return; }
-        else { set('credits'); titleView(); await S().showCredits({ lines: CREDITS }); }
+        const open = nx && !!ctx.save.data.progress.levels[nx]?.unlocked;
+        if (nx && (open || !camp)) { const t2 = ++menuToken; titleView(); if (await briefing(nx, t2)) return; }
+        else if (!nx && !camp) { set('credits'); titleView(); await S().showCredits({ lines: CREDITS }); }
       } else if (r === 'garage') { set('garage'); titleView(); await ctx.garage.open({ context: 'title' }); }
       await flow.toTitle();
     })().catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
   }
-  ctx.addSystem({ name: 'flow', phase: 'early', when: 'always', update: () => flow.update() });
+  ctx.addSystem({ name: 'flow', phase: 'early', when: 'always', update: (dt) => flow.update(dt) });
   ctx.flow = flow;
   return flow;
 }

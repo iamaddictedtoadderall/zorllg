@@ -7,6 +7,8 @@ export const SFX = [
   'mg', 'shotgun', 'mortar', 'rail', 'step', 'stepHeavy', 'servo', 'rotor', 'dropship', 'flyby', 'thunder', 'collapse',
   'metalGroan', 'klaxon', 'static', 'pickup', 'objective', 'checkpoint', 'uiMove', 'uiSelect', 'uiBack', 'interact',
   'shockwave', 'warn',
+  // addendum A5.4
+  'chime', 'heartbeat', 'flatline', 'tear', 'splash', 'bubbles', 'iceGroan', 'iceCrack', 'saw', 'harpoon', 'winch', 'rotorWhine',
 ];
 const KNOWN = new Set(SFX);
 

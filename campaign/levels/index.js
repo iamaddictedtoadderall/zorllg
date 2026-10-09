@@ -1,13 +1,14 @@
-// levels/index.js (P6) — level registry and loader. P0 seeds 'test' (dev-only) and 'l01'. P6 MUST keep the test entry.
-// Titles here are public and spoiler-safe (§8.6).
+// levels/index.js (P6) — level registry and loader (arch §4.6). The 'test' entry (P5's proving ground) MUST stay.
+// Titles here are public and spoiler-safe (§8.6, bible §0): only the eight public level names may appear.
+// Level files are imported lazily, so later levels' text is not in memory until they are played.
 
 export const LEVELS = [
   { id: 'test', title: 'Proving Ground', file: 'test.js', order: 0, hidden: true },
-  { id: 'l01', title: 'Level 1', file: 'level01.js', order: 1 },
+  { id: 'l01', title: 'THAW', file: 'level01.js', order: 1 },
 ];
 
 const cache = new Map();
-/** dynamic import(`./${file}`) → default export (cached per session) */
+/** dynamic import(`./${file}`) → default export (cached per session; a failed import is retried next time) */
 export function loadLevel(id) {
   const e = LEVELS.find(l => l.id === id);
   if (!e) return Promise.reject(new Error(`Unknown level "${id}"`));
