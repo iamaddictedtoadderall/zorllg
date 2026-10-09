@@ -124,6 +124,9 @@ export function mats(ctx) {
     ice: S({ color: '#9cc4dc', roughness: 0.2, metalness: 0, envMapIntensity: 1.0, emissive: '#0a3a5a', emissiveIntensity: 0.35 }),
     iceDeep: S({ color: '#5f86a8', roughness: 0.28, metalness: 0, envMapIntensity: 0.9, emissive: '#06243a', emissiveIntensity: 0.3 }),
     iceClear: S({ color: '#b8e2f4', roughness: 0.08, metalness: 0, envMapIntensity: 1.2, emissive: '#1a5a7a', emissiveIntensity: 0.6 }),
+    // translucent shelf ice lit from above by the stars: the cavern's roof and its thin windows glow faintly (L1 §2.6 Z2)
+    iceGlow: S({ color: '#8fc3e0', roughness: 0.14, metalness: 0, envMapIntensity: 1.0, emissive: '#2a7fb4', emissiveIntensity: 0.55 }),
+    frost: S({ color: '#dfeaf3', roughness: 0.6, metalness: 0, envMapIntensity: 0.6, emissive: '#16303f', emissiveIntensity: 0.25 }),
     snow: S({ color: '#e8eef5', roughness: 0.78, metalness: 0, envMapIntensity: 0.4 }),
     ceramic: S({ color: '#e9e6dc', roughness: 0.35, metalness: 0.05, envMapIntensity: 0.7, wear: 0.4 }),
     ceramicAged: S({ color: '#b8b0a0', roughness: 0.5, metalness: 0.05, envMapIntensity: 0.6, wear: 0.7 }),

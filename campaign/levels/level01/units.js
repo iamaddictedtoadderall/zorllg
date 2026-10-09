@@ -287,6 +287,16 @@ export class Skiff extends L1Unit {
     if (this.parts.fan) this.parts.fan.rotation.z += 0.6;
     if (this.parts.sail) this.parts.sail.rotation.y = this.stag() ? Math.sin(t * 3) * 0.25 : Math.sin(t * 0.8) * 0.05;
   }
+  /** the TEAR fail-safe Gaffer (L1 §5 E2) staggers on the first hit the player lands, whatever its impact */
+  onDamage(info) {
+    if (this.config?.staggerOnFirstHit && !this.firstHit && info?.source?.team === 'player' && this.alive && !(this.stagT > 0) && !info.killed) {
+      this.firstHit = true;
+      this.stagT = this.stagDur; this.imp = 0; info.staggered = true;
+      this.ctx.fx?.sparks?.(this.pos, 14, [1, 0.8, 0.4], 18);
+      this.ctx.audio?.play?.('stagger', this.pos);
+    }
+    super.onDamage?.(info);
+  }
   cleanup() { this.endHarpoon(); disposeGlow(this.tele); if (this.L.tow?.by === this) this.L.breakTow('dead'); }
   onDeath(info) {
     this.cleanup();
@@ -336,6 +346,11 @@ export class Gleaner extends L1Unit {
     const p = this.player(), ai = this.ai;
     ai.t += dt; this.cd -= dt; this.hookCd -= dt;
     this.target = p;
+    // the thin rotor whine (L1 §15.5; cosmetic timing)
+    if ((ai.whineT = (ai.whineT ?? Math.random() * 3) - dt) <= 0) {
+      ai.whineT = 2.4 + Math.random() * 1.2;
+      if (p && this.mode !== 'watch' && p.pos.distanceToSquared(this.pos) < 140 * 140) this.ctx.audio?.play?.('rotorWhine', this.pos, { vol: 0.35 });
+    }
     if (this.latched) { this.updateLatched(dt, p); return; }
     if (this.stag()) { this.fly(dt, this.pos.x, this.ground() + Math.max(2, ai.alt - 6), this.pos.z, 8); return; }
     if (this.blind()) { const a = this.drift ? this.drift(dt) : 0; this.fly(dt, this.pos.x - Math.sin(a) * 10, this.pos.y, this.pos.z - Math.cos(a) * 10, 6); return; }

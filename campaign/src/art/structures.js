@@ -639,8 +639,20 @@ export const CATALOG = {
       hazard(B, M, 5.0, 0.5, 0.2, [0, 0.55, bz + 0.6]);
       B.add(KIT.greeble('junction', 0.9, 1.1, 0.35), M.ironBlack, P(4.2, 2.4, bz + 0.62));
       A.lamp(B, [0, 6.8, bz + 1.1], [0, -0.4, 1], 0.28, 'lightSodium');
-      // roof: vents, hatch, whip antenna, a stack of sandbag-like slabs
+      // roof: cast slabs with real pour joints (no 20 m plain lid), vents, hatch, whip antenna, a stack of sandbag-like slabs
       const rt = h + 0.62;   // top of the roof cap
+      {
+        const rw = w * 0.84 * 0.9, rd = d * 0.8 * 0.9;
+        let x = -rw / 2;
+        for (const cw of KIT.split(rw, rng, 3.2, 5.2)) {
+          let z = -rd / 2;
+          for (const cd of KIT.split(rd, rng, 3.0, 4.6)) {
+            B.add(KIT.slab(r2(cw - 0.2), 0.16, r2(cd - 0.2), { bevel: 0.05 }), M.concrete, P(x + cw / 2, rt + 0.04, z + cd / 2, 0, 0, 0, { tint: 0.07, lod0: true }));
+            z += cd;
+          }
+          x += cw;
+        }
+      }
       B.add(KIT.greeble('vent', 2.2, 1.6, 0.5), M.ironBlack, P(-w * 0.2, rt, 0, -HALF));
       B.add(KIT.greeble('vent', 1.6, 1.6, 0.5), M.ironBlack, P(w * 0.08, rt, d * 0.15, -HALF));
       B.add(KIT.ring(0.8, 0.22, 0.3), M.ironBlack, P(w * 0.22, rt + 0.12, -d * 0.12));
@@ -1069,23 +1081,43 @@ export const CATALOG = {
     footprint: p => rect(p.length + 2, 5, { pad: 5 }),
     colliders: p => [box(p.length, 2.6, 3.6)],
     hit: p => ({ center: [0, 2, 0], r: p.length * 0.5 }),
+    // Wake salvage (AD §2.15): mismatched plates leaned at 5–15° skews, each in its own frame with a patch, painted
+    // stripes and bolts on some; struts behind; a canvas tarp hanging over one bay; drums and a rig door at the foot
     build(A, p) {
       const { B, M, rng } = A, L = p.length;
       const paints = [M.rust, M.paintWake, M.paintWakeRed];
-      let x = -L / 2;
+      let x = -L / 2, bay = 0;
+      const tarpAt = Math.floor(rng() * 3) + 1, ONE = new THREE.Vector3(1, 1, 1);
       while (x < L / 2 - 1) {
         const w = lerp(2.2, 4.2, rng()), h = lerp(2.8, 4.2, rng());
-        B.add(KIT.armourPlate(KIT.chamfer(KIT.rect(w, h), [0.2, 0.2, rng() * 0.8, rng() * 0.8]), 0.18), paints[Math.floor(rng() * 3)],
-          P(x + w / 2, h / 2 - 0.2, (rng() - 0.5) * 0.6, -0.1 - rng() * 0.15, (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.25, { tint: 0.1 }));
+        const m = new THREE.Matrix4().compose(new THREE.Vector3(x + w / 2, h / 2 - 0.2, (rng() - 0.5) * 0.6),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.1 - rng() * 0.15, (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.25)), ONE);
+        const V = B.under(m), mat = paints[Math.floor(rng() * 3)];
+        // the proud layer faces −z (the front)
+        V.add(KIT.armourPlate(KIT.chamfer(KIT.rect(w, h), [0.2, 0.2, rng() * 0.8, rng() * 0.8]), 0.18), mat, P(0, 0, 0, 0, PI, 0, { tint: 0.1 }));
+        const face = -0.23;
+        if (rng() < 0.45) V.add(KIT.plateBox(r2(w * 0.8), 0.3, 0.05, 0.01), M.canvas, P(0, (rng() - 0.5) * h * 0.3, face, 0, 0, (rng() < 0.5 ? -1 : 1) * 0.55, { tint: 0.08 }));   // painted band
+        if (rng() < 0.55) {   // a riveted patch plate
+          const pw = r2(w * lerp(0.25, 0.4, rng())), ph = r2(h * lerp(0.2, 0.35, rng())), px = (rng() - 0.5) * w * 0.4, py = (rng() - 0.5) * h * 0.4;
+          V.add(KIT.plateBox(pw, ph, 0.07, 0.02), rng() < 0.5 ? M.steelDark : M.rust, P(px, py, face + 0.02, 0, 0, (rng() - 0.5) * 0.3));
+          for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) V.add(KIT.cylinder(0.07, 0.08, 0.06, 6), M.ironBlack, P(px + sx * (pw / 2 - 0.12), py + sy * (ph / 2 - 0.12), face - 0.03, HALF), { lod0: true });
+        }
         B.add(KIT.barBetween([x + w / 2, h * 0.7, 0.2], [x + w / 2 + (rng() - 0.5), 0, 1.8], 0.14, 0.14), M.ironBlack, { lod0: true });
-        x += w * lerp(0.8, 0.95, rng());
+        if (bay === tarpAt) {   // canvas tarp over this bay: two sheets bellied outward, laced at the top
+          const tw = w * 1.3, top = h - 0.5;
+          B.add(KIT.plateBox(r2(tw), r2(top * 0.55), 0.06, 0.02), M.canvas, P(x + w / 2, top - top * 0.27, -0.55, -0.22, 0, 0.03, { tint: 0.1 }));
+          B.add(KIT.plateBox(r2(tw * 0.96), r2(top * 0.5), 0.06, 0.02), M.canvas, P(x + w / 2, top * 0.25 + 0.1, -0.62, 0.16, 0, -0.02, { tint: 0.1 }));
+          B.add(KIT.bar(r2(tw + 0.3), 0.1, 0.1), M.ironBlack, P(x + w / 2, top + 0.02, -0.4), { lod0: true });
+        }
+        x += w * lerp(0.8, 0.95, rng()); bay++;
       }
-      for (let i = 0; i < Math.round(L / 6); i++) {
+      for (let i = 0; i < Math.round(L / 6); i++) {   // drums behind, and a cluster of two in front
         const dx = (rng() - 0.5) * L * 0.8;
         B.add(KIT.drum(0.55, 1.5, 2), paints[i % 3], P(dx, 0, 1.4 + rng() * 0.6, 0, rng() * 6, 0, { tint: 0.1 }));
       }
-      B.add(KIT.panelBox(2.4, 3.2, 0.3, { cols: 1, rows: 2 }), M.paintWake, P(-L * 0.18, 1.1, -0.9, 0.5, 0.3, 1.2));
-      B.add(KIT.plateBox(L * 0.35, 0.08, 2.4, 0.02), M.canvas, P(L * 0.15, 3.1, -0.4, 0.35, 0.05, 0.08, { tint: 0.08 }));
+      for (let i = 0; i < 2; i++) B.add(KIT.drum(0.55, 1.5, 2), paints[(i + 1) % 3], P(L * 0.22 + i * 1.15, 0, -1.3 - (i % 2) * 0.4, 0, rng() * 6, 0, { tint: 0.1 }));
+      B.add(KIT.drum(0.55, 1.5, 2), M.rust, P(L * 0.22 + 0.6, 0.55, -2.2, HALF, rng(), 0, { tint: 0.1 }));   // one on its side
+      B.add(KIT.panelBox(2.4, 3.2, 0.3, { cols: 1, rows: 2 }), M.paintWake, P(-L * 0.18, 1.1, -0.9, 0.5, 0.3, 1.2));   // a rig door
       for (let i = 0; i < 2; i++) tankTrap(B, M, -L / 2 + 2 + i * (L - 4), 1.8, rng);
     },
   },
@@ -1131,7 +1163,25 @@ export const CATALOG = {
           x += cw;
         }
       }
-      for (let y = floor; y < h * (1 - decay * 0.6); y += floor) B.add(KIT.slab(w - 0.6, 0.5, d - 0.6), M.concreteDark, P(0, y, 0, (rng() - 0.5) * 0.02 * decay, 0, (rng() - 0.5) * 0.03 * decay));
+      // floors: cast slabs with joints; the upper floors lose slabs and the edges sag (no 30 m plain lid on top)
+      const top = h * (1 - decay * 0.6);
+      for (let y = floor; y < top; y += floor) {
+        const upper = (y / top), cols = KIT.split(w - 0.6, rng, 4.5, 7), rows = KIT.split(d - 0.6, rng, 4.5, 7);
+        B.add(KIT.slab(w - 0.6, 0.5, d - 0.6), M.concreteDark, P(0, y, 0, 0, 0, 0, { lod1: true }));
+        let x = -(w - 0.6) / 2;
+        for (const cw of cols) {
+          let z = -(d - 0.6) / 2;
+          for (const cd of rows) {
+            const gone = upper > 0.55 && rng() < decay * 0.5 * upper;
+            if (!gone) {
+              const sag = upper > 0.5 && rng() < decay * 0.4 ? (rng() - 0.5) * 0.12 : 0;
+              B.add(KIT.slab(r2(cw - 0.12), 0.5, r2(cd - 0.12), { bevel: 0.08 }), M.concreteDark, P(x + cw / 2, y - Math.abs(sag) * 3, z + cd / 2, sag, 0, sag * 0.7, { tint: 0.06, lod0: true }));
+            } else for (let k = 0; k < 2; k++) B.add(KIT.bar(r2(cw * 0.8), 0.06, 0.06), M.rust, P(x + cw / 2, y, z + cd * (0.3 + k * 0.4), 0, (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.2, { lod0: true }));   // exposed rebar
+            z += cd;
+          }
+          x += cw;
+        }
+      }
       for (let i = 0; i < 8; i++) B.add(KIT.rockGeo(300 + i, { cuts: 9, noise: 0.07, squash: 0.6 }), rng() < 0.5 ? M.concrete : M.concreteDark,
         { pos: [(rng() - 0.5) * (w + 8), 0.4, (rng() < 0.5 ? -1 : 1) * (d / 2 + 1.5 + rng() * 3)], rot: [rng(), rng() * 6, rng()], scale: 1.2 + rng() * 2.4 });
     },
@@ -1490,7 +1540,8 @@ function container(B, M, mat, x, y, z, ry) {
   const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(1, 1, 1));
   const V = B.under(m), Lc = 12, Hc = 5, Dc = 4.6;
   for (const s of [-1, 1]) V.add(KIT.ribbedPlate(Lc - 0.6, Hc - 0.6, 0.12, { pitch: 0.6, axis: 'x' }), mat, P(0, Hc / 2, s * (Dc / 2 - 0.06), 0, s < 0 ? PI : 0, 0, { tint: 0.07 }));
-  V.add(KIT.plateBox(Lc - 0.5, 0.2, Dc - 0.5, 0.05), mat, P(0, Hc - 0.15, 0));
+  // corrugated roof (ribs across the width): a 12 m lid is never one plain face
+  V.add(KIT.ribbedPlate(Lc - 0.5, Dc - 0.5, 0.14, { pitch: 1.0, axis: 'x' }), mat, P(0, Hc - 0.14, 0, -HALF, 0, 0, { tint: 0.05 }));
   V.add(KIT.slab(Lc - 0.4, Hc - 0.4, Dc - 0.4, { bevel: 0.05 }), mat, P(0, Hc / 2, 0, 0, 0, 0, { lod1: true }));
   for (const s of [-1, 1]) {
     V.add(KIT.panelBox(0.25, Hc - 0.5, Dc - 0.5, { cols: 1, rows: 1, inset: 0.04 }), mat, P(s * (Lc / 2 - 0.2), Hc / 2, 0));
@@ -1509,7 +1560,13 @@ function tankInto(B, M, x, z, r, h, mat, rng) {
     prof.push([r * 0.16, h + r * 0.32 + 0.3], [0, h + r * 0.32 + 0.3]);
     return KIT.latheHard(prof, clamp(Math.round(r * 6), 16, 40), { edgeLen: 0.3 });
   });
-  B.add(body, mat, P(x, 0, z, 0, rng() * PI, 0, { tint: 0.06 }));
+  // LOD1 stand-in (AD §2.18: halve lathe segments, drop the ribs): the tanks are the site's silhouette, so they must
+  // never be the pieces the LOD1 triangle budget drops
+  const lo = geo(`tankL1|${r}|${h}`, () => KIT.latheHard([[0, 0], [r * 1.03, 0], [r * 1.03, 0.4], [r, 0.42], [r, h], [r * 0.72, h + r * 0.24],
+                                                          [r * 0.16, h + r * 0.32 + 0.3], [0, h + r * 0.32 + 0.3]], 12, { edgeLen: 0.3 }));
+  const yaw0 = rng() * PI;
+  B.add(body, mat, P(x, 0, z, 0, yaw0, 0, { tint: 0.06, lod0: true }));
+  B.add(lo, mat, P(x, 0, z, 0, yaw0, 0, { lod1: true }));
   B.add(KIT.ring(r + 0.04, 0.1, 0.55, clamp(Math.round(r * 6), 16, 40)), M.stripe, P(x, h - 0.75, z), { lod0: true });   // painted band
   ladder(B, M, x, 0.4, z + r + 0.35, h + 0.2, 0);
   // roof walkway railing: posts on the dome shoulder and a top rail
@@ -1647,7 +1704,7 @@ export const PROPS = {
   container: { radius: 6, height: 5, collider: 'box', geometry: () => propGeo('container', (B, T) => {
     const V = B, Lc = 12, Hc = 5, Dc = 4.6, mat = T(PC.rust);
     for (const s of [-1, 1]) V.add(KIT.ribbedPlate(Lc - 0.6, Hc - 0.6, 0.12, { pitch: 1.3 }), mat, P(0, Hc / 2, s * (Dc / 2 - 0.06), 0, s < 0 ? PI : 0, 0), { tint: 0.05 });
-    V.add(KIT.plateBox(Lc - 0.5, 0.25, Dc - 0.5, 0.05), mat, P(0, Hc - 0.15, 0));
+    V.add(KIT.ribbedPlate(Lc - 0.5, Dc - 0.5, 0.16, { pitch: 1.6, axis: 'x' }), mat, P(0, Hc - 0.15, 0, -HALF, 0, 0));   // corrugated roof
     for (const s of [-1, 1]) V.add(KIT.panelBox(0.25, Hc - 0.5, Dc - 0.5, { cols: 1, rows: 1, inset: 0.04 }), mat, P(s * (Lc / 2 - 0.2), Hc / 2, 0));
     const ir = T(PC.iron);
     for (const sx of [-1, 1]) for (const sy of [0, 1]) for (const sz of [-1, 1]) V.add(KIT.bar(0.45, 0.45, 0.45), ir, P(sx * (Lc / 2 - 0.22), 0.22 + sy * (Hc - 0.44), sz * (Dc / 2 - 0.22)));

@@ -68,6 +68,38 @@ uniform vec3 uMoonDir, uMoonCol; uniform float uMoonSize;
 uniform float uAur, uAurH, uAurSpeed, uAurBands; uniform vec3 uAurA, uAurB; uniform vec2 uAurF;
 uniform float uFlash;
 varying vec3 vDir;
+// One aurora curtain: a vertical sheet from height 1 to 1 + depth (observer at 0) standing on a footprint that meanders
+// around the line at forward distance D across the aurora's heading. dh = the view direction's horizontal components in
+// the aurora frame (x right, y forward), h = its height. The footprint is written in polar form, r(θ) = D(1 + m(θ))/cos θ,
+// so every view azimuth θ hits it exactly once (no iteration, no seams), and a ray pattern that depends on θ alone is a
+// set of vertical lines on the sheet, which is what aurora rays are.
+vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth) {
+  float lh = length(dh);
+  if (dh.y <= 0.0 || lh < 1e-4) return vec3(0.0);
+  float th = atan(dh.x, dh.y);
+  float p1 = th * 3.1 + ph + t * 0.021, p2 = th * 8.7 + ph * 2.3 - t * 0.034;
+  float m = 0.2 * sin(p1) + 0.07 * sin(p2) + 0.07 * (cNoise(vec2(th * 6.0 + ph * 5.0, t * 0.012)) - 0.5);
+  float dm = 0.62 * cos(p1) + 0.61 * cos(p2);
+  float r = D * (1.0 + m) / max(cos(th), 0.15);
+  float z = (r * h / lh - 1.0) / depth;          // 0 at the lower edge, 1 at the top of the sheet
+  if (z < -0.06 || z > 1.6) return vec3(0.0);
+  float u = tan(clamp(th, -1.4, 1.4));            // position along the curtain, in units of D
+  float edge = smoothstep(-0.05, 0.0, z);
+  float zp = max(z, 0.0);
+  float prof = edge * (exp(-zp * 3.0) + 0.3 * exp(-pow((z - 0.45) / 0.3, 2.0)) + 0.7 * exp(-zp * 26.0));
+  // rays: vertical on the sheet, drifting slowly; the finest set fades where the curtain recedes (no shimmer)
+  float r1 = cNoise(vec2(u * 30.0, t * 0.22 + ph));
+  float r2 = cNoise(vec2(u * 85.0 + 3.7, t * 0.5 + ph));
+  float rays = 0.12 + 0.88 * r1 * r1 * r1 + 0.4 * r2 * r2 * r2 * smoothstep(2.4, 1.0, abs(u));
+  // patches that brighten and fade along the curtain, and its ends
+  float seg = 0.1 + 0.9 * smoothstep(0.3, 0.8, cNoise(vec2(u * 0.9 + ph * 3.0, t * 0.025)));
+  float ends = smoothstep(4.0, 1.6, abs(u));
+  // emission integrates through the sheet: brighter where it is seen edge-on (the folds)
+  float g = dm / (1.0 + m) + u;
+  float graze = pow(min(sqrt(1.0 + g * g), 5.0), 0.6);
+  vec3 col = mix(uAurA, uAurB * 0.85, smoothstep(0.3, 1.05, z)) + uAurA * 0.45 * exp(-zp * 22.0);
+  return col * prof * rays * seg * ends * graze * 0.42;
+}
 void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
@@ -84,26 +116,19 @@ void main() {
   // 3. clouds
   float cl;
   c = cSkyClouds(d, fogC, c, cl);
-  // 4. aurora: folded curtains with vertical rays, a sharp lower edge, teal low and violet high
+  // 4. aurora: vertical curtains hanging above a meandering footprint (AD §5.2 item 6). Each curtain is a sheet whose
+  //    ray hit is solved analytically (no slices, so no banding): a sharp, bright lower edge, emission decaying upward
+  //    from teal into violet, fine vertical rays that converge toward the zenith in perspective, brighter where the
+  //    sheet is seen edge-on (folds), and segments that wax and wane along its length. High/Medium 3 curtains, Low 1.
   if (uAur > 0.001 && h > 0.0) {
     vec2 rgt = vec2(-uAurF.y, uAurF.x);
-    vec2 q = vec2(dot(d.xz, rgt), dot(d.xz, uAurF)) / (h + 0.25);
-    float yc = cos(radians(uAurH)) / (sin(radians(uAurH)) + 0.25);
+    vec2 dh = vec2(dot(d.xz, rgt), dot(d.xz, uAurF));
     float t = uSkyTime * uAurSpeed;
-    vec3 acc = vec3(0.0);
-    for (int i = 0; i < 3; i++) {
-      if (float(i) >= uAurBands) break;
-      float fi = float(i);
-      float x = q.x * (0.9 + 0.3 * fi) + sin(q.y * 1.7 + t * 0.07 + fi * 1.7) * 0.45;
-      float edge = yc + 0.2 * fi - 0.1 + sin(x * 1.3 + t * 0.05 + fi * 2.1) * 0.16 + (cNoise(vec2(x * 2.0, t * 0.08 + fi * 5.0)) - 0.5) * 0.14;
-      float yy = edge - q.y;
-      float band = yy >= 0.0 ? exp(-yy * 3.2) : exp(-yy * yy * 260.0);
-      float r = 0.5 + 0.5 * sin(x * 26.0 + cNoise(vec2(x * 4.0, t * 0.15 + fi * 3.0)) * 7.0);
-      float rays = mix(0.3, 1.0, r * r);
-      acc += mix(uAurA, uAurB, smoothstep(0.03, 0.55, yy)) * band * rays * (1.0 - 0.28 * fi);
-    }
-    float env = smoothstep(1.4, 0.55, abs(atan(dot(d.xz, rgt), dot(d.xz, uAurF))));
-    c += acc * uAur * 0.75 * env * smoothstep(0.02, 0.16, h) * (1.0 - cl * 0.7);
+    float D = 1.0 / tan(radians(clamp(uAurH - 12.0, 6.0, 80.0)));   // the main curtain's base sits 12° below the band centre
+    vec3 acc = cAurCurtain(dh, h, D, 0.0, t, 1.3);
+    if (uAurBands > 1.5) acc += cAurCurtain(dh, h, D * 1.75, 2.1, t, 1.1) * 0.7;
+    if (uAurBands > 2.5) acc += cAurCurtain(dh, h, D * 2.7, 4.7, t, 0.9) * 0.5;
+    c += acc * uAur * smoothstep(0.0, 0.1, h) * (1.0 - cl * 0.7);
   }
   // 5. stars (hashed cells, twinkling) and a faint galactic band; hidden by bright sky, cloud and the dawn rim
   if (uStars > 0.001 && h > -0.02) {
@@ -153,6 +178,10 @@ void main() {
   gl_FragColor = vec4(max(c, 0.0), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  #ifdef TONE_MAPPING
+    // straight to an 8-bit screen (Low: no FinalPass grain): dither the long, dark gradients so they never band
+    gl_FragColor.rgb += (cHash12(gl_FragCoord.xy) - 0.5) / 255.0;
+  #endif
 }`;
 
 // ------------------------------------------------------------------------------------------------ skyline shader

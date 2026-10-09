@@ -25,7 +25,7 @@ const SCREEN_CSS = `
 #screen .pause-wrap .doc .actions{position:static;margin:22px 0 0;padding:0;background:none}
 #game.menu-up #hud :is(#zonecard,#hint,#warn,#checkpointToast,#killfeed,#markers,#lockbox,#prompt,#progress,#choice,#reticle,#bossbar){visibility:hidden}
 .title-wrap h1{font-size:min(clamp(64px,13vw,150px),17vh)}
-.title-wrap .tag{white-space:nowrap;font-size:clamp(13px,1.6vw,20px);letter-spacing:.3em}
+.title-wrap .tag{font-size:clamp(13px,1.6vw,20px);letter-spacing:.3em;text-wrap:balance}
 .title-wrap .controls{grid-template-columns:repeat(3,minmax(0,1fr));gap:0 26px;max-width:720px;margin-top:28px}
 .title-wrap .controls div{font-size:13px;padding:4px 0;letter-spacing:.1em}
 .title-wrap .controls kbd{font-size:11px;color:var(--hud-dim)}
@@ -73,12 +73,25 @@ const SCREEN_CSS = `
 .pause-log div{padding:2px 0;border-bottom:1px solid rgba(233,227,211,.05)}
 .pause-log b{font-weight:600;letter-spacing:.12em;margin-right:8px}
 .pause-log .empty{opacity:.6}
-@media (max-width:860px),(max-height:520px){.pause-wrap{grid-template-columns:1fr;max-width:460px}.pause-side{display:none}}
+@media (max-width:700px){.pause-wrap{grid-template-columns:1fr;max-width:460px}.pause-side{display:none}}
+@media (max-height:520px) and (min-width:701px){
+  .pause-wrap{grid-template-columns:minmax(260px,1fr) minmax(260px,1fr);gap:14px;max-width:900px;padding:0 14px}
+  .pause-side{gap:10px}
+  .pause-side .panel{padding:9px 12px}
+  .pause-side canvas{width:auto;max-width:100%;max-height:40vh;margin:6px auto 0!important}
+  .pause-side .maplegend{margin-top:5px}
+  .pause-log{max-height:17vh;font-size:11px}
+  .pause-wrap .doc{padding-bottom:18px}
+  .pause-wrap .doc .objlist li{font-size:14px}
+  .pause-wrap .doc h3{margin:10px 0 6px}
+}
 .set-group{margin-top:16px}
 #screen .doc.settings-doc{width:min(980px,calc(100% - 32px))}
 .set-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 44px}
 .set-cols .set-row{grid-template-columns:1fr minmax(120px,180px) 44px;letter-spacing:.1em}
-@media (max-width:900px){.set-cols{grid-template-columns:1fr}#screen .doc.settings-doc{width:min(620px,calc(100% - 32px))}}
+@media (max-width:700px){.set-cols{grid-template-columns:1fr}#screen .doc.settings-doc{width:min(620px,calc(100% - 32px))}}
+@media (max-width:900px) and (min-width:701px){.set-cols{gap:0 28px}.set-cols .set-row{grid-template-columns:1fr minmax(110px,150px) 44px}}
+@media (max-height:520px){.set-group{margin-top:10px}.set-group h3{margin-bottom:2px}.set-row{padding-block:3px}}
 .set-group h3{margin:0 0 6px}
 .set-row:focus-within{color:var(--hud)}
 .set-row input[type=range]{height:18px}
@@ -91,12 +104,16 @@ const SCREEN_CSS = `
 .debrief-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:nowrap}
 .debrief-top>div:first-child{min-width:0}
 .debrief-top .rank{flex:none}
+.debrief-top h2.long{font-size:clamp(30px,3.7vw,46px);line-height:1.02;text-wrap:balance}
 .rank{display:grid;place-items:center;width:84px;height:84px;border:2px solid var(--accent);font:700 54px/1 var(--f-display);color:var(--accent);clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)}
 .rank small{display:block;font:500 9px var(--f-mono);letter-spacing:.2em;color:var(--hud-dim);text-align:center;margin-top:-4px}
 .list-item .nm{display:flex;flex-direction:column;gap:2px}
 .list-item .nm small{font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--hud-dim)}
 .list-item .rk{font:700 22px var(--f-display);color:var(--accent);min-width:22px;text-align:right}
 .center-card.inter{max-width:760px}
+.center-card.inter p.tw{display:grid}
+.center-card.inter p.tw>span{grid-area:1/1;white-space:pre-wrap}
+.center-card.inter p.tw .ghost{visibility:hidden}
 .center-card.inter p{font-size:17px;line-height:1.85;text-align:left;letter-spacing:.01em}
 .center-card.inter.black p{color:#e9e3d3}
 .center-card.inter:is(.black,.terminal) .btn{background:transparent;color:var(--hud-dim);box-shadow:inset 0 0 0 1px rgba(233,227,211,.22);clip-path:none;font-size:13px;padding:8px 18px}
@@ -109,6 +126,8 @@ const SCREEN_CSS = `
 .center-card.inter.paper .btn.ghost{background:transparent;color:#2a241c;box-shadow:inset 0 0 0 1px rgba(42,36,28,.4)}
 .center-card.inter.terminal p{color:var(--en);text-shadow:0 0 10px rgba(143,210,198,.35)}
 .center-card.inter .pg{font-family:var(--f-mono);font-size:10px;letter-spacing:.2em;color:var(--hud-dim);margin-top:18px;text-align:left}
+.center-card.credits{padding:40px 56px;background:radial-gradient(closest-side,rgba(8,8,10,.82),rgba(8,8,10,.55) 70%,rgba(8,8,10,0))}
+.center-card.credits p:first-of-type{color:var(--accent);letter-spacing:.24em;text-transform:uppercase;font-size:13px;margin-bottom:18px}
 #screen.count{background:#06070a}
 .count-wrap{margin:auto;width:min(920px,calc(100% - 32px));display:grid;gap:18px;padding:12px 0}
 .count-wrap canvas{width:100%;height:auto;display:block;border-top:1px solid var(--hud-faint);border-bottom:1px solid var(--hud-faint)}
@@ -123,7 +142,25 @@ const SCREEN_CSS = `
 .count-lost s{color:rgba(233,227,211,.42)}
 .count-log{font:italic 400 19px/1.55 Georgia,"Times New Roman",serif;color:#e8dcc4;max-width:640px}
 .count-wrap .actions{display:flex;gap:12px}
-@media (max-height:520px){.count-wrap{gap:10px}.count-day{font-size:52px}.count-grid dd{font-size:20px}.count-log{font-size:16px}}
+@media (max-height:520px){
+  .count-wrap{gap:8px 26px;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start;padding:0;
+    grid-template-areas:"day act" "strip strip" "grid log" "lost log"}
+  .count-day{grid-area:day;font-size:46px}.count-day small{margin-bottom:4px}
+  .count-wrap canvas{grid-area:strip}
+  .count-grid{grid-area:grid;gap:4px 18px}.count-grid dt{font-size:11px}.count-grid dd{font-size:19px}
+  .count-grid dd small{display:block;margin:2px 0 0}
+  .count-lost{grid-area:lost;font-size:12px}
+  .count-log{grid-area:log;font-size:15px;align-self:center}
+  .count-wrap .actions{grid-area:act;justify-content:flex-end;align-self:end}
+}
+@media (max-height:520px){
+  .ledger{display:block;margin-top:10px}
+  .ledger tbody{display:grid;grid-template-columns:1fr 1fr;column-gap:28px}
+  .ledger tr{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid var(--hud-faint)}
+  .ledger td{border-bottom:0;padding:5px 0}
+  .ledger td:first-child{font-size:13px;white-space:nowrap}
+  .debrief-top h2{font-size:clamp(28px,5vw,40px)}
+}
 `;
 
 export function install(ctx) {
@@ -496,7 +533,7 @@ export function install(ctx) {
         : [{ key: 'next', label: 'Continue' }, { key: 'garage', label: 'Garage' }, { key: 'quit', label: 'Title' }];
       const p = open('debrief', `<div class="doc">
           <div class="hdr"><span>DEBRIEF</span><span>${esc(L.title || '')}</span></div>
-          <div class="debrief-top"><div><h2>${esc(m.title || L.title || 'Complete')}</h2>
+          <div class="debrief-top"><div><h2${String(m.title || L.title || '').length > 18 ? ' class="long"' : ''}>${esc(m.title || L.title || 'Complete')}</h2>
             <div class="sub">Complete · ${formatTime(r.time)}</div></div>
             <div class="rank">${esc(r.rank || '-')}<small>${esc(RANK_TEXT[r.rank] || '')}</small></div></div>
           <table class="ledger">${rows}</table>
@@ -512,7 +549,7 @@ export function install(ctx) {
       for (let i = 0; i < pages.length; i++) {
         const pg = pages[i], last = i === pages.length - 1, style = ['black', 'paper', 'terminal'].includes(pg.style) ? pg.style : 'black';
         const p = open('interstitial', `<div class="center-card inter ${style}">
-            ${pg.title ? `<h2>${esc(pg.title)}</h2>` : ''}<p id="itP"></p>
+            ${pg.title ? `<h2>${esc(pg.title)}</h2>` : ''}<p class="tw"><span class="ghost" aria-hidden="true">${esc(pg.text || '')}</span><span id="itP"></span></p>
             ${pages.length > 1 ? `<div class="pg">${i + 1} / ${pages.length}</div>` : ''}
             <div class="actions" id="itA" hidden>${btn('bNext', last ? 'Continue' : 'Next', false)}${o.skippable && !last ? btn('bSkip', 'Skip', true) : ''}</div></div>`,
           'inter ' + style, o.skippable ? 'skip' : undefined);
@@ -546,7 +583,7 @@ export function install(ctx) {
         : '<div class="count-lost">— no names lost —</div>';
       const p = open('count', `<div class="count-wrap">
           <div class="count-day"><small>THE MORNING COUNT</small>Day ${esc(m.day ?? 1)}</div>
-          <canvas id="cStrip" width="1200" height="220"></canvas>
+          <canvas id="cStrip" width="1200" height="${(innerHeight || 720) < 560 ? 130 : 220}"></canvas>
           <dl class="count-grid">
             <dt>Water</dt><dd class="${w.short > 0 ? 'neg' : ''}">${esc(w.after ?? 0)} tank${w.after === 1 ? '' : 's'}<small>(${esc(parts.join(' '))}${w.short > 0 ? ` · short ${esc(w.short)}` : ''})</small></dd>
             <dt>Wake roll</dt><dd>${esc(m.rigs ?? 0)} rigs · ${esc(m.souls ?? 0)} souls</dd>

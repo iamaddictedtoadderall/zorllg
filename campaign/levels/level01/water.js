@@ -156,7 +156,8 @@ export class Water {
     if (p.pos.y < -30) this.deepT += dt; else this.deepT = 0;
     if (this.deepT > 8 || (p.pos.y < -35 && p.en <= 0.5)) {
       this.deepT = 0;
-      ctx.mission?.fail?.('Lost under the ice.');
+      // god mode (debug, ?god=1, tests) covers this death too: the frame simply keeps swimming
+      if (!ctx.combat?.god) ctx.mission?.fail?.('Lost under the ice.');
     }
   }
   /** camera below the sea: the underwater art (L1 §12.6, §15.3) */

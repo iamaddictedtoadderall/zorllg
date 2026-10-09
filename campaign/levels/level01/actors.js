@@ -161,7 +161,7 @@ export class Kite {
   }
   command(a = {}) {
     if (a.hide) { this.setVisible(false); return; }
-    if (a.land) { this.landing = true; return; }
+    if (a.land) { if (a.follow) this.follow = a.follow; this.side = null; this.landing = true; return; }
     if (a.follow) this.follow = a.follow;
     if (a.h) this.h = a.h;
     if ('side' in a) this.side = a.side || null;

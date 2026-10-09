@@ -59,6 +59,7 @@ function colliders() {
   return out;
 }
 
+const LOW = new WeakMap();   // ctx → the Low-tier single mesh geometry (shared, never disposed)
 function build(ctx, p) {
   const M = mats(ctx);
   const make = (B, lod) => {
@@ -148,7 +149,15 @@ function build(ctx, p) {
   };
   const built = cached(ctx, 'abeyance', make, { lod: true });
   const r = instance(ctx, built);
-  const root = r.root;
+  let root = r.root;
+  // Low tier (A1.3, L1 §15.4): the whole hull, interior floors included, as ONE vertex-coloured mesh
+  if (ctx.tier?.name === 'low') {
+    let g = LOW.get(ctx);
+    if (!g) { const B = new Builder(); make(B, false); g = B.single(); LOW.set(ctx, g); }
+    root = new THREE.Group();
+    const m = new THREE.Mesh(g, M.lod); m.castShadow = true; m.receiveShadow = true; m.name = 'abeyanceLow';
+    root.add(m);
+  }
   // the stencil words and the seam strip that flickers on as Moth approaches (custom action stencilLight)
   const tex = signTex(ctx, 'CARRY THEM HOME. SET THEM DOWN.', { stencil: true, bg: '#d8d3c5', color: '#3a2e22', weathered: 0.6, w: 1024, h: 128 });
   if (tex) {
@@ -176,6 +185,7 @@ function build(ctx, p) {
   for (const [x, z] of [[-12, -14], [12, 14], [12, -14]]) g(x, CROWN + 9.6, z, '#ff9a2e', 2.4);
   for (const y of [25, 50, 75, 100]) g(3.5, y + 2.3, -HZ - 1.2, '#ff9a2e', 1.8);
   root.userData.l01 = { seam, seamOff: seamMatOff, seamOn: M.cyan };
+  if (ctx.tier?.name === 'low') return { root };
   return { root, lod: r.lod ? (() => { const grp = new THREE.Group(); grp.add(r.lod); return grp; })() : undefined };
 }
 

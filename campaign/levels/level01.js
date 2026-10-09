@@ -72,20 +72,23 @@ const ART_NIGHT = {
   bloom: { strength: 1.0, radius: 0.65, threshold: 0.8 },
   weather: { type: 'snow', intensity: 0.15, wind: [3, -1], lightning: 0, fogBoost: 1 },
 };
-const ART_UNDER = {                              // Z2: blue ice-glow, no sky
+const ART_UNDER = {                              // Z2: blue ice-glow, no sky; the roof's underside catches the glow
   fog: { color: '#0b2a3c', density: 0.006, heightFalloff: 0, heightBase: -10, inscatter: 0.2, sunColor: '#4a7f8a' },
-  light: { sun: 0.2, sunColor: '#8fd8c8', hemiSky: '#2a6f9a', hemiGround: '#020406', hemi: 0.7, rim: 0.8,
-           rimColor: '#6a7fb0', exposure: 1.3, env: 0.5 },
+  light: { sun: 0.2, sunColor: '#8fd8c8', hemiSky: '#2a6f9a', hemiGround: '#17435c', hemi: 0.75, rim: 0.8,
+           rimColor: '#6a7fb0', exposure: 1.2, env: 0.5 },
+  grade: { contrast: 1.12, saturation: 0.8, lift: [0, 0.008, 0.02], gain: [0.96, 1.0, 1.04],
+           shadowsTint: [0.9, 0.97, 1.1], highlightsTint: [1, 1, 1], vignette: 0.42, grain: 0.04 },
   bloom: { strength: 1.2, radius: 0.65, threshold: 0.8 },
   weather: { type: 'clear', intensity: 0, wind: [0, 0], lightning: 0, fogBoost: 1 },
 };
-const ART_TEETH = { fog: { ...ART_NIGHT.fog, density: 0.0014 }, light: ART_NIGHT.light, bloom: ART_NIGHT.bloom,
+// every preset after the cavern restores the light and the grade that ART_UNDER changes (blends are partial)
+const ART_TEETH = { fog: { ...ART_NIGHT.fog, density: 0.0014 }, light: ART_NIGHT.light, grade: ART_NIGHT.grade, bloom: ART_NIGHT.bloom,
                     sky: { dawnRim: RIM(1.2) }, weather: { ...ART_NIGHT.weather, intensity: 0.2, wind: [4, -1] } };
-const ART_ABEY = { fog: { ...ART_NIGHT.fog, density: 0.0013 }, light: ART_NIGHT.light, bloom: ART_NIGHT.bloom,
+const ART_ABEY = { fog: { ...ART_NIGHT.fog, density: 0.0013 }, light: ART_NIGHT.light, grade: ART_NIGHT.grade, bloom: ART_NIGHT.bloom,
                    sky: { dawnRim: RIM(1.4) }, weather: { ...ART_NIGHT.weather, intensity: 0.15 } };
 const ART_PREDAWN = { sky: { mid: '#132040', horizon: '#2a2d4a', dawnRim: RIM(2) },
   fog: { ...ART_NIGHT.fog, color: '#1d2440', density: 0.0012, inscatter: 0.5 },
-  light: { ...ART_NIGHT.light, hemi: 1.5, exposure: 1.2 }, bloom: ART_NIGHT.bloom,
+  light: { ...ART_NIGHT.light, hemi: 1.5, exposure: 1.2 }, grade: ART_NIGHT.grade, bloom: ART_NIGHT.bloom,
   weather: { ...ART_NIGHT.weather, intensity: 0.12 } };
 const ART_DAWN = {                               // the sunrise (L1 §15.2): the aurora fades out over the blend
   sky: { top: '#0e1a36', mid: '#3a3a5a', horizon: '#ff9a5c',
@@ -364,6 +367,9 @@ const HINT = {
   kit: { desktop: 'R uses a repair kit. You have 3.', touch: 'KIT uses a repair kit. You have 3.' },
   rise: { desktop: 'Hold Space to rise', touch: 'Hold JUMP to rise' },
 };
+// L1 §5: each hint fires once per save (flag `hint:<id>`); the flag lives in the checkpoint snapshot, so a restart from a
+// checkpoint taken before the hint shows it again
+const hint = (id, text = HINT[id]) => ({ if: { not: { flag: 'hint:' + id } }, then: [{ hint: text }, { flag: ['hint:' + id, true] }] });
 // earlier triggers whose conditions are true further along the route (cold starts disable them; see the header)
 const SEG_Z2 = ['t_look', 't_block1_near', 't_raid', 't_raid_go', 't_raid_hit', 't_raid_failsafe', 't_collapse'];
 const SEG_Z3 = [...SEG_Z2, 't_name', 't_signal', 't_shaft', 't_out', 't_kitflare'];
@@ -376,9 +382,9 @@ const SEG_Z6 = [...SEG_HARVEST, 't_collar', 't_finale', 't_hull_hint'];
 const triggers = [
   // Z1 · the cut (fresh starts only)
   { id: 't_look', when: { objective: 'o_look' }, do: [
-      { comms: 'c_watchNorth' }, { call: 'kite', args: { follow: 'tick', h: 85, side: 'north' } }, ...add('o_cut'), { hint: HINT.walk } ] },
+      { comms: 'c_watchNorth' }, { call: 'kite', args: { follow: 'tick', h: 85, side: 'north' } }, ...add('o_cut'), hint('walk_cutter', HINT.walk) ] },
   { id: 't_block1_near', when: { enter: { at: { s: 115, l: -55 }, r: 30 } }, after: 't_look', do: [
-      { comms: 'c_block1_near' }, { hint: HINT.saw } ] },
+      { comms: 'c_block1_near' }, hint('saw') ] },
   { id: 't_block1', when: { structure: 'block1', state: 'destroyed' }, do: [{ comms: 'c_block1' }, { call: 'sledLoad', args: { n: 1 } }] },
   { id: 't_block2', when: { structure: 'block2', state: 'destroyed' }, do: [{ comms: 'c_block2' }, { call: 'sledLoad', args: { n: 2 } }] },
   { id: 't_block3', when: { structure: 'block3', state: 'destroyed' }, do: [{ comms: 'c_block3' }, { call: 'sledLoad', args: { n: 3 } }] },
@@ -401,10 +407,13 @@ const triggers = [
   { id: 't_name', when: { all: [{ pass: 460 }, { flag: 'p:awake' }] }, do: [{ comms: 'c_name' }] },
   { id: 't_signal', when: { all: [{ pass: 560 }, { flag: 'p:awake' }] }, do: [{ comms: 'c_signal' }] },
   { id: 't_shaft', when: { all: [{ enter: { at: { s: 625 }, r: 26 } }, { flag: 'p:awake' }] }, do: [
-      { call: 'abilities', args: { preset: 'jump' } }, { comms: 'c_shaft' }, { hint: HINT.jump },
+      { call: 'abilities', args: { preset: 'jump' } }, { comms: 'c_shaft' }, hint('jump'),
       ...done('o_up'), ...add('o_climb') ] },
-  // out of the shaft: standing on the shelf (or the rim) above the trench, however the player got there
-  { id: 't_out', when: { all: [{ custom: 'onSurface', args: { y: -4, near: { s: 625 }, r: 80 } }, { flag: 'p:awake' }] }, after: 't_shaft', do: [
+  // out of the shaft (L1 §10.3: "Moth rises above y +8 at the shaft"), or standing on the shelf near it however the
+  // player got there (a fast climb can carry Moth well past the rim before it lands)
+  { id: 't_out', when: { all: [{ any: [{ custom: 'aboveY', args: { y: 8, near: { s: 625 }, r: 45 } },
+                                       { custom: 'onSurface', args: { y: -4, near: { s: 625 }, r: 260 } }] },
+                               { flag: 'p:awake' }] }, after: 't_shaft', do: [
       ...flags('outOfShaft'), ...done('o_climb'), { checkpoint: 'cp_ridges' }, { music: { theme: NIGHT } },
       { call: 'tick', args: { park: { s: 900, l: 70 }, pinned: true, show: true } }, { call: 'kite', args: { follow: 'tick', h: 80 } },
       { comms: 'c_kit_reconnect', wait: true }, ...add('o_kit') ] },
@@ -415,21 +424,21 @@ const triggers = [
   { id: 't_idle_north', when: { all: [{ enterZone: 'z_teeth' }, { custom: 'idleNorthReached' }] }, do: [{ comms: 'c_idle_north' }] },
   { id: 't_pin', when: { all: [{ pass: 820 }, { flag: 'outOfShaft' }] }, do: [
       { spawn: 'e_pin' }, { music: { theme: DREDGE } }, { waitFor: { custom: 'enemyWithin', args: { r: 300 } }, timeout: 10 },
-      { call: 'abilities', args: { preset: 'lock' } }, { comms: 'c_pin' }, { hint: HINT.lock },
+      { call: 'abilities', args: { preset: 'lock' } }, { comms: 'c_pin' }, hint('lock'),
       ...done('o_kit'), ...add('o_skiffs'), ...flags('p:pin') ] },
   { id: 't_qb', when: { any: [{ custom: 'harpoonTelegraph' }, { timer: 45, since: 't_pin' }] }, after: 't_pin', do: [
-      { call: 'abilities', args: { add: ['boost'] } }, { comms: 'c_qb' }, { hint: HINT.qb } ] },
+      { call: 'abilities', args: { add: ['boost'] } }, { comms: 'c_qb' }, hint('qb') ] },
   { id: 't_stagger_hint', when: { all: [{ custom: 'anyStaggered' }, { flag: 'p:pin' }] }, do: [
-      { hint: 'Staggered targets take extra damage, and loose parts can be torn off.' } ] },
+      hint('stagger', 'Staggered targets take extra damage, and loose parts can be torn off.') ] },
   { id: 't_tear', when: { custom: 'tearAvailable', args: { r: 40 } }, after: 't_pin', do: [
-      { comms: 'c_tear' }, { hint: HINT.tear } ] },
+      { comms: 'c_tear' }, hint('tear') ] },
   { id: 't_first_tear', when: { all: [{ custom: 'rackCount', args: { gte: 1 } }, { flag: 'outOfShaft' }] }, do: [
-      { call: 'hudPanels', args: { rack: true } }, { hint: 'HAUL 1/3. Parts go to the Bench at the end of the walk.' }, { comms: 'c_first_tear' } ] },
+      { call: 'hudPanels', args: { rack: true } }, hint('haul', 'HAUL 1/3. Parts go to the Bench at the end of the walk.'), { comms: 'c_first_tear' } ] },
   { id: 't_tear_failsafe', when: { all: [{ cleared: 'e_pin' }, { not: { custom: 'rackCount', args: { gte: 1 } } }] }, do: [
       { spawn: { kind: 'skiff', at: { s: 1120, l: 0 }, opts: { name: SKIFF, tags: ['pin3'],
         config: { variant: 'gaffer', haul: 'harpoon_gaff', startAp: 1000, staggerOnFirstHit: true, lead: 0 } } } } ] },
   { id: 't_sled1', when: { killed: { tag: 'sled1tow' } }, do: [
-      { comms: 'c_sled1' }, ...add('o_sled1'), { call: 'flagSled', args: { id: 'sled1' } }, { hint: HINT.flag } ] },
+      { comms: 'c_sled1' }, ...add('o_sled1'), { call: 'flagSled', args: { id: 'sled1' } }, hint('flag') ] },
   { id: 't_sled1_done', when: { flag: 'sled1' }, do: [{ comms: 'c_sled1_done' }, ...done('o_sled1')] },
   { id: 't_pin_wave', when: { custom: 'waveStarted', args: { encounter: 'e_pin', wave: 1 } }, do: [{ comms: 'c_pin_wave' }] },
   { id: 't_pin_clear', when: { cleared: 'e_pin' }, do: [
@@ -439,7 +448,7 @@ const triggers = [
   { id: 't_gleaners', when: { all: [{ pass: 1060 }, { flag: 'p:pinClear' }] }, do: [
       { spawn: 'e_gleaners' }, { music: { stinger: 'dread' } }, { comms: 'c_gleaners' }, ...add('o_wrecks'), ...flags('p:gleaners') ] },
   { id: 't_blade', when: { any: [{ custom: 'enemyWithin', args: { r: 30, kind: 'gleaner' } }, { timer: 8, since: 't_gleaners' }] }, after: 't_gleaners', do: [
-      { call: 'abilities', args: { add: ['blade'] } }, { comms: 'c_blade' }, { hint: HINT.blade } ] },
+      { call: 'abilities', args: { add: ['blade'] } }, { comms: 'c_blade' }, hint('blade') ] },
   { id: 't_blade_kill', when: { custom: 'bladeKill' }, after: 't_blade', do: [{ comms: 'c_blade_kill' }] },
   { id: 't_carrier', when: { custom: 'waveStarted', args: { encounter: 'e_gleaners', wave: 1 } }, do: [{ music: { theme: DREDGE } }, { comms: 'c_carrier' }] },
   { id: 't_burn', when: { cleared: 'e_gleaners' }, do: [
@@ -451,12 +460,12 @@ const triggers = [
   { id: 't_apron', when: { all: [{ pass: 1370 }, { flag: 'p:burn' }] }, do: [
       { checkpoint: 'cp_abeyance' }, ...flags('p:apron'), { call: 'tick', args: { park: { s: 1360, l: 50 } } },
       { spawn: 'e_apron' }, { music: { stinger: 'dread' } }, { comms: 'c_ghost', wait: true },
-      { music: { theme: DREDGE } }, { call: 'abilities', args: { add: ['missile'] } }, { comms: 'c_missiles' }, { hint: HINT.msl },
+      { music: { theme: DREDGE } }, { call: 'abilities', args: { add: ['missile'] } }, { comms: 'c_missiles' }, hint('msl'),
       ...done('o_abeyance'), ...add('o_sexton') ] },
   { id: 't_enemy_flares', when: { custom: 'carrierFlared' }, do: [{ comms: 'c_enemy_flares' }] },
   { id: 't_surge', when: { health: { tag: 'sexton', below: 0.5 } }, do: [{ comms: 'c_surge' }] },
   { id: 't_repair', when: { all: [{ flag: 'p:apron' }, { any: [{ health: { below: 0.55 } }, { killed: { tag: 'sexton' } }] }] }, do: [
-      { call: 'abilities', args: { add: ['kit'] } }, { comms: 'c_repair' }, { hint: HINT.kit } ] },
+      { call: 'abilities', args: { add: ['kit'] } }, { comms: 'c_repair' }, hint('kit') ] },
   { id: 't_sexton_dead', when: { killed: { tag: 'sexton' } }, do: [
       ...flags('p:sexton'), { music: { theme: NIGHT } }, { wait: 3 }, { comms: 'c_drums', wait: true },
       ...add('o_climb2'), { comms: 'c_climb' },
@@ -485,19 +494,19 @@ const triggers = [
       { checkpoint: 'cp_cutline' }, ...flags('p:field'), { spawn: 'e_field' }, { spawn: 'e_icebreaker' },
       { music: { theme: DREDGE, intensity: 1 } }, { comms: 'c_pa1' } ] },
   { id: 't_heads_hint', when: { timer: 15, since: 't_field' }, do: [{ comms: 'c_heads_hint' }] },
-  { id: 't_hull_hint', when: { custom: 'hullHit' }, do: [{ hint: 'ARMOURED. Hit the drill heads.' }] },
+  { id: 't_hull_hint', when: { custom: 'hullHit' }, do: [hint('hull', 'ARMOURED. Hit the drill heads.')] },
   { id: 't_spotlight', when: { custom: 'inFloodlight' }, do: [{ comms: 'c_spotlight' }] },
   { id: 't_head1', when: { killed: { tag: 'drillhead', count: 1 } }, do: [{ comms: 'c_head1' }] },
   { id: 't_crack', when: { custom: 'sawSweep' }, do: [{ comms: 'c_crack' }] },
   { id: 't_pa2', when: { timer: 20, since: 't_head1' }, do: [{ comms: 'c_pa2' }] },
   { id: 't_head2', when: { killed: { tag: 'drillhead', count: 2 } }, do: [{ comms: 'c_head2' }] },
   { id: 't_harvest', when: { flag: 'ib:phase', eq: 3 }, do: [{ checkpoint: 'cp_harvest' }, { comms: 'c_auger' }] },
-  { id: 't_collar', when: { custom: 'collarHitFromAbove' }, do: [{ hint: 'Get below the collar. Fire from the Raft.' }] },
+  { id: 't_collar', when: { custom: 'collarHitFromAbove' }, do: [hint('collar', 'Get below the collar. Fire from the Raft.')] },
   { id: 't_finale', when: { killed: { tag: 'drillhead', count: 3 } }, do: [{ event: 'finale' }] },
 
   // Z6 · the floes (the sprint's flags gate them, so cold starts at cp_floes work)
   { id: 't_rot', when: { all: [{ flag: 'p:sprint' }, { any: [{ custom: 'touchedGold' }, { custom: 'sprintTime', args: { gte: 12 } }] }] }, do: [
-      { comms: 'c_rot' }, { hint: 'Gold ice breaks soon after you land on it. Blue ice holds.' } ] },
+      { comms: 'c_rot' }, hint('rot', 'Gold ice breaks soon after you land on it. Blue ice holds.') ] },
   { id: 't_sink', when: { all: [{ flag: 'p:sprint' }, { custom: 'sprintTime', args: { gte: 8 } }] }, do: [
       { call: 'icebreakerSink' }, { wait: 2 }, { comms: 'c_sink' } ] },
   { id: 't_leads', when: { custom: 'skiffRun' }, after: 't_sink', do: [{ comms: 'c_leads' }] },
@@ -598,10 +607,9 @@ const def = {
     palette: PALETTE,
     toneMapping: 'aces',
     surface: { snow: 0.6, snowSlope: [0.35, 0.6], gloss: 0.35, rockSlope: [0.35, 0.6], strataHeight: 3, sparkle: 0.4 },
-    skyline: [
-      // the Icebreaker's steam column (P1's plume is 1.6 km at size 1: 0.2 gives L1 §2.5's ~300 m), lit from below by sodium
-      { kind: 'smoke', at: [600, -200], size: 0.2, color: '#a89484' },
-    ],
+    // the Icebreaker's lit steam column is level-owned (levels/level01/skyline.js SteamPlume): it rides the machine and
+    // dies with it; the dawn rim and the aurora are in the sky shader (A5.4); the Wake's lights are WakeLights
+    skyline: [],
     ambience: [],
     scatter: [
       { prop: 'slab', density: 1.4, scale: [2, 6], slope: [0, 0.6], align: 0.4, collide: true, collideMinScale: 4, castShadow: true },
@@ -683,7 +691,7 @@ const def = {
       { call: 'abilities', args: { preset: 'walk' } }, { call: 'idleFacing', args: { yaw: 0 } },
       { call: 'hudPanels', args: { all: true, en: false, radar: false, weapons: false, rack: false } },
       { music: { theme: NIGHT } }, { comms: 'c_walk' },
-      ...add('o_up'), { hint: HINT.walk },
+      ...add('o_up'), hint('walk'),
     ],
 
     finale: [
@@ -693,7 +701,7 @@ const def = {
       { call: 'drown', args: { comms: { sunrise: 'c_sunrise', changing: 'c_ice_changing', fall: 'c_fall', drown: 'c_drown' },
                                art: { dawn: ART_DAWN, water: ART_WATER }, music: { drone: DRONE, rise: RISE } } },
       { flag: ['vitals', 'locked'], persist: true },                 // A2 #19
-      ...add('o_surface'), { hint: HINT.rise },
+      ...add('o_surface'), hint('rise'),
       { waitFor: { flag: 'surfaced' } },                              // set by the water system's breach (L1 §12.6)
       ...done('o_surface'),
       { checkpoint: 'cp_floes' },
@@ -709,6 +717,7 @@ const def = {
     shore: [
       ...done('o_shore'), ...flags('p:shore'),
       { call: 'kitFlare', args: { road: [{ s: 3135, l: 30 }, { s: 3150, l: -10 }, { s: 3165, l: 25 }, { s: 3180, l: -40 }, { s: 3195, l: 10 }] } },
+      { call: 'tick', args: { park: { s: 3170, l: 40 }, show: true } }, { call: 'kite', args: { land: true, follow: 'tick' } },   // L1 Z7: Tick parked, kite folded
       { comms: 'c_backoff' }, { call: 'gleanerHunt', args: { on: false, scatter: true } }, { call: 'skiffsLeave' },
       { call: 'sunClock', args: { start: false } }, { call: 'floes', args: { freeze: true } },
       { player: { freeze: true } }, { letterbox: true },
@@ -885,7 +894,7 @@ const def = {
     { call: 'tick', args: { park: DATA.tick.park0, show: true } }, { call: 'kite', args: { follow: 'tick', h: 85, show: true } },
     { cinematic: 'vista' },
     { wait: 1.5 }, { comms: 'c_morning' },
-    ...add('o_look'), { hint: { desktop: 'Mouse to look', touch: 'Drag the right side to look' } },
+    ...add('o_look'), hint('look', { desktop: 'Mouse to look', touch: 'Drag the right side to look' }),
     { waitFor: { any: [{ custom: 'lookingAt', args: { target: 'kite', deg: 8, hold: 0.5 } }, { objective: 'o_look' }] } },
     ...done('o_look'),
   ],
@@ -895,7 +904,7 @@ const def = {
       { call: 'restoreCommon', args: { cp: 'cp_cavern' } }, ...flags('p:fell', 'p:awake'), ...disable(...SEG_Z2),
       { art: ART_UNDER, blend: 0 },
       { call: 'abilities', args: { preset: 'walk' } }, { call: 'idleFacing', args: { yaw: 0 } },
-      { music: { theme: NIGHT } }, ...add('o_up'), { hint: HINT.walk } ],
+      { music: { theme: NIGHT } }, ...add('o_up'), hint('walk') ],
     cp_ridges: [
       { call: 'restoreCommon', args: { cp: 'cp_ridges' } }, ...flags('p:fell', 'p:awake', 'outOfShaft'), ...disable(...SEG_Z3),
       { art: ART_TEETH, blend: 0 }, { call: 'abilities', args: { preset: 'jump' } },

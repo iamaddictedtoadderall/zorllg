@@ -212,6 +212,7 @@ export class Drown {
     ctx.hud?.fade?.(0, 1.5, { clock: 'sim' });
     ctx.hud?.glitch?.(1.2);
     ctx.hud?.vitals?.({ mode: 'locked', bpm: 60 });
+    ctx.mission?.setFlag?.('vitals', 'locked', true);       // A2 #19: the persistent lock, at the reboot itself
     this.L.water?.setUnderFog?.(this.a.art?.water?.fog?.density ?? 0.035, 1.5);
     this.L.music(this.a.music?.rise);
     ctx.audio?.duck?.(0.4, 1.5);

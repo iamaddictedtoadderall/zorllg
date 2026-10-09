@@ -303,13 +303,24 @@ type('ice_wall', {
   colliders: (p) => segBoxes(0, -p.length / 2, 0, p.length / 2, 6, p.h, -12, 11, { surface: 'ice' }),
   build(ctx, p) {
     const M = mats(ctx);
-    return part(ctx, `ice_wall:${p.length}:${p.h}:${p.seed}`, (B) => {
+    return part(ctx, `ice_wall2:${p.length}:${p.h}:${p.seed}`, (B) => {
       const rng = rngFor('wall' + p.seed);
       let z = -p.length / 2;
       while (z < p.length / 2) {
         const w = q5(5 + rng() * 4), h = q5(p.h * (0.75 + rng() * 0.3)), t = q5(2.5 + rng() * 2);
-        B.add(slab(t, h, w, 0.35), rng() < 0.5 ? M.iceDeep : M.ice, (rng() - 0.5) * 1.5, h / 2 - 1, z + w / 2, (rng() - 0.5) * 0.08, (rng() - 0.5) * 0.15, (rng() - 0.5) * 0.12);
-        if (rng() < 0.6) B.add(slab(0.15, h * 0.6, 0.6, 0.04), M.iceClear, (rng() < 0.5 ? -1 : 1) * (t / 2 + 0.05), h * 0.45, z + w / 2, 0, 0, 0);   // frozen bubble curtain
+        const zc = z + w / 2, xo = (rng() - 0.5) * 1.5;
+        const mat = rng() < 0.18 ? M.iceGlow : rng() < 0.5 ? M.iceDeep : M.ice;
+        B.add(slab(t, h, w, 0.35), mat, xo, h / 2 - 1, zc, (rng() - 0.5) * 0.08, (rng() - 0.5) * 0.15, (rng() - 0.5) * 0.12);
+        // strata: thin clearer and darker bands pressed into both faces (annual layers in the shelf)
+        for (let k = 0; k < 3; k++) {
+          const y = 2 + rng() * (h - 4), side = rng() < 0.5 ? -1 : 1;
+          B.add(slab(0.25, q5(0.4 + rng() * 0.8), q5(w * (0.6 + rng() * 0.35)), 0.08), rng() < 0.5 ? M.iceClear : M.iceDeep, xo + side * (t / 2 + 0.05), y, zc, 0, 0, (rng() - 0.5) * 0.1);
+        }
+        if (rng() < 0.6) B.add(slab(0.15, h * 0.6, 0.6, 0.04), M.iceClear, (rng() < 0.5 ? -1 : 1) * (t / 2 + 0.05), h * 0.45, zc, 0, 0, 0);   // frozen bubble curtain
+        // frost on the top ledge, rubble and a fallen slab at the foot
+        B.add(slab(t + 0.4, 0.4, w * 0.9, 0.12), M.frost, xo, h - 0.9, zc, 0, 0, (rng() - 0.5) * 0.1);
+        for (let k = 0; k < 2; k++) { const r = 0.6 + rng() * 1.4; B.add(rock(70 + Math.floor(rng() * 6), { cuts: 8, noise: 0.05 }), rng() < 0.5 ? M.ice : M.frost, (rng() < 0.5 ? -1 : 1) * (t / 2 + 0.6 + rng()), r * 0.35 - 1, zc + (rng() - 0.5) * w, 0, rng() * PI, 0, r, r * 0.7, r); }
+        if (rng() < 0.3) B.add(slab(q5(2 + rng() * 2), 0.8, q5(3 + rng() * 3), 0.2), M.iceDeep, (rng() < 0.5 ? -1 : 1) * (t / 2 + 1.8), -0.6, zc, 0.12, rng(), 0.25);
         z += w * 0.85;
       }
     });
@@ -322,18 +333,32 @@ type('ice_vault', {
   colliders: (p) => [{ type: 'box', minx: -p.span / 2, maxx: p.span / 2, minz: -p.depth / 2, maxz: p.depth / 2, top: 3.4, bottom: 0, surface: 'ice' }],
   build(ctx, p) {
     const M = mats(ctx);
-    return part(ctx, `ice_vault:${p.span}:${p.depth}:${p.seed}`, (B) => {
+    return part(ctx, `ice_vault3:${p.span}:${p.depth}:${p.seed}`, (B) => {
       const rng = rngFor('vault' + p.seed), S = p.span, D = p.depth;
-      B.add(slab(S * 0.5, 3.4, D, 0.5), M.iceDeep, 0, 1.7, 0);
-      for (const s of [-1, 1]) B.add(slab(S * 0.32, 3.6, D, 0.5), M.ice, s * S * 0.36, 0.6, 0, 0, 0, s * 0.16);
+      // the roof is shelf ice lit through from above: a glowing core slab, darker haunches, snow on top
+      B.add(slab(S * 0.5, 3.4, D, 0.5), M.iceGlow, 0, 1.7, 0);
+      for (const s of [-1, 1]) B.add(slab(S * 0.32, 3.6, D, 0.5), M.iceDeep, s * S * 0.36, 0.6, 0, 0, 0, s * 0.16);
       B.add(slab(S * 0.98, 0.7, D * 0.98, 0.3), M.snow, 0, 3.2, 0, 0, 0, 0);
-      // ice windows: faint blue emissive patches where the roof is thin
-      for (let i = 0; i < 2; i++) B.add(slab(4 + rng() * 6, 0.3, 3 + rng() * 5, 0.1), M.iceClear, (rng() - 0.5) * S * 0.4, -0.1, (rng() - 0.5) * D * 0.6);
+      // pressure cracks under the roof: thin zig-zag seams across the glow (short jittered segments, so from below
+      // they read as cracks, not as beams)
+      for (let i = 0; i < 3; i++) {
+        let x = (rng() - 0.5) * S * 0.3, z = (rng() - 0.5) * D * 0.7, a = rng() * PI;
+        for (let k = 0; k < 5; k++) {
+          const len = q5(2.5 + rng() * 3.5);
+          a += (rng() - 0.5) * 0.9;
+          const dx = Math.cos(a) * len, dz = -Math.sin(a) * len;
+          if (Math.abs(x + dx) > S * 0.24 || Math.abs(z + dz) > D * 0.45) break;
+          B.add(slab(len, 0.08, 0.16, 0.02), M.iceDeep, x + dx / 2, -0.02, z + dz / 2, 0, a, 0);
+          x += dx; z += dz;
+        }
+      }
+      // ice windows: brighter patches where the roof is thin
+      for (let i = 0; i < 3; i++) B.add(slab(q5(4 + rng() * 6), 0.3, q5(3 + rng() * 5), 0.1), M.iceClear, (rng() - 0.5) * S * 0.4, -0.12, (rng() - 0.5) * D * 0.6);
       // icicle clusters under the roof
-      for (let i = 0; i < 26; i++) {
+      for (let i = 0; i < 30; i++) {
         const h = 1.5 + rng() * 3.5, x = (rng() - 0.5) * S * 0.8, z = (rng() - 0.5) * D * 0.9;
         const y0 = Math.abs(x) > S * 0.25 ? 0.6 - (Math.abs(x) - S * 0.25) * 0.16 : 0;
-        B.add(cyl(0.28, 0.02, q5(h), 5), M.ice, x, y0 - h / 2, z);
+        B.add(cyl(0.28, 0.02, q5(h), 5), rng() < 0.3 ? M.iceClear : M.ice, x, y0 - h / 2, z);
       }
     });
   },
@@ -472,9 +497,16 @@ type('shaft_ring', {
     });
     // a cone of cold starlight falling into the dark (additive, no shadows)
     // (it ends just above the rim: from the surface the moulin reads as a hole, not a pillar of light)
-    const cone = new THREE.Mesh(coneGeo(p.r * 0.75, p.r * 1.05, p.h + 4), coneMat(ctx, '#7fb6ff', 0.10));
+    const cone = new THREE.Mesh(coneGeo(p.r * 0.75, p.r * 1.05, p.h + 4), coneMat(ctx, '#7fb6ff', 0.13));
     cone.position.y = (p.h + 4) / 2 - 1; cone.castShadow = cone.receiveShadow = false; cone.renderOrder = 2; cone.name = 'lightCone';
     ring.root.add(cone);
+    // a brighter core and a pool of light on the floor, so the way out reads from the trench
+    const core = new THREE.Mesh(coneGeo(p.r * 0.38, p.r * 0.62, p.h + 4), coneMat(ctx, '#a6cfff', 0.09));
+    core.position.y = cone.position.y; core.castShadow = core.receiveShadow = false; core.renderOrder = 2;
+    ring.root.add(core);
+    const pool = new THREE.Mesh(poolGeo(p.r * 0.95), coneMat(ctx, '#a8d2ff', 0.2));
+    pool.rotation.x = -PI / 2; pool.position.y = 0.12; pool.castShadow = pool.receiveShadow = false; pool.renderOrder = 2;
+    ring.root.add(pool);
     return ring;
   },
 });
@@ -485,6 +517,8 @@ export function coneGeo(rt, rb, h) {
   if (!g) { g = shared(new THREE.CylinderGeometry(rt, rb, h, 24, 1, true)); CONE.set(k, g); }
   return g;
 }
+let POOL = null;
+function poolGeo(r) { return POOL?.r === r ? POOL.g : (POOL = { r, g: shared(new THREE.CircleGeometry(r, 28)) }).g; }
 const CONE_MATS = new WeakMap();
 /** additive, fog-free light volume material: P1's library glow (shared per colour and opacity; no extra program) */
 export function coneMat(ctx, color, opacity) {

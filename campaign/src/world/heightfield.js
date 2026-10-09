@@ -42,6 +42,9 @@ const MAX_ERODE = 0.6;           // m removed per droplet step at most
 const MASK_MAX = 1.25;           // detail mask ceiling (slopes)
 const MASK_Q = 200;              // detail mask quantisation (Uint8 = mask × 200)
 const PEAKS = 0.5;               // default ridged peaks behind the rim (× walls.height)
+let EROSION_STRENGTH = 1;        // default for TerrainDef.erosion.strength
+/** extra (tools): override the default erosion strength */
+export function setErosionStrength(v) { EROSION_STRENGTH = v; }
 let CACHE = null;                // { key, data }
 
 const _w = { x: 0, y: 0 };
@@ -131,7 +134,9 @@ export class Heightfield {
                peaks: D.walls?.peaks ?? PEAKS },
       carve: { depth: D.carve?.depth ?? 4, bedWidth: D.carve?.bedWidth ?? 60, shoulder: D.carve?.shoulder ?? 80,
                smooth: D.carve?.smooth ?? 160, maxGrade: D.carve?.maxGrade ?? 0.08, strength: D.carve?.strength ?? 1 },
-      erosion: { droplets: D.erosion?.droplets ?? 120000, thermal: D.erosion?.thermal ?? 2 },
+      // extra optional field: erosion.strength scales how hard each droplet cuts (1 = default)
+      erosion: { droplets: D.erosion?.droplets ?? 120000, thermal: D.erosion?.thermal ?? 2,
+                 strength: Math.max(0.1, Number(D.erosion?.strength ?? EROSION_STRENGTH) || 1) },
     };
     const lowScale = this.tier.name === 'low' ? 1.25 : 1;
     this.cell = (D.macroCell ?? 8) * lowScale;
@@ -259,8 +264,9 @@ export class Heightfield {
     if (B.ridged > 0) h = lerp(h, (ridged2(this.nRidge, u * 0.85, v * 0.85, B.octaves) - 0.38) * 2.1, B.ridged);
     h *= B.amp;
     if (B.terrace && B.terrace.step > 0) {
-      const st = B.terrace.step, k = h / st, f = k - Math.floor(k);
-      const tq = (Math.floor(k) + smooth(0.35, 0.65, f)) * st;
+      // the benches wander (± 0.3 step over ≈ 400 m) so the risers don't run ruler-level round every hill
+      const st = B.terrace.step, k = h / st + 0.3 * this.nWarp(x / 410 + 13.1, z / 410 - 7.7), f = k - Math.floor(k);
+      const tq = h + (Math.floor(k) + smooth(0.35, 0.65, f) - k) * st;
       h = lerp(h, tq, clamp(B.terrace.strength ?? 0.5, 0, 1));
     }
     if (this.features.length) h += this._featureAt(x, z);
@@ -286,7 +292,7 @@ export class Heightfield {
   // ------------------------------------------------------------------ build
   _cacheKey() {
     const r = this.route;
-    return JSON.stringify({ v: 6, d: this.def, p: r.points, hw: [r.halfWidthAt(0), r.maxHalfWidth, r.length,
+    return JSON.stringify({ v: 7, d: this.def, p: r.points, hw: [r.halfWidthAt(0), r.maxHalfWidth, r.length,
       ...Array.from(r.controlS || []).map((s) => r.halfWidthAt(s))], st: this.stamps, seed: this.seed, cell: this.cell,
       er: this.tier.erosionScale ?? 1, sun: [this.sunDir.x, this.sunDir.y, this.sunDir.z].map(v => Math.round(v * 1000)) });
   }
@@ -534,9 +540,22 @@ export class Heightfield {
 
     // ---- E. erosion
     const flowAcc = new Float32Array(N);
+    const H0 = H.slice();
     await this._erode(H, region, flowAcc, (p) => tick(0.3 + 0.35 * p, 'Erosion'));
-    stage('erosion');
     const delta = new Float32Array(N);
+    // soften the carved change: droplets running straight down steep faces cut parallel one-cell rills that the
+    // bicubic surface turns into a comb; a [1 2 1]² blur of the erosion delta (mixed 70 %) keeps the gullies and fans
+    // and removes the comb
+    {
+      const D = delta, T = flowAcc.slice();          // T: scratch (flowAcc is still needed below)
+      for (let k = 0; k < N; k++) D[k] = H[k] - H0[k];
+      for (let j = 0; j < nz; j++) { const r = j * nx; for (let i = 1; i < nx - 1; i++) T[r + i] = (D[r + i - 1] + 2 * D[r + i] + D[r + i + 1]) * 0.25; T[r] = D[r]; T[r + nx - 1] = D[r + nx - 1]; }
+      for (let j = 1; j < nz - 1; j++) for (let i = 0; i < nx; i++) {
+        const k = j * nx + i, b = (T[k - nx] + 2 * T[k] + T[k + nx]) * 0.25;
+        H[k] = H0[k] + D[k] * 0.3 + b * 0.7;
+      }
+    }
+    stage('erosion');
     for (let p = 0; p < P.erosion.thermal; p++) { this._thermal(H, region, delta); await tick(0.66 + 0.02 * p, 'Erosion'); }
     // curvature limiter: relax only extreme second differences (single-cell spikes and pits left where erosion cuts
     // terraced walls), keeping cliffs and the overall shape. Keeps the 2 m collision triangles close to the bicubic.
@@ -569,9 +588,18 @@ export class Heightfield {
       const NBIN = 1024, hist = new Uint32Array(NBIN);
       let cnt = 0;
       if (mx > 0) for (let k = 0; k < N; k += 5) if (LF[k] > 0) { hist[Math.min(NBIN - 1, Math.floor(LF[k] / mx * NBIN))]++; cnt++; }
-      let lm = mx || 1;
-      if (cnt) { let acc = 0; const want = cnt * 0.98; for (let b = 0; b < NBIN; b++) { acc += hist[b]; if (acc >= want) { lm = (b + 1) / NBIN * mx; break; } } }
-      const inv = 1 / Math.max(1e-6, lm);
+      // channels, not every cell a droplet crossed: the scale runs from the 60th percentile (0) to the 98th (1)
+      let lm = mx || 1, l0 = 0;
+      if (cnt) {
+        let acc = 0, got0 = false; const want0 = cnt * 0.6, want = cnt * 0.98;
+        for (let b = 0; b < NBIN; b++) {
+          acc += hist[b];
+          if (!got0 && acc >= want0) { l0 = b / NBIN * mx; got0 = true; }
+          if (acc >= want) { lm = (b + 1) / NBIN * mx; break; }
+        }
+      }
+      if (l0 > 0) for (let k = 0; k < N; k++) LF[k] = LF[k] > l0 ? LF[k] - l0 : 0;
+      const inv = 1 / Math.max(1e-6, lm - l0);
       // horizontal pass into flowAcc (scratch), vertical pass into flow
       const T = flowAcc;
       for (let j = 0; j < nz; j++) {
@@ -605,7 +633,8 @@ export class Heightfield {
         slope[k] = Math.round(sl * 255);
         const bw = bedMask[k] / 255;
         // detail: fades out on the route bed (a worn road) and on stamps, boosted on slopes
-        const m = (1 - bw * 0.97) * (1 - stampMask[k] / 255) * (0.8 + 0.45 * smooth(0.04, 0.35, sl));
+        // flats (and sediment-filled channels) are smoother than slopes, where the detail is strongest
+        const m = (1 - bw * 0.97) * (1 - stampMask[k] / 255) * (0.45 + 0.8 * smooth(0.03, 0.3, sl)) * (1 - 0.35 * flow[k] / 255);
         mask[k] = Math.round(m * MASK_Q);
       }
     }
@@ -666,7 +695,7 @@ export class Heightfield {
     const rng = mulberry32(this.seed ^ 0xe7051 ^ hashString('erosion'));
     // heights are eroded in normalised units (HS metres per unit): Lague's constants expect gentle unit slopes.
     // The grid is scaled in place (no copy) and scaled back afterwards.
-    const HS = cell * 10, iHS = 1 / HS;
+    const HS = cell * 10 / this.P.erosion.strength, iHS = 1 / HS;
     const inertia = 0.05, capF = 4, minCap = 0.01, erodeS = 0.3, depositS = 0.3, evap = 0.01, grav = 4, maxSteps = 48;
     const maxEr = MAX_ERODE * iHS;
     const N = nx * nz;
@@ -703,6 +732,9 @@ export class Heightfield {
   _thermal(H, region, delta) {
     const { nx, nz, cell } = this;
     const talus = Math.tan(35 * Math.PI / 180) * cell, talusD = talus * Math.SQRT2;
+    // TK: a cell trades with up to 8 neighbours, so 1/8 of each excess can never overshoot (0.25 did, which turned
+    // stepped walls into a one-cell comb)
+    const TK = 0.125;
     delta.fill(0);
     for (let j = 1; j < nz - 1; j++) {
       const r = j * nx;
@@ -711,13 +743,13 @@ export class Heightfield {
         if (!region[k]) continue;
         const hk = H[k];
         let q = k + 1, d = hk - H[q];
-        if (d > talus) { const m = (d - talus) * 0.25; delta[k] -= m; delta[q] += m; } else if (-d > talus) { const m = (-d - talus) * 0.25; delta[k] += m; delta[q] -= m; }
+        if (d > talus) { const m = (d - talus) * TK; delta[k] -= m; delta[q] += m; } else if (-d > talus) { const m = (-d - talus) * TK; delta[k] += m; delta[q] -= m; }
         q = k + nx; d = hk - H[q];
-        if (d > talus) { const m = (d - talus) * 0.25; delta[k] -= m; delta[q] += m; } else if (-d > talus) { const m = (-d - talus) * 0.25; delta[k] += m; delta[q] -= m; }
+        if (d > talus) { const m = (d - talus) * TK; delta[k] -= m; delta[q] += m; } else if (-d > talus) { const m = (-d - talus) * TK; delta[k] += m; delta[q] -= m; }
         q = k + nx + 1; d = hk - H[q];
-        if (d > talusD) { const m = (d - talusD) * 0.25; delta[k] -= m; delta[q] += m; } else if (-d > talusD) { const m = (-d - talusD) * 0.25; delta[k] += m; delta[q] -= m; }
+        if (d > talusD) { const m = (d - talusD) * TK; delta[k] -= m; delta[q] += m; } else if (-d > talusD) { const m = (-d - talusD) * TK; delta[k] += m; delta[q] -= m; }
         q = k + nx - 1; d = hk - H[q];
-        if (d > talusD) { const m = (d - talusD) * 0.25; delta[k] -= m; delta[q] += m; } else if (-d > talusD) { const m = (-d - talusD) * 0.25; delta[k] += m; delta[q] -= m; }
+        if (d > talusD) { const m = (d - talusD) * TK; delta[k] -= m; delta[q] += m; } else if (-d > talusD) { const m = (-d - talusD) * TK; delta[k] += m; delta[q] -= m; }
       }
     }
     for (let k = 0; k < delta.length; k++) H[k] += delta[k];

@@ -94,17 +94,18 @@ export function install(ctx) {
   const camera = new THREE.PerspectiveCamera(36, 16 / 9, 0.5, 400);
   // fixed light set; each dressing re-tunes intensities (never adds or removes lights)
   const hemi = new THREE.HemisphereLight(0xd8cfc0, 0x1a1612, 1.1);
-  const key = new THREE.DirectionalLight(0xffd2a0, 5.5);
-  key.position.set(14, 26, 12); key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  Object.assign(key.shadow.camera, { left: -18, right: 18, top: 22, bottom: -6, near: 1, far: 90 });
-  key.shadow.bias = -0.0005; key.shadow.normalBias = 0.05;
+  // One shadowed light in both dressings: the spot is the hangar's overhead key and the Bench's work lamp. (Two shadowed
+  // lights doubled the shadow taps of every fragment and added a 2048² map; under software GL that made the title frame
+  // the slowest thing smoke screenshots.) The directional key is an unshadowed fill.
+  const key = new THREE.DirectionalLight(0xffd2a0, 1.2);
+  key.position.set(14, 26, 12); key.castShadow = false;
   const rim = new THREE.DirectionalLight(0x7fa8d0, 3.2);
   rim.position.set(-16, 12, -14);
   const lamp = new THREE.SpotLight(0xffb36b, 0, 70, 0.62, 0.65, 2);
   lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.bias = -0.0004; lamp.shadow.normalBias = 0.04;
-  lamp.shadow.camera.near = 1; lamp.shadow.camera.far = 40;
-  scene.add(hemi, key, key.target, rim, lamp, lamp.target);
+  lamp.shadow.camera.near = 2; lamp.shadow.camera.far = 70;
+  const weld = new THREE.PointLight(0xcfe6ff, 0, 9, 2);   // the Bench's welding arc (fixed light set: 0 outside the Bench)
+  scene.add(hemi, key, key.target, rim, lamp, lamp.target, weld);
   let roomEnv = null;
   try {
     const pmrem = new THREE.PMREMGenerator(ctx.renderer);
@@ -125,9 +126,11 @@ export function install(ctx) {
     if (d === 'hangar') {
       scene.background = new THREE.Color(0x14131a); scene.fog.color.set(0x14131a); scene.fog.near = 50; scene.fog.far = 170;
       hemi.color.set(0xd8cfc0); hemi.groundColor.set(0x1a1612); hemi.intensity = 1.1;
-      key.intensity = 5.5; key.color.set(0xffd2a0); key.position.set(14, 26, 12);
+      key.intensity = 1.2; key.color.set(0xffd2a0); key.position.set(14, 26, 12);
       rim.intensity = 3.2; rim.color.set(0x7fa8d0); rim.position.set(-16, 12, -14);
-      lamp.intensity = 0;
+      // the overhead key: a warm-white spot over the turntable (≈ 5.5 lux at the mech, the old directional key's level)
+      lamp.color.set(0xffd8b0); lamp.intensity = 3900; lamp.angle = 0.56; lamp.penumbra = 0.45; lamp.distance = 70;
+      lamp.position.set(10, 26, 9); lamp.target.position.set(0, 3, 0); weld.intensity = 0;
       scene.environment = roomEnv; scene.environmentIntensity = 0.6;
     } else {
       // AD §5.7 The Bench: tungsten work lamp key, warm dim fill, the level's sky as the rim through the open rear
@@ -138,11 +141,14 @@ export function install(ctx) {
       hemi.color.set(0x3a2e24); hemi.groundColor.set(0x0e0a08); hemi.intensity = 0.6;
       key.intensity = 0.35; key.color.set(0xffc890); key.position.set(-10, 20, -14);
       rim.intensity = 1.5; rim.color.copy(horizon); rim.position.set(2, 9, 30);
-      lamp.intensity = BENCH_LAMP_CD; lamp.position.copy(benchSet.lampPos); lamp.target.position.set(0, 3.2, -0.4);
+      lamp.color.set(0xffb36b); lamp.intensity = BENCH_LAMP_CD; lamp.angle = 0.62; lamp.penumbra = 0.65; lamp.distance = 40;
+      lamp.position.copy(benchSet.lampPos); lamp.target.position.set(0, 3.2, -0.4);
+      weld.position.copy(benchSet.weldPos).add(new THREE.Vector3(0.4, 0.3, -0.4));
       scene.environment = ctx.scene.environment || roomEnv; scene.environmentIntensity = ctx.scene.environment ? 0.55 : 0.35;
       benchSet.sky.material.color.copy(horizon);
     }
   }
+  setDressing('hangar');
 
   // ---------------------------------------------------------------- the mech on display
   let rig = null, rigKey = '', t = 0, showcasing = false, resolveOpen = null, context = null;
@@ -650,7 +656,7 @@ export function install(ctx) {
       t += dt;
       placeCamera(dt);
       if (rig) animateMech(rig, idleState(), dt);
-      if (dressing === 'bench') benchSet.flicker(t);
+      if (dressing === 'bench') weld.intensity = benchSet.flicker(t, dt);
       if (bench) commsUpdate(dt);
     },
   };
@@ -661,6 +667,18 @@ export function install(ctx) {
   }
   ctx.addSystem({ name: 'garage', phase: 'ui', when: 'always', update: (dt) => api.update(dt) });
   ctx.garage = api;
+  // Start compiling the hangar/Bench programs now, behind the boot: the title's first frame otherwise compiles every
+  // garage program at once (≈ 40 s under software GL on a loaded machine, which is what timed out the title shot).
+  // Asynchronous (the GPU process links in the background); a failure here only costs the head start.
+  // With post-processing the scene renders into the composer's target (no tone mapping, linear output), which is a
+  // different program than a direct render, so compile against a stand-in target in that case.
+  try {
+    const R = ctx.renderer, post = !!ctx.tier?.post && !ctx.params?.has?.('nopost');
+    const rt = post ? new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType }) : null, prev = R.getRenderTarget();
+    if (rt) R.setRenderTarget(rt);
+    R.compileAsync?.(scene, camera)?.catch?.(() => {});
+    if (rt) { R.setRenderTarget(prev); rt.dispose(); }
+  } catch (e) { /* the first render compiles instead */ }
   return api;
 }
 
@@ -845,9 +863,106 @@ function buildBench(ctx, M) {
   skyGeo.setAttribute('color', new THREE.BufferAttribute(sc, 3));
   const sky = new THREE.Mesh(skyGeo, skyMat);
   sky.position.set(0, 20, 60); sky.rotation.y = Math.PI; root.add(sky);
+  const fx = benchEffects(root, lampPos, [0.15, -1, -0.05]);
   return {
-    root, lampPos, cradleTop, sky,
-    flicker(t) { const f = 1 + 0.04 * Math.sin(t * 13.1) * Math.sin(t * 3.7); lampSprite.scale.setScalar(4.5 * f); },
+    root, lampPos, cradleTop, sky, weldPos: fx.weldPos,
+    /** per frame (real time): lamp hum, dust motes in the cone, the welding arc and its sparks; returns the arc light (cd) */
+    flicker(t, dt = 1 / 60) { const f = 1 + 0.04 * Math.sin(t * 13.1) * Math.sin(t * 3.7); lampSprite.scale.setScalar(4.5 * f); return fx.update(t, dt); },
+  };
+}
+/** The Bench's light and life (AD §5.7, The Bench): the work lamp's light cone with dust motes drifting in it, and a
+ *  welding arc at the frame's right knee (blue-white flicker, a spark shower that falls and bounces on the deck).
+ *  Cosmetic only (Math.random is allowed here, §1.4); fixed-size buffers, nothing allocated per frame. */
+function benchEffects(root, lampPos, lampDir) {
+  const dir = new THREE.Vector3(...lampDir).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+  const apex = lampPos.clone().addScaledVector(dir, 0.9);
+  // light cone: an open cone, apex at the lens, fading to nothing at the floor (vertex colour = falloff)
+  const H = 10.5, coneGeo = new THREE.ConeGeometry(4.6, H, 28, 8, true);
+  coneGeo.translate(0, -H / 2, 0);
+  const cp = coneGeo.attributes.position, cc = new Float32Array(cp.count * 3);
+  for (let i = 0; i < cp.count; i++) {
+    const t = clamp(-cp.getY(i) / H, 0, 1), v = Math.pow(1 - t, 1.6) * clamp(t / 0.12, 0, 1);
+    cc[i * 3] = cc[i * 3 + 1] = cc[i * 3 + 2] = v;
+  }
+  for (let i = 0; i < cp.count; i++) cc[i] = cc[i * 3];
+  coneGeo.setAttribute('fade', new THREE.BufferAttribute(cc.slice(0, cp.count), 1));
+  // soft edges: the sheet fades where it turns edge-on to the view, so the cone reads as a shaft, not a lampshade
+  const coneMat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color('#ffb36b').multiplyScalar(0.11) } },
+    vertexShader: `attribute float fade; varying float vF; varying vec3 vN; varying vec3 vV;
+      void main() { vF = fade; vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform vec3 uColor; varying float vF; varying vec3 vN; varying vec3 vV;
+      void main() { float f = abs(dot(normalize(vN), normalize(vV))); gl_FragColor = vec4(uColor * vF * f * f, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const cone = new THREE.Mesh(coneGeo, coneMat);
+  cone.position.copy(apex); cone.quaternion.copy(q); cone.renderOrder = 3; cone.name = 'lampCone';
+  root.add(cone);
+  // dust motes inside the cone (slow drift, wrapped)
+  const NM = 70, mp = new Float32Array(NM * 3), mSeed = new Float32Array(NM * 3);
+  for (let i = 0; i < NM; i++) { mSeed[i * 3] = Math.random(); mSeed[i * 3 + 1] = Math.random(); mSeed[i * 3 + 2] = Math.random() * Math.PI * 2; }
+  const moteGeo = new THREE.BufferGeometry(); moteGeo.setAttribute('position', new THREE.BufferAttribute(mp, 3));
+  const moteMat = new THREE.PointsMaterial({ map: glowTexture(), color: new THREE.Color('#ffd2a0').multiplyScalar(0.9), size: 0.09, sizeAttenuation: true,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  const motes = new THREE.Points(moteGeo, moteMat); motes.frustumCulled = false; motes.renderOrder = 4; motes.name = 'dustMotes';
+  root.add(motes);
+  // the welding arc at the right knee (half hidden by the shin: someone is working behind it), sparks falling to the deck
+  const weldPos = new THREE.Vector3(2.25, 1.2, -1.8);
+  const arc = glowSprite('#cfe6ff', 1.4, 5); arc.position.copy(weldPos); arc.renderOrder = 5; root.add(arc);
+  const NS = 64, sp = new Float32Array(NS * 3), sv = new Float32Array(NS * 3), sl = new Float32Array(NS);
+  const sparkGeo = new THREE.BufferGeometry(); sparkGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+  const sparkMat = new THREE.PointsMaterial({ map: glowTexture(), color: new THREE.Color('#ffd9a0').multiplyScalar(3), size: 0.16, sizeAttenuation: true,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  const sparks = new THREE.Points(sparkGeo, sparkMat); sparks.frustumCulled = false; sparks.renderOrder = 5; sparks.name = 'weldSparks';
+  root.add(sparks);
+  for (let i = 0; i < NS; i++) { sp[i * 3 + 1] = -50; sl[i] = 0; }
+  let welding = false, phase = 1.5, next = 0;
+  return {
+    weldPos,
+    update(t, dt) {
+      dt = Math.min(dt, 0.1);
+      for (let i = 0; i < NM; i++) {   // motes: a slow column of dust inside the cone
+        const u = (mSeed[i * 3] + t * 0.012) % 1, r = Math.sqrt(mSeed[i * 3 + 1]) * 4.0 * (0.15 + 0.85 * u), a = mSeed[i * 3 + 2] + t * 0.05;
+        const lx = Math.cos(a) * r, lz = Math.sin(a) * r, ly = -u * H * 0.92;
+        // cone-local (x, y, z) → world: rotate by q, offset by the apex (inlined to avoid temporaries)
+        const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
+        const ix = qw * lx + qy * lz - qz * ly, iy = qw * ly + qz * lx - qx * lz, iz = qw * lz + qx * ly - qy * lx, iw = -qx * lx - qy * ly - qz * lz;
+        mp[i * 3] = apex.x + ix * qw + iw * -qx + iy * -qz - iz * -qy;
+        mp[i * 3 + 1] = apex.y + iy * qw + iw * -qy + iz * -qx - ix * -qz + Math.sin(t * 0.7 + i) * 0.05;
+        mp[i * 3 + 2] = apex.z + iz * qw + iw * -qz + ix * -qy - iy * -qx;
+      }
+      moteGeo.attributes.position.needsUpdate = true;
+      phase -= dt;   // welding comes in bursts: 1.5–4 s of arc, 1–3 s of quiet
+      if (phase <= 0) { welding = !welding; phase = welding ? 1.5 + Math.random() * 2.5 : 1 + Math.random() * 2; }
+      const on = welding && Math.random() < 0.82;
+      arc.visible = on; arc.scale.setScalar(on ? 0.8 + Math.random() * 1.1 : 0.01);
+      if (welding) {
+        next -= dt;
+        while (next <= 0) {
+          next += 0.012 + Math.random() * 0.02;
+          let k = -1; for (let i = 0; i < NS; i++) if (sl[i] <= 0) { k = i; break; }
+          if (k < 0) break;
+          sp[k * 3] = weldPos.x; sp[k * 3 + 1] = weldPos.y; sp[k * 3 + 2] = weldPos.z;
+          const a = Math.random() * Math.PI * 2, up = Math.random() * 3.2, out = 1.5 + Math.random() * 3;
+          sv[k * 3] = 0.6 + Math.cos(a) * out * 0.6 + out * 0.5; sv[k * 3 + 1] = up; sv[k * 3 + 2] = Math.sin(a) * out * 0.8 - 0.8;
+          sl[k] = 0.5 + Math.random() * 0.7;
+        }
+      }
+      for (let i = 0; i < NS; i++) {
+        if (sl[i] <= 0) { sp[i * 3 + 1] = -50; continue; }
+        sl[i] -= dt;
+        sv[i * 3 + 1] -= 9.8 * dt;
+        sp[i * 3] += sv[i * 3] * dt; sp[i * 3 + 1] += sv[i * 3 + 1] * dt; sp[i * 3 + 2] += sv[i * 3 + 2] * dt;
+        if (sp[i * 3 + 1] < 0.03 && sv[i * 3 + 1] < 0) { sp[i * 3 + 1] = 0.03; sv[i * 3 + 1] *= -0.3; sv[i * 3] *= 0.5; sv[i * 3 + 2] *= 0.5; }
+      }
+      sparkGeo.attributes.position.needsUpdate = true;
+      return on ? 25 + Math.random() * 45 : 0;
+    },
   };
 }
 

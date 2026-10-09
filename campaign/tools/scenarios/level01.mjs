@@ -86,7 +86,19 @@ export default async function (g) {
   }
   /** the §7.5 High budgets for the frame just rendered (call after a render at the gameplay camera) */
   async function budget(label) {
-    await ev(() => window.__game.render());
+    // programs: count the shader programs the measured frame actually binds (gl.useProgram wrapped for one render), and
+    // report the live total too. The live total also holds programs the frame never uses: pipeline.warmup() compiles a
+    // canvas-output ('srgb') twin of every scene material (compileAsync runs with no render target while the composer
+    // renders into a linear target), plus PMREM and title-screen programs.
+    const pg = await ev(() => {
+      const G = window.__game, ctx = G.ctx, r = ctx.renderer, gl = r.getContext();
+      const used = new Set(), orig = gl.useProgram;
+      gl.useProgram = function (p) { used.add(p); return orig.call(this, p); };
+      try { r.state?.useProgram?.(null); G.render(); } finally { gl.useProgram = orig; }
+      const live = r.info.programs;
+      return { total: live.length, frame: live.filter(p => used.has(p.program)).length,
+               canvasTwins: live.filter(p => (p.cacheKey.match(/,(srgb-linear|srgb),/) || [])[1] === 'srgb').length };
+    });
     const p = await g.perf();
     const extra = await ev(() => {
       const ctx = window.__game.ctx;
@@ -94,17 +106,8 @@ export default async function (g) {
                parts: (ctx.particles?.add?.alive ?? 0) + (ctx.particles?.smoke?.alive ?? 0), lights: ctx.particles?.lights?.count ?? 0,
                tier: ctx.tier.name };
     });
-    // programs: with the composer on (High), the frame renders the scene into linear targets ('srgb-linear' programs);
-    // programs compiled for the canvas output ('srgb': the pipeline's warmup runs compileAsync with no render target,
-    // and the title showcase) are never used by the level's frame. Both counts are reported.
-    const pg = await ev(() => {
-      const ctx = window.__game.ctx, keys = ctx.renderer.info.programs.map(p => p.cacheKey);
-      const composer = !!ctx.pipeline?.composer;
-      const twins = composer ? keys.filter(k => k.includes(',srgb,')).length : 0;
-      return { total: keys.length, twins };
-    });
     const r = { label, calls: p.calls, main: p.main, shadow: p.shadow, post: p.post, ao: p.ao, tris: p.triangles, mainTris: p.mainTriangles,
-                programs: p.programs, programTwins: pg.twins, ...extra };
+                programsLive: pg.total, programsFrame: pg.frame, canvasTwins: pg.canvasTwins, ...extra };
     g.log('budget', r);
     if (extra.tier === 'high') {
       g.assert(p.calls <= 1400, `${label}: draw calls ${p.calls} ≤ 1400`);
@@ -113,7 +116,7 @@ export default async function (g) {
       if (p.post != null) g.assert(p.post <= 30, `${label}: post calls ${p.post} ≤ 30`);
       g.assert((p.mainTriangles ?? p.triangles) <= 3.0e6, `${label}: main triangles ${p.mainTriangles ?? p.triangles} ≤ 3 M`);
       g.assert(p.triangles <= 6e6, `${label}: frame triangles ${p.triangles} ≤ 6 M`);
-      g.assert(pg.total - pg.twins <= 60, `${label}: programs ${pg.total - pg.twins} ≤ 60 (raw ${pg.total}, ${pg.twins} compiled for the canvas output and unused with the composer)`);
+      g.assert(pg.frame <= 60, `${label}: programs used by the frame ${pg.frame} ≤ 60 (live ${pg.total}, ${pg.canvasTwins} of them canvas-output twins from the warmup)`);
       g.assert(extra.units <= 40 && extra.proj <= 400 && extra.parts <= 12000, `${label}: units ${extra.units} ≤ 40, projectiles ${extra.proj} ≤ 400, particles ${extra.parts} ≤ 12k`);
     }
     return r;
@@ -125,6 +128,29 @@ export default async function (g) {
   }
   let rackAtAbeyance = null;
   const routePos = (s, l = 0, h) => ev(([s, l, h]) => { const v = window.__game.ctx.world.resolve({ s, l, h }); return [v.x, v.y, v.z]; }, [s, l, h ?? 0]);
+
+  // ══════════════════════════════════════════════════════════════════════════════════════ probe (development)
+  // --param only=probe --param probe=/abs/path/script.js [--param cp=cp_cutline]: starts the level at `cp` and evaluates
+  // the script in the page (an async function body with `G`, `ctx`, `L` and `log` in scope); its return value is logged.
+  if (only.has('probe') && P.probe) {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(P.probe, 'utf8');
+    if (P.cp !== 'none') await start(P.cp || 'cp_cut');
+    const out = await ev(async (src) => {
+      const G = window.__game, ctx = G.ctx, L = ctx.l01, logs = [];
+      const log = (...a) => logs.push(a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' '));
+      try {
+        const fn = new (Object.getPrototypeOf(async function () {}).constructor)('G', 'ctx', 'L', 'log', src);
+        const r = await fn(G, ctx, L, log);
+        return { ok: true, r, logs };
+      } catch (e) { return { ok: false, err: String(e && e.stack || e), logs }; }
+    }, src);
+    for (const l of out.logs) g.log('[probe]', l);
+    g.log('[probe] result', out.ok ? (out.r?.views ? `${out.r.views.length} views` : out.r) : out.err);
+    if (P.shot) await shot(P.shot, { hud: P.hud !== '0' });
+    // a probe may return { views: [{ name, pos, look, fov }] }: one vista each (development framing)
+    for (const v of (out.ok && out.r?.views) || []) { await vista(v.name, v.pos, v.look, v.fov ?? 60); }
+  }
 
   // ══════════════════════════════════════════════════════════════════════════════════════ static checks
   if (only.has('static')) {
@@ -222,7 +248,7 @@ export default async function (g) {
       return [v.x, v.z, Math.atan2(-(b[0] - v.x), -(b[2] - v.z))];
     }, b1);
     await g.teleport([sp[0], sp[1]], { yaw: sp[2] });
-    await ev((y) => { const p = window.__game.ctx.player; p.yaw = y; p.bodyYaw = y; }, sp[2]);
+    await ev((y) => { const p = window.__game.ctx.player; p.yaw = y; p.bodyYaw = y; p.pitch = -0.08; }, sp[2]);
     await step(0.5);
     for (let i = 0; i < 4; i++) { await g.input({ press: ['blade'] }); await step(0.8, 6); }
     r = await until((ctx) => ctx.structures.get('block1').state === 'destroyed', null, 3);
@@ -240,6 +266,14 @@ export default async function (g) {
     g.assert(r.ok && await hasFired('t_raid'), `t_raid: three raid skiffs (${r.t.toFixed(1)} s)`);
     const sledTow = await ev(() => window.__game.ctx.structures.get('sled1').state);
     await step(6);
+    // face the nearest raid skiff (the camera follows the player's aim)
+    await ev(() => {
+      const ctx = window.__game.ctx, p = ctx.player;
+      let best = null, bd = Infinity;
+      for (const u of ctx.enemies.alive({ tag: 'raid' })) { const d = u.pos.distanceTo(p.pos); if (d < bd) { bd = d; best = u; } }
+      if (best) { p.yaw = Math.atan2(-(best.pos.x - p.pos.x), -(best.pos.z - p.pos.z)); p.pitch = -0.06; }
+    });
+    await step(0.3, 6);
     if (SHOTS) await shot('z1-raid');
     await budget('Z1 raid');
     // stay put: the fail-safe tows the cutter onto the snow bridge (25 s after the raid starts)
@@ -596,6 +630,12 @@ export default async function (g) {
       const ib = await ev(() => { const u = window.__game.ctx.enemies.alive({ kind: 'icebreaker' })[0]; return [u.pos.x, u.pos.y, u.pos.z]; });
       await vista('z5-icebreaker-vista', [ib[0] - 160, ib[1] + 45, ib[2] + 120], [ib[0], ib[1] + 12, ib[2]], 50);
     }
+    // §7.5 measures at a busy moment "with 8 units fighting and an explosion": one near the player, 6 frames in
+    await ev(() => {
+      const ctx = window.__game.ctx, p = ctx.player;
+      ctx.fx?.explosion?.(p.pos.clone().add(new p.pos.constructor(18, 2, -10)), 1.6);
+      window.__game.step(6);
+    });
     await budget('Z5 Icebreaker phase 1');
     // phase 2: the port saw dies; the sweep
     await ev(() => { const ctx = window.__game.ctx, h = ctx.combat.query({ tag: 'head_port' })[0]; ctx.combat.kill(h, { team: 'player' }); });
@@ -687,7 +727,9 @@ export default async function (g) {
     r = await until((ctx) => ctx.mission.objective('o_surface')?.state === 'active' && !ctx.player.frozen, null, 10);
     g.assert(r.ok, 'control returns underwater: o_surface');
     g.assert(await ev(() => window.__game.ctx.save.getFlag('vitals')) === 'locked', 'persistent save flag vitals = locked (A2 #19)');
-    // swim up through the hole
+    // swim up through the hole (god mode back on: the scripted player stands still in the sprint that follows, where a
+    // Gaffer's harpoon can tow it into a lead)
+    await g.setGod(true);
     await g.input({ clear: true, hold: { jump: true } });
     r = await until((ctx) => ctx.mission.flags.surfaced, null, 20, 5);
     await g.input({ clear: true });

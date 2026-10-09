@@ -42,7 +42,7 @@ function model(ctx) {
     ]),
     // the cutting gantry at the bow (truss) and the intake ramp, starboard amidships
     [KIT.truss(30, 3, 3, 8, 0.35), M.steel, 0, 10.5, -30.5, 0, PI / 2, 0],
-    [slab(4, 0.6, 18, 0.15), M.dark, 13.5, 7, 4, 0.35, 0, -0.3],
+    [slab(4, 0.6, 18, 0.15), M.iron, 13.5, 7, 4, 0.35, 0, -0.3],
     // the bridge tower aft, the stack, the skiff launch rail
     [slab(9, 18, 8, 0.5), M.iron, 0, 23, 21],
     [slab(10, 4.5, 9, 0.4), M.oxide, 0, 33.5, 20.5],
@@ -53,15 +53,18 @@ function model(ctx) {
     [cyl(2.2, 2.6, 1.0, 12), M.iron, -5, 15.2, 4], [cyl(2.2, 2.6, 1.0, 12), M.iron, 5, 15.2, 12],
     [cyl(0.6, 0.8, 16, 8), M.steel, 0, 22, -4],
   ];
-  const sawArm = (s) => [[slab(1.6, 1.6, 16, 0.25), M.oxide, 0, 0, -8], [cyl(0.4, 0.4, 12, 8), M.steel, s * 1.1, 0.9, -7, PI / 2, 0, 0], [cyl(1.4, 1.4, 2.0, 12), M.dark, 0, 0, 0, 0, 0, PI / 2]];
+  // the arm carries its saw guard (static, so merged into the arm part): oxide, steel and hazard only (L1 §6.1: ≤ 24 calls)
+  const sawArm = (s) => [[slab(1.6, 1.6, 16, 0.25), M.oxide, 0, 0, -8], [cyl(0.4, 0.4, 12, 8), M.steel, s * 1.1, 0.9, -7, PI / 2, 0, 0], [cyl(1.4, 1.4, 2.0, 12), M.steel, 0, 0, 0, 0, 0, PI / 2],
+                         ...guard().map(([g, m, x, y, z, rx = 0, ry = 0, rz = 0]) => [g, m, x, y - 0.4, z - 16.5, rx, ry, rz])];
   const saw = () => [
     [cyl(3.5, 3.5, 0.4, 32), M.steel, 0, 0, 0, 0, 0, PI / 2],
     ...[...Array(16)].map((_, i) => [slab(0.42, 0.9, 0.5, 0.05), M.orangeTeeth, 0, Math.cos(i * PI / 8) * 3.6, Math.sin(i * PI / 8) * 3.6, i * PI / 8, 0, 0]),
-    [cyl(0.8, 0.8, 0.9, 12), M.dark, 0, 0, 0, 0, 0, PI / 2] ];
-  const guard = () => [[side([[-4.2, -0.5], [-3.6, 3.6], [0, 4.6], [3.6, 3.6], [4.2, -0.5]], 1.6, 0.2), M.hazard, 0, 0, 0], [slab(1.8, 0.6, 8, 0.1), M.iron, 0, 4.4, 0]];
+    [cyl(0.8, 0.8, 0.9, 12), M.steel, 0, 0, 0, 0, 0, PI / 2] ];
+  const guard = () => [[side([[-4.2, -0.5], [-3.6, 3.6], [0, 4.6], [3.6, 3.6], [4.2, -0.5]], 1.6, 0.2), M.hazard, 0, 0, 0], [slab(1.8, 0.6, 8, 0.1), M.oxide, 0, 4.4, 0]];
   return { key: 'icebreaker', parts: {
     hull: { pivot: [0, 0, 0], items: hull, anchors: [
       { name: 'cab', at: [0, 34, 15.8], glow: { color: '#a8ff9e', size: 0.9, intensity: 8, pulse: 'beat', minPx: 4 } },
+      { name: 'stackTop', at: [-3.5, 45.5, 24] },
       { name: 'turret0', at: [-5, 15.8, 4] }, { name: 'turret1', at: [5, 15.8, 12] }, { name: 'stern', at: [0, 6, 38] },
       { name: 'strobe0', at: [-12, 15, -20], glow: { color: '#ffb04a', size: 2, intensity: 3, pulse: 'flicker' } },
       { name: 'strobe1', at: [12, 15, -20], glow: { color: '#ffb04a', size: 2, intensity: 3, pulse: 'flicker' } }] },
@@ -72,15 +75,13 @@ function model(ctx) {
       anchors: [{ name: 'lens', at: [0, 0, -1], glow: { color: '#fff1d6', size: 4, intensity: 4, pulse: 'none' } }] },
     armP: { pivot: [-15, 9.5, -30], parent: 'hull', items: sawArm(-1) },
     sawP: { pivot: [0, -0.4, -16.5], parent: 'armP', items: saw() },
-    guardP: { pivot: [0, -0.4, -16.5], parent: 'armP', items: guard() },
     armS: { pivot: [15, 9.5, -30], parent: 'hull', items: sawArm(1) },
     sawS: { pivot: [0, -0.4, -16.5], parent: 'armS', items: saw() },
-    guardS: { pivot: [0, -0.4, -16.5], parent: 'armS', items: guard() },
-    boom: { pivot: [0, 11, -27], parent: 'hull', items: [[slab(2.2, 2.2, 12, 0.3), M.iron, 0, 0, -6], [cyl(0.5, 0.5, 10, 8), M.steel, 1.4, 1.2, -5, PI / 2, 0, 0]] },
+    boom: { pivot: [0, 11, -27], parent: 'hull', items: [[slab(2.2, 2.2, 12, 0.3), M.iron, 0, 0, -6], [cyl(0.5, 0.5, 10, 8), M.iron, 1.4, 1.2, -5, PI / 2, 0, 0]] },
     auger: { pivot: [0, 0, -12], parent: 'boom', items: [
       [cyl(1.6, 1.6, 1.2, 20), M.collar, 0, 0, 0, PI / 2, 0, 0],                                  // the collar (weak point)
       [cyl(2.6, 0.2, 12, 14), M.steel, 0, 0, -6.6, -PI / 2, 0, 0],
-      ...[...Array(10)].map((_, i) => [slab(0.25, 3.2 - i * 0.28, 0.6, 0.05), M.iron, Math.cos(i * 1.9) * (2.2 - i * 0.2), Math.sin(i * 1.9) * (2.2 - i * 0.2), -1.4 - i * 1.1, 0, 0, i * 1.9]) ] },
+      ...[...Array(10)].map((_, i) => [slab(0.25, 3.2 - i * 0.28, 0.6, 0.05), M.steel, Math.cos(i * 1.9) * (2.2 - i * 0.2), Math.sin(i * 1.9) * (2.2 - i * 0.2), -1.4 - i * 1.1, 0, 0, i * 1.9]) ] },
     bladeL: { pivot: [-2.4, 10, -29], parent: 'hull', items: [[side([[-3, -4], [-3.4, 4], [2, 5], [2.6, -4]], 0.8, 0.15), M.hazard, 0, 0, 0]] },
     bladeR: { pivot: [2.4, 10, -29], parent: 'hull', items: [[side([[-3, -4], [-3.4, 4], [2, 5], [2.6, -4]], 0.8, 0.15), M.hazard, 0, 0, 0]] },
   } };
@@ -178,6 +179,19 @@ export class Icebreaker extends Unit {
       else if (alive === 0 && this.phase < 3) { this.phase = 2.5; this.L.setFlag('ib:phase', 2.5); }
     }
   }
+  /** the bridge stack venting steam and the odd spark (L1 §6.1); it follows the hull, and dies with it under the sea */
+  updateStack(dt) {
+    const fx = this.ctx.fx; if (!fx?.emitter) return;
+    this.stackA ??= this.parts.hull.getObjectByName('stackTop');
+    if (!this.stackA) return;
+    this.stackA.getWorldPosition(_c);
+    if (_c.y < this.L.DATA.sea) { this.stack?.stop?.(); this.stack = null; this.stackOff = true; return; }
+    if (this.stackOff) return;
+    if (!this.stack || this.stack.alive === false) this.stack = fx.emitter('steam', _c.clone(), { rate: this.hulk ? 2.2 : 1.1, scale: 2.6 });
+    this.stack.pos.copy(_c);
+    if (this.hulk && !this.stackHulk) { this.stackHulk = true; this.stack.set?.({ rate: 2.2, scale: 3.2 }); }
+    if (Math.random() < dt * 1.5) fx.sparks?.(_c, 3, [1, 0.6, 0.25], 8);
+  }
   onBowBlocked() { if (this.phase === 3) this.L.counters.collarAbove++; }
   /** the finale (drown.js T 0): the auger tears off and falls, the machine dies as a hulk */
   finale() {
@@ -196,6 +210,7 @@ export class Icebreaker extends Unit {
   update(dt) {
     this.baseUpdate(dt);
     if (!this.heads) this.ensureHeads();
+    this.updateStack(dt);
     if (this.hulk) { this.carryTurrets(); return; }
     this.t += dt;
     const p = this.ctx.player?.active && this.ctx.player.alive ? this.ctx.player : null;
@@ -337,7 +352,7 @@ export class Icebreaker extends Unit {
       const h = this.heads[k];
       if (!h.alive) { this.jetMeshes[i].visible = false; return; }
       this.jetT[i] -= dt;
-      if (this.jetT[i] <= 0 && this.jet[i] <= 0 && this.jetTele[i] <= 0) { this.jetTele[i] = 0.8; this.ctx.audio?.play?.('steam', h.pos); }
+      if (this.jetT[i] <= 0 && this.jet[i] <= 0 && this.jetTele[i] <= 0) { this.jetTele[i] = 0.8; this.ctx.audio?.play?.('static', h.pos, { vol: 0.6, rate: 0.6 }); }
       if (this.jetTele[i] > 0) { this.jetTele[i] -= dt; if (Math.random() < dt * 30) this.ctx.fx?.dust?.(h.pos, 3, 2, [0.95, 0.97, 1]); if (this.jetTele[i] <= 0) { this.jet[i] = 1.5; this.jetT[i] = 6; } }
       const m = this.jetMeshes[i];
       if (this.jet[i] > 0) {
@@ -412,18 +427,30 @@ export class Icebreaker extends Unit {
       u.syncRoot?.();
     }
   }
-  /** player projectiles about to enter the hull box count as hull hits (the hint "ARMOURED. Hit the drill heads.") */
+  /**
+   * player projectiles about to enter the hull box count as hull hits (the hint "ARMOURED. Hit the drill heads.").
+   * The enemies system runs before the projectiles system (ai → physics), and a projectile dies on the hull's collider
+   * inside its own step, so the test sweeps each projectile's next 1/20 s: a segment that crosses the hull box (and
+   * passes no live drill head on the way) is a hull hit.
+   */
   trackHullHits() {
     if (this.L.counters.hullHit) return;
     const c = Math.cos(this.yaw), s = Math.sin(this.yaw);
+    const inHull = (x, y, z) => {
+      const dx = x - this.pos.x, dz = z - this.pos.z, ly = y - this.pos.y;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      return Math.abs(lx) < 13 && Math.abs(lz) < 31 && ly > -1 && ly < 16;
+    };
     this.ctx.projectiles?.forEach?.((pr) => {
-      if (!pr.alive || pr.team !== 'player') return;
+      if (!pr.alive || pr.team !== 'player' || this.L.counters.hullHit) return;
       const dx = pr.pos.x - this.pos.x, dz = pr.pos.z - this.pos.z;
-      if (dx * dx + dz * dz > 50 * 50) return;
-      const lx = dx * c - dz * s, lz = dx * s + dz * c, ly = pr.pos.y - this.pos.y;
-      if (Math.abs(lx) < 13 && Math.abs(lz) < 31 && ly > 0 && ly < 16) {
-        for (const h of Object.values(this.heads)) if (h.alive && h.pos.distanceTo(pr.pos) < h.hitR + 3) return;
-        this.L.counters.hullHit++;
+      const reach = 40 + pr.vel.length() * 0.05;
+      if (dx * dx + dz * dz > reach * reach) return;
+      for (let i = 0; i <= 8; i++) {
+        const k = (i / 8) * 0.05;
+        _v.copy(pr.pos).addScaledVector(pr.vel, k);
+        for (const h of Object.values(this.heads)) if (h.alive && h.pos.distanceTo(_v) < h.hitR + 2) return;   // a head first
+        if (inHull(_v.x, _v.y, _v.z)) { this.L.counters.hullHit++; return; }
       }
     });
   }
@@ -457,6 +484,7 @@ export class Icebreaker extends Unit {
     if (this.plunge.rec > 0) P.boom.rotation.x = 1.1 + 0.18;
   }
   cleanup() {
+    this.stack?.stop?.(); this.stack = null; this.stackOff = true;
     const C = this.ctx.collision; for (const c of this.cols) C?.remove(c); this.cols.length = 0;
     for (const m of [...this.jetMeshes, this.ringMesh]) m.parent?.remove(m);
     disposeGlow(this.sawGlow?.P); disposeGlow(this.sawGlow?.S);

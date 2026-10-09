@@ -17,7 +17,7 @@ const SIM = { playing: true, dead: true, complete: true };
 const SUSPENDED = { paused: true, interstitial: true, loading: true };   // a level end is held, not dropped
 const KEEP_OVERLAYS = { paused: true, interstitial: true, complete: true };   // leaving 'playing' for these keeps fade/letterbox
 const DEATH_LINES = ['Signal lost.'];   // L1 §10.5: the generic, spoiler-safe line; a level may set def.deathLine
-const CREDITS = ['DAWNWAKE', 'Follow the thaw. Carry what you can.', 'Built with three.js.',
+const CREDITS = ['Follow the thaw. Carry what you can.', 'Built with three.js.',
                  'Every model, texture, sound and note is generated in code.', 'Thank you for playing.'];
 export const CAMPAIGN_FALLBACK = Object.freeze({ version: 1, startWater: 4, lockerSize: 4, speakers: {}, fixed: [], fragments: [], roll: [], legs: {} });
 /** A3.4: the campaign state anyone uses when the save flag is missing */
@@ -407,11 +407,17 @@ export function install(ctx) {
     },
     async interstitial(pages) {
       const back = flow.state;
+      const token = menuToken;
       set('interstitial');
       ctx.input.exitPointerLock();
       await S().showInterstitial(pages || []);
+      if (flow.state !== 'interstitial' || token !== menuToken) return;   // replaced meanwhile (quit, restart, a new level)
       S().hide();
-      if (back === 'playing' && flow.state === 'interstitial') { set('playing'); ctx.simRunning = true; ctx.input.requestPointerLock(); }
+      // back to where the level was: 'playing', or 'complete' when complete.do shows a card (its list goes on after it)
+      if (SIM[back]) {
+        set(back); ctx.simRunning = true;
+        if (back === 'playing') ctx.input.requestPointerLock();
+      } else if (back !== 'interstitial') set(back);
     },
     async quitToTitle() {
       await flow.toTitle();
@@ -437,7 +443,9 @@ export function install(ctx) {
     if (flow.state !== 'playing') return;
     set('dead');
     ctx.save.data.stats.deaths++;
-    const dl = flow.def?.deathLine;
+    // the death line: the mission flag 'deathLine' (set by the level script, e.g. in the water: 'Lost under the ice.',
+    // L1 §10.5), else def.deathLine (a string or a list), else the generic line
+    const dl = ctx.mission?.flags?.deathLine || flow.def?.deathLine;
     const lines = Array.isArray(dl) ? dl : dl ? [dl] : DEATH_LINES;
     const line = lines[Math.floor(Math.random() * lines.length)];
     ctx.timers.after(2.6, () => { if (flow.state === 'dead') onDeathScreen(line).catch(e => { if (!e?._recorded) ctx.recordError('flow', e); }); });

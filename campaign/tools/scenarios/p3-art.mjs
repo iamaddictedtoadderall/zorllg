@@ -24,7 +24,6 @@ async function shot(g, name, o = {}) {
 async function installStudio(g) {
   await g.eval(async () => {
     const G = window.__game, ctx = G.ctx, THREE = ctx.THREE;
-    const { RoomEnvironment } = await import('https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/environments/RoomEnvironment.js');
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x8d99a6);
     const cam = new THREE.PerspectiveCamera(40, ctx.camera.aspect, 0.3, 4000);
@@ -37,8 +36,22 @@ async function installStudio(g) {
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), groundMat);
     ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
     try {
+      // an outdoor sky environment (gradient dome: blue-grey zenith, warm haze at the horizon, dark ground, a soft sun
+      // patch), like the game's sky PMREM. RoomEnvironment's bright area-light panels mirror off glossy materials (ice,
+      // glass, paint at grazing angles) and blow them out in a way no level ever shows.
       const pm = new THREE.PMREMGenerator(ctx.renderer);
-      scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.55; pm.dispose();
+      const es = new THREE.Scene(), sg = new THREE.SphereGeometry(100, 48, 24), pos = sg.attributes.position, col = new Float32Array(pos.count * 3);
+      const zen = new THREE.Color(0x8fa6bf), hor = new THREE.Color(0xd9d2c4), gnd = new THREE.Color(0x4a463f), sunC = new THREE.Color(0xfff2dc), c = new THREE.Color();
+      const sd = new THREE.Vector3(0.45, 0.62, 0.64).normalize(), v = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).normalize();
+        if (v.y >= 0) c.copy(hor).lerp(zen, Math.pow(v.y, 0.6)); else c.copy(hor).lerp(gnd, Math.min(1, -v.y * 4));
+        c.lerp(sunC, Math.pow(Math.max(0, v.dot(sd)), 24) * 0.8);
+        col[i * 3] = c.r * 1.1; col[i * 3 + 1] = c.g * 1.1; col[i * 3 + 2] = c.b * 1.1;
+      }
+      sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      es.add(new THREE.Mesh(sg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+      scene.environment = pm.fromScene(es, 0.02).texture; scene.environmentIntensity = 1.0; pm.dispose();
     } catch (e) { /* ignore */ }
     // Lighting: a neutral daylight studio by default (shapes and materials are judged without the title's dusk cast);
     // --param studio=game mirrors the live atmosphere (P1): sun, hemi, rim and the sky PMREM.
@@ -152,6 +165,12 @@ async function kitGallery(g) {
   g.log('kit triangles:', r.map(x => `${x.name} ${x.tris}`).join(' · '));
   await g.eval(() => { const S = window.__p3; S.view([0, 9, 15], [0, 1.2, -4], 38); });
   await shot(g, 'kit-gallery-close', { hud: false, settle: false });
+  // the third row up close: truss, loft, greebles and the rock; then the ice set (floe with its snow cap, pressure ridge,
+  // icicles) that A6 asks for
+  await g.eval(() => { const S = window.__p3; S.view([-9, 7, 20], [-8.5, 1.0, 7], 40); });
+  await shot(g, 'kit-gallery-row3', { hud: false, settle: false });
+  await g.eval(() => { const S = window.__p3; S.view([11, 6.5, 19.5], [11.5, 1.0, 7], 40); });
+  await shot(g, 'kit-gallery-ice', { hud: false, settle: false });
 }
 
 
@@ -221,6 +240,25 @@ async function mechGallery(g) {
     S.view([30, 16, 40], [0, 5, 0], 45);
   });
   await shot(g, 'mechs-back', { hud: false, settle: false });
+  // Moth with the three Level 1 Dredge parts (Sleet Gun, Gaff Harpoon, Flare Pod): black iron and oxide on adapter
+  // brackets over the ceramic (A5.3, AD §1.3), front and back three-quarters
+  await g.eval(async () => {
+    const ctx = window.__game.ctx, S = window.__p3;
+    const MX = await import(new URL('src/art/mechs.js', location.href).href);
+    const LO = await import(new URL('src/combat/loadout.js', location.href).href);
+    const moth = LO.MOTH_PAINT ?? { base: '#d8d2c4', mid: '#aaa494', accent: '#c99a3e', visor: '#5fe3ff', flame: '#a8ecff', blade: '#8fe9ff' };
+    S.rigs.forEach(r => { r.root.visible = false; });
+    const rig = MX.buildMech(ctx, { design: 'moth', ...moth, dark: '#24262b', wear: 0.55 }, { parts: { R: 'shotgun_s8', L: 'harpoon_gaff', S: 'flare_pod', U: 'kit_rk3' } });
+    rig.root.position.set(0, 0, 60); rig.root.rotation.y = 0.5;
+    MX.animateMech(rig, { fwd: 0, lat: 0, onGround: true, pitch: -0.1, thrust: 0, hover: 0, landT: 0 }, 1);
+    S.add(rig.root); S.mothDredge = rig;
+    S.light([0, 5, 60], 14);
+    S.view([-12, 8.5, 46], [0, 5, 60], 40);
+  });
+  await shot(g, 'mech-moth-dredge', { hud: false, settle: false });
+  await g.eval(() => { const S = window.__p3; S.view([13, 9, 73], [0, 5, 60], 40); });
+  await shot(g, 'mech-moth-dredge-back', { hud: false, settle: false });
+  await g.eval(() => { const S = window.__p3; S.rigs.forEach(r => { r.root.visible = true; }); });
 }
 
 
@@ -435,18 +473,21 @@ async function propGallery(g) {
     const mat = ctx.materials?.standard ? ctx.materials.standard({ color: '#ffffff', vertexColors: true, roughness: 0.78, metalness: 0.3, wear: 0.55 })
       : new THREE.MeshStandardMaterial({ vertexColors: true });
     const out = [];
-    let i = 0;
+    // layout: the big props (container, pipe piece, girder) in a back row, the small ones in a front row 6 m apart
+    const big = ['container', 'pipe_piece', 'girder'], bigX = { container: -11, pipe_piece: 4, girder: 16 };
+    let k = 0;
     for (const [name, prop] of Object.entries(mod.PROPS)) {
       const geo = prop.geometry(ctx);
       const m = new THREE.Mesh(geo, mat); m.castShadow = m.receiveShadow = true;
-      m.position.set((i % 6) * 13 - 32, 0, Math.floor(i / 6) * 13);
+      if (big.includes(name)) m.position.set(bigX[name], 0, 14);
+      else { m.position.set(-21 + k * 6, 0, 0); k++; }
+      m.rotation.y = 0.35;
       S.add(m);
       const a = geo.attributes;
       out.push({ name, tris: (geo.index ? geo.index.count : a.position.count) / 3, color: !!a.color, radius: prop.radius, height: prop.height, collider: prop.collider });
-      i++;
     }
-    S.light([0, 0, 6], 45);
-    S.view([-6, 26, -36], [0, 0, 6], 40);
+    S.light([0, 0, 6], 34);
+    S.view([0, 30, -32], [0, 0, 7], 50);
     return out;
   });
   await shot(g, 'props-gallery', { hud: false, settle: false });
@@ -454,8 +495,13 @@ async function propGallery(g) {
     g.log(`budget prop ${p.name}: ${p.tris} tris, r ${p.radius}, h ${p.height}, ${p.collider}`);
     g.assert(p.tris <= 2000 && p.color && p.radius > 0 && p.height > 0, `prop ${p.name} within budget (1 vertex-coloured geometry, ≤ 2k tris): ${p.tris}`);
   }
-  await g.eval(() => { const S = window.__p3; S.view([-14, 9, -14], [-20, 1, 2], 40); });
+  // close-ups (the camera looks toward +z, so screen right is −x): the front row in two halves, then the big props
+  await g.eval(() => { const S = window.__p3; S.view([-12, 6.5, -11], [-12, 0.8, 1], 50); });
   await shot(g, 'props-close', { hud: false, settle: false });
+  await g.eval(() => { const S = window.__p3; S.view([12, 6.5, -11], [12, 0.8, 1], 50); });
+  await shot(g, 'props-close-b', { hud: false, settle: false });
+  await g.eval(() => { const S = window.__p3; S.view([2, 12, -6], [2, 1.5, 14], 56); });
+  await shot(g, 'props-close-big', { hud: false, settle: false });
 }
 
 // ------------------------------------------------------------------ structure states and lazy realise (in the test level)
@@ -467,9 +513,16 @@ async function structureWorld(g) {
     const ctx = window.__game.ctx, ST = ctx.structures, V = ctx.THREE.Vector3;
     const p = ctx.player.pos, gh = (x, z) => ctx.world?.groundHeight?.(x, z) ?? 0;
     const at = (dx, dz) => new V(p.x + dx, gh(p.x + dx, p.z + dz), p.z + dz);
-    const gate = ST.place({ id: 'p3_gate', type: 'gate' }, at(70, 40), 0.3);
-    const pylon = ST.place({ id: 'p3_pylon', type: 'relay_pylon', destructible: { ap: 500, name: 'RELAY' } }, at(-60, 60), 0);
-    const bunker = ST.place({ id: 'p3_bunker', type: 'bunker', destructible: { ap: 800, name: 'BUNKER' } }, at(10, 110), 0.6);
+    // on the carved route bed ahead of the player (flat ground, as a level's flatten stamps would give), the gate
+    // across the route; without a route (stub world) at fixed offsets from the player
+    const W = ctx.world, onRoute = !!(W?.route && W?.resolve);
+    const sp = onRoute ? W.playArea(p.x, p.z).s : 0;
+    const R = (s, l, dx, dz) => (onRoute ? W.resolve({ s: sp + s, l }) : at(dx, dz));
+    const Y = (pos, extra) => (onRoute ? W.resolveYaw('route', pos) + extra : extra);
+    const gp = R(110, 0, 70, 40), pp = R(175, -26, -60, 60), bp = R(240, 18, 10, 110);
+    const gate = ST.place({ id: 'p3_gate', type: 'gate' }, gp, Y(gp, 0));
+    const pylon = ST.place({ id: 'p3_pylon', type: 'relay_pylon', destructible: { ap: 500, name: 'RELAY' } }, pp, 0);
+    const bunker = ST.place({ id: 'p3_bunker', type: 'bunker', destructible: { ap: 800, name: 'BUNKER' } }, bp, Y(bp, 0.6));
     ST.settle(p);
     const door = gate.anchors.door.clone(); door.y += 4;
     const pyl = pylon.pos.clone(); pyl.y += 10;
@@ -550,7 +603,15 @@ async function structureWorld(g) {
     const ctx = window.__game.ctx, ST = ctx.structures, V = ctx.THREE.Vector3;
     const types = ['container_stack', 'barricade', 'wall', 'bunker', 'watchtower', 'ruin_block', 'salvage_cache', 'checkpoint_beacon'];
     const far = ctx.tier.viewDistance + 200, p = ctx.player.pos;
-    const cx = p.x + far * 2.2, cz = p.z;
+    // the field sits on real terrain past the route's end (inside the generated bounds), its nearest structure beyond
+    // the realise distance; without a route (stub world) it goes 2.2 × that distance east
+    const Rt = ctx.world?.route;
+    let cx = p.x + far * 2.2, cz = p.z;
+    if (Rt?.pointAt && Rt?.tangentAt) {
+      const e = Rt.pointAt(Rt.length), tg = Rt.tangentAt(Rt.length);
+      let k = 600; while (k < 3000 && Math.hypot(e.x + tg.x * k - p.x, e.z + tg.z * k - p.z) < far + 560) k += 100;
+      cx = e.x + tg.x * k; cz = e.z + tg.z * k;
+    }
     const list = [];
     for (let i = 0; i < 200; i++) {
       const a = (i / 200) * Math.PI * 2 * 7, rr = 40 + (i % 50) * 9;
@@ -559,11 +620,12 @@ async function structureWorld(g) {
       list.push(ST.place({ id: 'lazy' + i, type: t, params: t === 'wall' ? { length: 30 + (i % 3) * 10 } : undefined }, new V(x, ctx.world?.groundHeight?.(x, z) ?? 0, z), a));
     }
     window.__p3w.lazy = list; window.__p3w.lazyAt = [cx, cz];
-    return { placed: list.length, rooted: list.filter(s => s.root).length, far, dist: Math.round(far * 2.2) };
+    let near = Infinity; for (const st of list) near = Math.min(near, Math.hypot(st.pos.x - p.x, st.pos.z - p.z));
+    return { placed: list.length, rooted: list.filter(s => s.root).length, far, dist: Math.round(near) };
   });
   await g.step(30);
   const lz1 = await g.eval(() => ({ rooted: window.__p3w.lazy.filter(s => s.root).length, realised: window.__game.ctx.structures.realised }));
-  g.assert(lz.placed === 200 && lz.rooted === 0 && lz1.rooted === 0, `placing 200 structures ${lz.dist} m away builds no meshes (${lz.rooted} → ${lz1.rooted} realised after 30 frames)`);
+  g.assert(lz.placed === 200 && lz.rooted === 0 && lz1.rooted === 0, `placing 200 structures (nearest ${lz.dist} m away; realise distance ${lz.far} m) builds no meshes (${lz.rooted} → ${lz1.rooted} realised after 30 frames)`);
   // move the focus among them: frame by frame, realise() runs at most once
   const lz2 = await g.eval(() => {
     const ctx = window.__game.ctx, ST = ctx.structures, [cx, cz] = window.__p3w.lazyAt;
@@ -580,7 +642,8 @@ async function structureWorld(g) {
   g.log('lazy realise per frame:', lz2.per.join(''));
   await g.step(150);
   const [lx, lzz] = await g.eval(() => window.__p3w.lazyAt);
-  await g.camera([lx - 260, 160, lzz - 260], [lx, 0, lzz]);
+  const lgh = await g.eval(([x, z]) => window.__game.ctx.world?.groundHeight?.(x, z) ?? 0, [lx, lzz]);
+  await g.camera([lx - 300, lgh + 230, lzz + 300], [lx, lgh, lzz]);
   await shot(g, 'lazy-realise-field', { hud: false, settle: false });
 }
 

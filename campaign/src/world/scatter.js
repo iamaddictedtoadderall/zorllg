@@ -310,15 +310,16 @@ function natMaterial(ctx, kind) {
     default: color = new THREE.Color('#888888');
   }
   const snowAmt = kind === 'rock' || kind === 'wood' ? (S.snow ?? 0) : 0;
-  const key = kind + ':' + color.getHexString() + ':' + snowAmt + ':' + (pal.snow || '');
+  let rockTex = null;
+  if (kind === 'rock' || kind === 'wood') { try { rockTex = ctx.world?.terrain?.uniforms?.tRock?.value || null; } catch (e) { rockTex = null; } }
+  const key = kind + ':' + color.getHexString() + ':' + snowAmt + ':' + (pal.snow || '') + ':' + (rockTex ? rockTex.uuid : '-');
   let m = MAT.get(key);
   if (m) return m;
   m = new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, vertexColors: true, side, envMapIntensity: env });
   m.name = 'prop-' + kind;
   if (kind === 'rock' || kind === 'wood') {
     // world-space triplanar detail (the terrain's packed rock map) and the level's snow cover on up-facing faces
-    let tex = null;
-    try { tex = ctx.world?.terrain?.uniforms?.tRock?.value || null; } catch (e) { tex = null; }
+    const tex = rockTex;
     const U = { tPropRock: { value: tex }, uPropSnow: { value: C(pal.snow, '#e8eef5') }, uPropSnowAmt: { value: snowAmt } };
     m.defines = { ...(m.defines || {}), PROP_ROCK: '' };
     if (!tex) m.defines.PROP_NOTEX = '';
@@ -381,6 +382,7 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Qua
 const _rc = { s: 0, l: 0, dist: 0 };
 const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, inside: false };
 const ckey = (i, j) => i * 100003 + j;
+const ORD = 16384, _ordD = new Float64Array(ORD), _ordI = new Int32Array(ORD), _ordA = new Array(ORD).fill(null);
 
 export class Scatter {
   constructor(ctx, hf, route, layers = [], exclusions = [], o = {}) {
@@ -663,20 +665,20 @@ export class Scatter {
       for (const B of M.batches) {
         if (!B.count) continue;
         const R = Math.ceil(B.maxDist / CELL), ci = Math.floor(fx / CELL), cj = Math.floor(fz / CELL);
-        // nearest cells first so a full mesh drops the farthest instances
-        const order = [];
+        // nearest cells first so a full mesh drops the farthest instances (module-level scratch: no allocation)
+        let nc = 0;
         for (let j = cj - R; j <= cj + R; j++) for (let i = ci - R; i <= ci + R; i++) {
           const arr = B.cells.get(ckey(i, j));
           if (!arr) continue;
           const ddx = Math.max(i * CELL - fx, 0, fx - (i + 1) * CELL), ddz = Math.max(j * CELL - fz, 0, fz - (j + 1) * CELL);
           const d2 = ddx * ddx + ddz * ddz;
-          if (d2 > B.maxDist2) continue;
-          order.push(d2, arr);
+          if (d2 > B.maxDist2 || nc >= ORD) continue;
+          _ordD[nc] = d2; _ordA[nc] = arr; _ordI[nc] = nc; nc++;
         }
-        const idx = []; for (let k = 0; k < order.length; k += 2) idx.push(k);
-        idx.sort((a, b) => order[a] - order[b]);
-        for (const k of idx) {
-          const arr = order[k + 1];
+        // insertion sort of the cell indices by distance (a few dozen cells, nearly sorted by the scan order)
+        for (let a = 1; a < nc; a++) { const v = _ordI[a], d = _ordD[v]; let b = a - 1; while (b >= 0 && _ordD[_ordI[b]] > d) { _ordI[b + 1] = _ordI[b]; b--; } _ordI[b + 1] = v; }
+        for (let q = 0; q < nc; q++) {
+          const arr = _ordA[_ordI[q]];
           for (let o = 0; o < arr.length; o += 19) {
             const x = arr[o + 17], z = arr[o + 18], d2 = (x - fx) * (x - fx) + (z - fz) * (z - fz);
             if (d2 > B.maxDist2) continue;
@@ -692,6 +694,7 @@ export class Scatter {
             n++;
           }
         }
+        for (let q = 0; q < nc; q++) _ordA[q] = null;
         rmax = Math.max(rmax, B.maxDist);
       }
       M.inst.count = n;

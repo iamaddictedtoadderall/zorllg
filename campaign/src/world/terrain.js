@@ -21,8 +21,9 @@
 // count and one index buffer).
 //
 // Vertex data: position (node-local x/z), normal (central differences on the node's own lattice, so same-level
-// neighbours agree exactly), colour (Uint16 linear: palette blend × baked sun term), `surf` (Uint8×4: flow, sediment,
-// sky AO, route-bed mask) and `morph` (target y, target normal xz, node size).
+// neighbours agree exactly), colour (Uint16 linear: the AD §3.3 palette blend × patchiness), `surf` (Uint8×4: flow,
+// baked sun visibility, sky AO, route-bed mask; the sun term multiplies the final albedo per pixel, which is arch §5.4's
+// "× baked lighting" applied after the shader's strata/path/snow colours) and `morph` (target y, target normal xz, size).
 // Material: AD §3.5 (two-scale soil, triplanar rock with strata ramp, macro noise, derivative bump, wetness, snow mask,
 // optional snow sparkle), TERRAIN_LITE on Low, then ctx.atmosphere.patchMaterial. The detail textures are this
 // module's own packed data maps (AD §3.6: R albedo variation, G height, B cavity, A roughness), generated per
@@ -33,7 +34,8 @@ import { createValueNoise2D, tileable2 } from '../core/noise.js';
 
 const ROOT = 1024, MIN = 128, MAXL = 3;
 const SPLIT_CAP = 1.8;
-const POOL_SPARE = 24;
+const POOL_SPARE = 16;
+const RETAIN = 240;            // selections a built but unused node is kept (update() selects once or twice per frame)
 const _col = new THREE.Color(), _c2 = new THREE.Color();
 const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, curv: 0, inside: false };
 const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere();
@@ -62,7 +64,7 @@ function worley(seed, cx, cz = cx) {
     out.f1 = f1; out.f2 = f2; out.id = id; return out;
   };
 }
-const _wo = { f1: 0, f2: 0, id: 0 };
+const _wo = { f1: 0, f2: 0, id: 0 }, _wo2 = { f1: 0, f2: 0, id: 0 };
 function makeData(size, fn, srgb = false) {
   const data = new Uint8Array(size * size * 4), o = [0, 0, 0, 0];
   for (let j = 0; j < size; j++) for (let i = 0; i < size; i++) {
@@ -134,7 +136,8 @@ function detailTextures(style, size, aniso) {
     soil = makeData(size, (u, v, o) => {
       // wind sastrugi: noise stretched 6:1 along u, plus sparse glassy ice pebbles
       const st = 0.55 * E(u * 4, v * 24) + 0.3 * A(u * 8, v * 48) + 0.15 * C(u * 64, v * 64);
-      const w = Wi(u, v, _wo), peb = smooth(0.3, 0.12, w.f1 * 1.0) * (hash1(w.id + 3) > 0.82 ? 1 : 0);
+      const w = Wi(u, v, _wo), pq = w.f1 / (0.14 + 0.16 * hash1(w.id + 9));
+      const peb = pq < 1 && hash1(w.id + 3) > 0.82 ? Math.sqrt(1 - pq * pq) : 0;
       o[0] = 0.52 + (st - 0.5) * 0.3 - peb * 0.1;
       o[1] = 0.25 + st * 0.6 + peb * 0.15;
       o[2] = 1 - smooth(0.32, 0.15, st) * 0.35;
@@ -160,16 +163,29 @@ function detailTextures(style, size, aniso) {
       o[0] = 0.45 + n * 0.25 - (1 - col) * 0.2; o[1] = 0.3 + col * 0.45 + n * 0.15; o[2] = 0.3 + col * 0.7; o[3] = 0.9;
     });
   } else {                         // 'grit' (default) and 'glass' (until it gets its own maps)
+    // AD §3.6 'grit': fine grain, wind ripples in sandy patches, dried-mud cracks in others, and gravel: domed pebbles of
+    // varied size (a dome, not a disc: a disc's edge shades as a ring and reads as a dimple) plus a few larger stones
     soil = makeData(size, (u, v, o) => {
       const base = 0.6 * A(u * 8, v * 8) + 0.4 * B(u * 32, v * 32);
       const fine = C(u * 64, v * 64);
-      const w = W(u, v, _wo), cr = hash1(w.id), patch = smooth(0.42, 0.62, E(u * 4 + 0.37, v * 4 + 0.11));
-      const peb = smooth(0.3, 0.16, w.f1 * 1.0) * (cr > 0.62 ? 1 : 0) * (0.4 + 0.6 * (1 - patch));
-      const crack = smooth(0.035, 0.0, w.f2 - w.f1) * 0.45 * patch;   // dried-mud cracks only in patches
-      o[0] = 0.5 + (base - 0.5) * 0.6 + (fine - 0.5) * 0.15 + peb * (hash1(w.id + 7) - 0.5) * 0.5 - crack * 0.3;
-      o[1] = base * 0.55 + peb * 0.45 - crack * 0.5 + (fine - 0.5) * 0.1;
-      o[2] = 1 - crack * 0.8;
-      o[3] = 0.82 - peb * 0.25 + (base - 0.5) * 0.2;
+      const patch = smooth(0.4, 0.66, E(u * 4 + 0.37, v * 4 + 0.11));          // 1: cracked mud, 0: sand and gravel
+      const sandy = smooth(0.45, 0.25, E(u * 4 + 0.71, v * 4 + 0.53)) * (1 - patch);
+      // ripples ≈ 30 cm apart across the tile's diagonal, wandering with the noise, only in the sandy patches
+      const rp = Math.sin(((u + v) * 14 + (B(u * 32, v * 32) - 0.5) * 1.6 + (E(u * 4, v * 4) - 0.5) * 1.2) * Math.PI * 2) * 0.5 + 0.5;
+      const ripple = (rp * rp) * sandy;
+      const w = W(u, v, _wo), cr = hash1(w.id);
+      const pr = 0.14 + 0.22 * hash1(w.id + 11), dq = w.f1 / pr;
+      const gravel = (cr > 0.5 ? 1 : 0) * (1 - patch * 0.85) * (1 - sandy * 0.7);
+      const peb = dq < 1 ? (1 - dq * dq) * (1 - dq * dq) * gravel : 0;          // a bell: shading spreads over the stone
+      const pebEdge = dq >= 1 && dq < 1.35 ? (1.35 - dq) / 0.35 * gravel : 0;    // a little contact shadow
+      const w2 = Wb(u, v, _wo2), sr = 0.16 + 0.16 * hash1(w2.id + 3), dq2 = w2.f1 / sr;
+      const stone = hash1(w2.id + 17) > 0.8 && dq2 < 1 ? (1 - dq2 * dq2) * (1 - patch * 0.6) : 0;
+      const crack = smooth(0.035, 0.0, w.f2 - w.f1) * 0.5 * patch;
+      o[0] = 0.5 + (base - 0.5) * 0.55 + (fine - 0.5) * 0.18 + peb * (hash1(w.id + 7) - 0.45) * 0.45 + stone * (hash1(w2.id + 5) - 0.6) * 0.5
+           - crack * 0.3 + ripple * 0.025 - pebEdge * 0.05 + patch * 0.03;
+      o[1] = 0.3 + base * 0.3 + ripple * 0.09 + peb * 0.3 + stone * 0.45 - crack * 0.45 + (fine - 0.5) * 0.08;
+      o[2] = 1 - crack * 0.8 - pebEdge * 0.35 - (1 - rp) * sandy * 0.08;
+      o[3] = 0.84 - peb * 0.22 - stone * 0.2 + (base - 0.5) * 0.16 - patch * 0.05;
     });
     rock = makeData(size, (u, v, o) => {
       const n = fbmT(u, v), st = strata(u, v, _st), hard = st.hard * st.round;
@@ -195,6 +211,8 @@ function detailTextures(style, size, aniso) {
 }
 /** extra (tools/tests): the cached detail maps of a surface style: { soil, rock, noise } DataTextures */
 export function terrainDetailTextures(style = 'grit', size = 512, aniso = 4) { return detailTextures(style, size, aniso); }
+/** extra (tests): drop the cached detail maps (cold-load timing) */
+export function clearTerrainCaches() { for (const T of TEX_CACHE.values()) for (const t of Object.values(T)) t.dispose(); TEX_CACHE.clear(); }
 /** 256 × 1 strata colour ramp (sRGB data texture) */
 function strataRamp(colors, seed) {
   const r = mulberry32(seed), n = 256, data = new Uint8Array(n * 4);
@@ -296,15 +314,24 @@ const F_ALBEDO = /* glsl */`
   float rockW = smoothstep( uRockSlope.x, uRockSlope.y, 1.0 - wn.y + ( soil.g - 0.5 ) * 0.12 );
   float band = vTW.y / uStrata.x + ( texture2D( tNoise, vTW.xz * 0.0015 ).g - 0.5 ) * uStrata.y + rk.g * 0.15;
   // explicit gradients of the unwrapped band: fract() would jump at every wrap and pick the smallest mip there (a line)
-  vec3 strataCol = textureGrad( tStrata, vec2( fract( band ), 0.5 ), vec2( dFdx( band ), 0.0 ), vec2( dFdy( band ), 0.0 ) ).rgb;
-  vec3 rockCol = mix( diffuseColor.rgb, strataCol, uStrata.z ) * ( 0.7 + 0.6 * rk.r );
-  vec3 soilCol = mix( diffuseColor.rgb * ( 0.82 + 0.36 * soil.r ), uPath * ( 0.9 + 0.2 * soil.r ), vSurf.a * 0.5 );
+  // two scales of layering: the ramp's fine beds (period strataHeight) and thick formations (≈ 4.3 × the period, offset
+  // along the ramp) that give a cliff a few big colour changes. The fine beds blur out with distance (a wider footprint
+  // on the ramp) so a far wall shows formations, not dozens of evenly spaced lines.
+  float tBlur = 1.0 + 6.0 * smoothstep( 150.0, 700.0, length( vViewPosition ) );
+  vec3 strataCol = textureGrad( tStrata, vec2( fract( band ), 0.5 ), vec2( dFdx( band ) * tBlur, 0.0 ), vec2( dFdy( band ) * tBlur, 0.0 ) ).rgb;
+  float band2 = band * 0.233 + 0.37;
+  vec3 formCol = textureGrad( tStrata, vec2( fract( band2 ), 0.5 ), vec2( dFdx( band2 ), 0.0 ), vec2( dFdy( band2 ), 0.0 ) ).rgb;
+  strataCol = mix( formCol, strataCol, 0.45 );
+  vec3 rockCol = mix( diffuseColor.rgb, strataCol, uStrata.z ) * ( 0.62 + 0.76 * rk.r );
+  // mid-scale patches (≈ 15 m blotches on a rotated 60 m tile) break up the soil between the vertex colour and the grain
+  float tPatch = texture2D( tNoise, tRot2( 0.37 ) * vTW.xz * 0.0167 ).r;
+  vec3 soilCol = mix( diffuseColor.rgb * ( 0.82 + 0.36 * soil.r ) * ( 0.86 + 0.28 * tPatch ), uPath * ( 0.9 + 0.2 * soil.r ), vSurf.a * 0.5 );
   vec3 col = mix( soilCol, rockCol, rockW ) * ( 0.86 + 0.28 * macro );
   col *= mix( 1.0, mix( soil.b, rk.b, rockW ), 0.55 ) * mix( 0.5, 1.0, vSurf.b );
   float wet = vSurf.r * uWet * ( 1.0 - rockW * 0.5 );
   col *= 1.0 - wet * 0.35;
   tSnowW = uSnow.x * smoothstep( uSnow.y, uSnow.z, wn.y + ( soil.g - 0.5 ) * 0.15 );
-  diffuseColor.rgb = mix( col, uSnowColor * ( 0.92 + 0.08 * soil.r ), tSnowW );
+  diffuseColor.rgb = mix( col, uSnowColor * ( 0.92 + 0.08 * soil.r ), tSnowW ) * ( 0.55 + 0.45 * vSurf.g );
   tH = mix( soil.g, rk.g, rockW ) * ( 1.0 - 0.7 * tSnowW );
   tHr = rk.g * ( 1.0 - 0.7 * tSnowW );
   tRockW = rockW;
@@ -318,6 +345,14 @@ const F_ROUGH = /* glsl */`
 const F_NORMAL = /* glsl */`
 {
   float tDist = length( vViewPosition );
+  // mid-scale relief at every distance (≈ 18 m swells over a 73 m rotated tile, plus a 32 m one): the vertex lattice
+  // is 4 to 16 m apart, so without it hills between 100 m and 1 km shade as smooth dunes
+#ifdef TERRAIN_LITE
+  float tMh = texture2D( tNoise, tRot2( 0.61 ) * vTW.xz * 0.0137 ).r;
+#else
+  float tMh = texture2D( tNoise, tRot2( 0.61 ) * vTW.xz * 0.0137 ).r + 0.5 * texture2D( tNoise, tRot2( -1.13 ) * vTW.xz * 0.031 ).r;
+#endif
+  normal = tPerturbH( - vViewPosition, normal, tMh * 4.0, uBump * ( 0.3 + 0.3 * tRockW ) * ( 1.0 - 0.6 * tSnowW ) );
 #ifdef TERRAIN_LITE
   normal = tPerturbH( - vViewPosition, normal, tH, uBump * 0.5 * ( 1.0 - smoothstep( 25.0, 40.0, tDist ) ) );
 #else
@@ -348,6 +383,7 @@ export class TerrainRenderer {
     this._pool = [];
     this._built = 0;
     this._frame = 0;
+    this._updates = 0;
     this._queue = [];
     this._drawn = [];
     this._lastCam = new THREE.Vector3(hf.bounds.x0, 50, hf.bounds.z0);
@@ -368,6 +404,9 @@ export class TerrainRenderer {
     for (const k of ['ground', 'rock', 'sediment', 'high', 'dust', 'wet']) this.pal[k] = new THREE.Color(pal[k]);
     this.palKey = JSON.stringify(pal);
     this.palRaw = pal;
+    // the vertex bake's coarse rock blend follows the art's per-pixel rock slope band (AD §3.5 uRockSlope)
+    const rs = this._art().surface?.rockSlope || this.art.surface?.rockSlope;
+    this.rockSlope = Array.isArray(rs) && rs.length === 2 ? [Number(rs[0]) || 0.16, Number(rs[1]) || 0.4] : [0.16, 0.4];
   }
   _makeMaterial() {
     const art = this._art(), S = art.surface || {}, pal = this.palRaw;
@@ -615,7 +654,7 @@ export class TerrainRenderer {
     const pal = this.pal, h20 = hf.h20 ?? 0, h80 = hf.h80 ?? 1;
     const gR = pal.ground.r, gG = pal.ground.g, gB = pal.ground.b, sR = pal.sediment.r, sG = pal.sediment.g, sB = pal.sediment.b;
     const hR = pal.high.r, hG = pal.high.g, hB = pal.high.b, rR = pal.rock.r, rG = pal.rock.g, rB = pal.rock.b;
-    const dR = pal.dust.r, dG = pal.dust.g, dB = pal.dust.b;
+    const dR = pal.dust.r, dG = pal.dust.g, dB = pal.dust.b, rs0 = this.rockSlope[0], rs1 = this.rockSlope[1];
     let minY = Infinity, maxY = -Infinity;
     const i2s = 1 / (2 * sp), i4s = 1 / (4 * sp);
     const vn = this._vn, isLow = n.L === 0;
@@ -653,15 +692,18 @@ export class TerrainRenderer {
       const cv = _bk.curv || 0;
       let r = gR, gg = gG, b = gB, t;
       t = sed * 0.8; r += (sR - r) * t; gg += (sG - gg) * t; b += (sB - b) * t;
-      t = Math.min(1, smooth(h20, h80, h) * 0.5 + (cv > 0 ? cv : 0) * 0.35); r += (hR - r) * t; gg += (hG - gg) * t; b += (hB - b) * t;
-      t = (cv < 0 ? -cv : 0) * 0.3; r += (sR * 0.8 - r) * t; gg += (sG * 0.8 - gg) * t; b += (sB * 0.8 - b) * t;
-      t = smooth(0.16, 0.4, slope); r += (rR - r) * t; gg += (rG - gg) * t; b += (rB - b) * t;
+      // ridges and crests paler (wind-scoured), hollows and gullies darker (AD §3.1)
+      t = Math.min(1, smooth(h20, h80, h) * 0.45 + (cv > 0 ? cv : 0) * 0.55); r += (hR - r) * t; gg += (hG - gg) * t; b += (hB - b) * t;
+      t = (cv < 0 ? -cv : 0) * 0.45; r += (sR * 0.7 - r) * t; gg += (sG * 0.7 - gg) * t; b += (sB * 0.7 - b) * t;
+      t = smooth(rs0, rs1, slope); r += (rR - r) * t; gg += (rG - gg) * t; b += (rB - b) * t;
       t = _bk.bed * 0.6; r += (dR - r) * t; gg += (dG - gg) * t; b += (dB - b) * t;
-      const light = (0.88 + 0.24 * vn(x / 37, z / 37)) * (0.55 + 0.45 * _bk.sun);
+      // patchiness here; the baked sun term (arch §5.4) rides surf.g and multiplies the final albedo in the shader, so
+      // the strata, path and snow colours that replace the vertex colour per pixel are shaded by it too
+      const light = 0.88 + 0.24 * vn(x / 37, z / 37);
       r *= light; gg *= light; b *= light;
       C[v * 3] = (r > 1 ? 1 : r) * 65535; C[v * 3 + 1] = (gg > 1 ? 1 : gg) * 65535; C[v * 3 + 2] = (b > 1 ? 1 : b) * 65535;
       const fl = _bk.flow * 1.3;
-      SF[v * 4] = (fl > 1 ? 1 : fl) * 255; SF[v * 4 + 1] = sed * 255; SF[v * 4 + 2] = _bk.sky * 255; SF[v * 4 + 3] = _bk.bed * 255;
+      SF[v * 4] = (fl > 1 ? 1 : fl) * 255; SF[v * 4 + 1] = _bk.sun * 255; SF[v * 4 + 2] = _bk.sky * 255; SF[v * 4 + 3] = _bk.bed * 255;
     }
     void isLow;
     // skirts
@@ -702,12 +744,15 @@ export class TerrainRenderer {
     else slot.geo.dispose();
   }
   _evict(cx, cz) {
-    const far = this.viewDist * 1.45;
+    // a built node that no selection has used (drawn, an ancestor of a drawn node, or prefetched) for RETAIN selections
+    // (≈ 2 to 4 s of play), or that lies beyond the view distance, returns its geometry to the pool: the built set
+    // tracks the working set, so memory after any flight returns to what the same view needed before it
+    const far = this.viewDist * 1.45, stale = this._frame - RETAIN;
     let over = this._built - this.cacheMax;
     const old = [];
     for (const n of this._nodes.values()) {
       if (!n.mesh || n.used === this._frame) continue;
-      if (this._dist(n, cx, cz) > far) { this._release(n); continue; }
+      if (n.used < stale || this._dist(n, cx, cz) > far) { this._release(n); continue; }
       if (over > 0) old.push(n);
     }
     over = this._built - this.cacheMax;
@@ -745,7 +790,7 @@ export class TerrainRenderer {
       if (built) this._select(cam.x, cam.z);
     }
     // eviction walks every known node: every 15 frames, or now when the cache is over its cap
-    if (this._built > this.cacheMax || (this._frame % 15) === 0) this._evict(cam.x, cam.z);
+    if (this._built > this.cacheMax || (++this._updates % 15) === 0) this._evict(cam.x, cam.z);
     this._shadows(focus || cam);
     this._count();
   }

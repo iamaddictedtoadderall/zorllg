@@ -36,10 +36,11 @@ const CSS = `
 #comms.italic .line{font-style:italic}
 #comms[data-style=system]{background:linear-gradient(90deg,rgba(6,7,9,.86),rgba(6,7,9,.4));border-left-style:solid}
 #comms[data-style=system] .line{letter-spacing:.06em}
-#comms .stat{position:absolute;inset:0;pointer-events:none;opacity:calc(var(--static,0) * .7);mix-blend-mode:screen;
+#comms .stat{position:absolute;inset:0;pointer-events:none;opacity:calc(var(--static,0) * .7);mix-blend-mode:screen;display:none;
   background:repeating-linear-gradient(0deg,rgba(233,227,211,.13) 0 1px,transparent 1px 3px),
              linear-gradient(90deg,transparent,rgba(233,227,211,.06) 40%,transparent 60%);
-  background-size:100% 9px,300% 100%;animation:commsStatic .22s steps(3) infinite}
+  background-size:100% 9px,300% 100%}
+#comms.static .stat{display:block;animation:commsStatic .22s steps(3) infinite}
 @keyframes commsStatic{0%{background-position:0 0,0 0}33%{background-position:0 -4px,40% 0}66%{background-position:0 3px,90% 0}}
 #comms.chiming .line::after{content:"";display:inline-block;width:7px;height:7px;margin-left:2px;border-radius:50%;
   background:var(--spk);animation:commsChime .35s ease-in-out infinite alternate}
@@ -95,7 +96,9 @@ export function install(ctx) {
     const name = sp.name ?? cur.who;
     if (box) {
       box.style.setProperty('--spk', sp.color || 'var(--hud)');
-      box.style.setProperty('--static', String(Math.max(0, Math.min(1, +sp.static || 0))));
+      const stat = Math.max(0, Math.min(1, +sp.static || 0));
+      box.style.setProperty('--static', String(stat));
+      box.classList.toggle('static', stat > 0);   // the static layer (and its infinite animation) only when needed
       box.style.setProperty('--cw', String(sp.weight || 400));
       box.dataset.style = sp.style || 'radio';
       box.dataset.font = FONTS.has(sp.font) ? sp.font : 'mono';

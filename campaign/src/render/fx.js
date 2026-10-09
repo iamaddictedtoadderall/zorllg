@@ -67,7 +67,7 @@ export function install(ctx) {
       // a soft leading band (heat and dust pushed outward) that widens as it slows, and a faint haze inside it
       float w = mix(0.09, 0.26, uK);
       float band = exp(-pow((r - (1.0 - w)) / w, 2.0)) * (0.75 + 0.25 * sin(atan(vP.y, vP.x) * 7.0 + r * 9.0));
-      float trail = smoothstep(0.1, 1.0 - w, r) * (1.0 - smoothstep(1.0 - w, 1.0, r)) * 0.3;
+      float trail = smoothstep(0.1, 1.0 - w, r) * (1.0 - smoothstep(1.0 - w, 1.0, r)) * 0.12;
       float a = (band + trail) * uO * (1.0 - cFogAmount(vW) * 0.8);
       gl_FragColor = vec4(uCol * a, 1.0);
       #include <tonemapping_fragment>
@@ -132,7 +132,7 @@ export function install(ctx) {
     const [r, g, b] = color || [1, 0.7, 0.3];
     for (let i = 0; i < n; i++) {
       add.spawn(pos.x, pos.y, pos.z, R(-1, 1) * speed, R(-0.3, 1.2) * speed, R(-1, 1) * speed, R(0.15, 0.45), R(0.12, 0.3), 0.04,
-                r * 3, g * 3, b * 3, 1, 3, 30, 1);
+                r * 2.6, g * 2.2, b * 1.8, 1, 3, 30, 1);   // HDR but hue-keeping: hot sparks read orange-yellow, not white
     }
   }
   function dust(pos, n = 12, spread = 6, color) {
@@ -168,15 +168,22 @@ export function install(ctx) {
       // flash: a short white-yellow core and a star flare, gone before the fireball peaks
       add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.13, 4 * s, 11 * s, 1.5, 1.1, 0.62, 1, 0, 0, 7);
       add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.07, 7 * s, 12 * s, 0.9, 0.7, 0.45, 1, 0, 0, 2);
-      // fireball billows inside a sphere of radius 2s, expanding 3s → 9s, cooling from yellow-orange to deep red; kept
-      // well under white so the body reads as fire with structure, not as a bloom blob
-      const nf = Math.max(3, Math.round(R(8, 14) * k));
+      // fireball (AD §6.6): billows inside a sphere of radius 2s, expanding 3s → 9s over ~0.6 s, hot yellow-orange
+      // cooling to deep red as they burn out (particle shader), then a few slower rolling billows that rise into the
+      // smoke; kept under white so the body reads as fire with structure, not as a bloom blob
+      const nf = Math.max(4, Math.round(R(9, 14) * k));
       for (let i = 0; i < nf; i++) {
         _v.set(R(-1, 1), R(-0.25, 1), R(-1, 1)).normalize();
-        const sp = R(3, 11) * sq, rr = 2 * s * Math.sqrt(Math.random()), hot = R(0.85, 1.2);
+        const sp = R(4, 12) * sq, rr = 2 * s * Math.sqrt(Math.random()), hot = R(0.85, 1.15);
         add.spawn(pos.x + _v.x * rr, pos.y + Math.abs(_v.y) * rr * 0.8, pos.z + _v.z * rr,
-                  _v.x * sp, _v.y * sp + 3, _v.z * sp, R(0.5, 0.9), 2.6 * s * R(0.8, 1.2), 8 * s * R(0.8, 1.2),
-                  1.05 * hot, 0.5 * hot, 0.15 * hot, 1, 3, -3, 3);
+                  _v.x * sp, _v.y * sp + 3, _v.z * sp, R(0.65, 1.05), 3 * s * R(0.8, 1.2), 9.5 * s * R(0.8, 1.15),
+                  0.62 * hot, 0.3 * hot, 0.1 * hot, 1, 2.6, -3, 3);   // additive: ~6 overlap at the centre → hot yellow core, red rim
+      }
+      const nr = Math.max(2, Math.round(4 * k));
+      for (let i = 0; i < nr; i++) {
+        const a = Math.random() * TAU, rr = R(0.5, 1.5) * s;
+        add.spawn(pos.x + Math.cos(a) * rr, pos.y + R(0.5, 2) * s, pos.z + Math.sin(a) * rr, Math.cos(a) * R(1, 3) * sq, R(4, 8) * sq, Math.sin(a) * R(1, 3) * sq,
+                  R(1.0, 1.5), 4 * s, 8 * s, 0.5, 0.2, 0.06, 0.85, 1.4, -2, 3);
       }
       // sparks: 30s streaks, speed 40√s
       const ns = Math.round(30 * s * k);
@@ -230,12 +237,26 @@ export function install(ctx) {
     const [len, col, kk, nsp, cd, ld] = M;
     const dx = dir?.x ?? 0, dy = dir?.y ?? 0, dz = dir?.z ?? -1;
     const j = R(0.85, 1.15);
-    // the flash: a core flare, a streak along the barrel and two short side petals
-    add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.05, len * 0.55 * j, len * 0.7 * j, col[0] * kk, col[1] * kk, col[2] * kk, 1, 0, 0, 2);
-    const v = len / 0.045;
-    add.spawn(pos.x + dx * len * 0.3, pos.y + dy * len * 0.3, pos.z + dz * len * 0.3, dx * v, dy * v, dz * v, 0.045,
-              len * 0.35, len * 0.25, col[0] * kk, col[1] * kk, col[2] * kk, 1, 0, 0, 1);
-    add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.06, len * 0.25, len * 0.3, col[0] * kk * 0.6, col[1] * kk * 0.6, col[2] * kk * 0.6, 1, 0, 0, 7);
+    // the flash (AD §6.3): a small white-hot core, a coloured body (the kind's hue, kept saturated so player rounds
+    // read warm, enemy plasma red-orange and the rail cyan) and a streak (or a fan for the shotgun) along the barrel
+    const v = len / 0.045, ck = kk * 0.55;
+    add.spawn(pos.x + dx * len * 0.1, pos.y + dy * len * 0.1, pos.z + dz * len * 0.1, 0, 0, 0, 0.05, len * 0.22 * j, len * 0.3 * j,
+              1.6 + col[0] * 0.6, 1.4 + col[1] * 0.6, 1.1 + col[2] * 0.6, 1, 0, 0, 7);
+    if (kind === 'plasma') {   // a soft orb, no petals
+      add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.08, len * 0.7 * j, len * 1.0 * j, col[0] * ck, col[1] * ck, col[2] * ck, 1, 0, 0, 0);
+    } else {                   // a ragged burst (the noisy fireball cell, gone in two frames) pushed out of the barrel
+      add.spawn(pos.x + dx * len * 0.25, pos.y + dy * len * 0.25, pos.z + dz * len * 0.25, dx * v * 0.15, dy * v * 0.15, dz * v * 0.15, 0.05,
+                len * 0.45 * j, len * 0.6 * j, col[0] * ck, col[1] * ck * 0.9, col[2] * ck * 0.8, 1, 0, 0, 3);
+    }
+    // the main tongue along the barrel, plus two short side petals (a fan of three for the shotgun)
+    const fan = kind === 'shotgun' ? 3 : kind === 'plasma' ? 1 : 3;
+    for (let f = 0; f < fan; f++) {
+      const side = fan > 1 ? f - 1 : 0, main = side === 0 || kind === 'shotgun';
+      const sx = side * (kind === 'shotgun' ? 0.22 : R(0.35, 0.6)), sy = R(-0.08, 0.08);
+      const ex = dx + sx * dz, ey = dy + sy, ez = dz - sx * dx, kl = main ? 1 : 0.45;
+      add.spawn(pos.x + ex * len * 0.3 * kl, pos.y + ey * len * 0.3 * kl, pos.z + ez * len * 0.3 * kl, ex * v * kl, ey * v * kl, ez * v * kl, 0.045,
+                len * 0.32 * kl, len * 0.22 * kl, col[0] * kk * 0.8, col[1] * kk * 0.72, col[2] * kk * 0.6, 1, 0, 0, 1);
+    }
     for (let i = 0; i < nsp; i++) {
       const sp = R(15, 40);
       add.spawn(pos.x, pos.y, pos.z, dx * sp + R(-6, 6), dy * sp + R(-4, 6), dz * sp + R(-6, 6), R(0.08, 0.2), 0.12, 0.03,
@@ -250,7 +271,9 @@ export function install(ctx) {
       }
       if (kind === 'cannon' && pos.y - groundAt(pos.x, pos.z) < 4) dust(_v.set(pos.x, groundAt(pos.x, pos.z), pos.z), 6, 3);
     }
-    if (kind === 'rail') shockwave(pos, 2.5, '#bff4ff', 0.18);
+    if (kind === 'rail') { shockwave(pos, 2.5, '#bff4ff', 0.18); add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.12, len * 0.4, len * 0.9, 0.5, 1.4, 1.8, 1, 0, 0, 4); }
+    if (kind === 'cannon') add.spawn(pos.x + dx * len * 0.4, pos.y + dy * len * 0.4, pos.z + dz * len * 0.4, dx * 8, dy * 8, dz * 8, 0.1, len * 0.4, len * 0.8,
+                                     1.2, 0.55, 0.2, 1, 2, 0, 3);
   }
   function impact(pos, normal, kind = 'bullet', surface = 'ground') {
     if (!pos) return;
@@ -287,7 +310,7 @@ export function install(ctx) {
       const ns = Math.round(S.sparks * mult * k * (kind === 'blade' ? 3 : 1));
       for (let i = 0; i < ns; i++) {
         _v.copy(n).multiplyScalar(R(8, 30)).add(_v2.set(R(-10, 10), R(-4, 10), R(-10, 10)));
-        add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.12, 0.4), R(0.15, 0.3), 0.04, 2.6, 1.6, 0.7, 1, 3, 30, 1);
+        add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.12, 0.4), R(0.12, 0.26), 0.04, 2.4, 1.2, 0.42, 1, 3, 30, 1);
       }
       if (surface === 'metal') add.spawn(pos.x + n.x * 0.1, pos.y + n.y * 0.1, pos.z + n.z * 0.1, 0, 0, 0, 0.07, 0.6 * mult, 0.9 * mult, 2.2, 1.8, 1.3, 1, 0, 0, 2);
     }
@@ -373,7 +396,7 @@ export function install(ctx) {
     r.mesh.position.copy(pos);
     r.r = Math.max(0.1, +radius || 1); r.dur = Math.max(0.05, +duration || 0.5); r.t = 0; r.alive = true;
     r.col.set(color ?? '#ffffff');
-    r.mesh.material.uniforms.uCol.value.copy(r.col).multiplyScalar(0.75);
+    r.mesh.material.uniforms.uCol.value.copy(r.col).multiplyScalar(0.55);
     r.mesh.material.uniforms.uO.value = 1; r.mesh.material.uniforms.uK.value = 0;
     r.mesh.scale.setScalar(0.01);
     r.mesh.visible = true;
@@ -443,8 +466,8 @@ export function install(ctx) {
           const fr = c ? c[0] : 1, fg = c ? c[1] : 0.46, fb = c ? c[2] : 0.12;
           const hot = Math.random();
           // tongues: rising flame billows that shrink and cool (cell 3 cools to deep red over its life)
-          add.spawn(p.x + R(-0.8, 0.8) * s, p.y + R(0, 0.5) * s, p.z + R(-0.8, 0.8) * s, R(-0.4, 0.4) + windX() * 0.3, R(2.5, 5.5) * s, R(-0.4, 0.4) + windZ() * 0.3,
-                    R(0.45, 0.85), R(1.0, 1.6) * s, 0.25 * s, fr * (0.8 + hot * 0.5), fg * (0.7 + hot * 0.5), fb * (0.7 + hot * 0.4), 1, 1.2, -3, 3);
+          add.spawn(p.x + R(-0.8, 0.8) * s, p.y + R(0, 0.5) * s, p.z + R(-0.8, 0.8) * s, R(-0.4, 0.4) + windX() * 0.3, R(3, 6) * s, R(-0.4, 0.4) + windZ() * 0.3,
+                    R(0.55, 0.95), R(1.3, 1.9) * s, 0.35 * s, fr * (1.1 + hot * 0.6), fg * (1.0 + hot * 0.6), fb * (0.9 + hot * 0.5), 1, 1.0, -3, 3);
           // licks: thin streaks along the updraft
           if (Math.random() < 0.5) add.spawn(p.x + R(-0.6, 0.6) * s, p.y + R(0.3, 1.2) * s, p.z + R(-0.6, 0.6) * s, windX() * 0.3, R(4, 8) * s, windZ() * 0.3,
                                              R(0.25, 0.45), R(0.35, 0.6) * s, 0.1 * s, fr * 1.3, fg * 1.1, fb * 0.9, 1, 1.5, -2, 1);

@@ -1,36 +1,79 @@
 // tools/scenarios/p2-world.mjs (P2): World acceptance (arch §10.5) and the addendum P2 items (A6).
 //
-//   node tools/playtest.mjs --scenario p2-world --port 8420 --out /tmp/campaign-playtest/P2-p2-world
-//   options (--param k=v): p2=look  only the look shots (load, 10 route points, snow preset)
+//   node tools/playtest.mjs --scenario p2-world --port 8420 --out /tmp/campaign-playtest/P2-p2-world --timeout 5400
+//   options (--param k=v): p2=look  only the look shots (load, 10 route points, close-ups, props, snow preset)
 //                          p2=fast  everything except the screenshots
+//   In the shared sandbox (load averages of 30 to 45 on 4 cores) a full run takes 45 to 90 minutes, so pass a
+//   --timeout well above the default 600 s; the two modes can run as separate processes on different ports.
+//   Screenshots go through robustShot(): a warm render inside an evaluate, then a page screenshot with a 240 s timeout,
+//   then the WebGL canvas itself if the compositor still can't deliver.
 //
 // It builds an inline LevelDef: a 4.5 km route, 1.2 km wide corridor (halfWidth 600), with macro features, stamps on
 // and off the route, a few structures and a full natural scatter, then checks:
-//   1. world.load completes; the cold build time is logged (target ≤ 8 s in the headless sandbox)
+//   1. world.load completes; the cold build time is logged, as wall time and as the renderer's CPU time (target ≤ 8 s
+//      in the headless sandbox: asserted on wall time when the sandbox is idle, on CPU time when it is oversubscribed)
 //   2. 10 evenly spaced route points: settle, no holes, no pending, rendered edges match their neighbours (no cracks),
 //      gameplay + free-camera screenshots; a forward flight checks the rendered surface never jumps (no LOD popping)
 //   3. |groundHeight − heightAt| ≤ 0.6 m on 2,000 random corridor points; groundHeight matches a THREE.Raycaster hit
 //      on the settled 2 m mesh within 0.02 m on 200 points
 //   4. at |l| = 1.1 × halfWidth the ground is ≥ 100 m above the route bed for ≥ 90 % of samples; bed grade ≤ 10 %
 //   5. a free camera flown s 0 → end → 0 at 80 m/s with step(): terrain pending ≤ 64; geometries back within 10 %
+//      (both counts taken in the same steady state: settled at s 0, then 300 idle frames)
 //   6. collision unit tests (box, obox, circle resolve; supportHeight; ceilings; segment vs boxes and ground; LOS)
 //   7. scatter: visible instances > 0; two loads give an identical prop-collider hash
 //   8. High budget at the 10 points: terrain triangles ≤ 0.7 M; terrain + scatter draw calls ≤ 120 (main pass)
 // Addendum: ice_shard / snow_drift registered and placed; ColliderOpts.surface passes any string; the snowy-ice art
 // preset (AD §3.5 material with surface.snow, palette.snow, palette.strata) on High and Low (TERRAIN_LITE).
 
+import { readFileSync, readdirSync } from 'node:fs';
+import { cpus, loadavg } from 'node:os';
+
+/** CPU seconds (user + sys) of the renderer processes this harness launched (descendants of this node process). The
+ *  sandbox is shared by several engineers' browsers (load averages of 30 to 45 on 4 cores are common), so wall time
+ *  measures the queue for a core; the renderer's CPU time is what the load itself costs. */
+function rendererCpu() {
+  const kids = new Map();
+  for (const d of readdirSync('/proc')) {
+    if (!/^\d+$/.test(d)) continue;
+    try {
+      const st = readFileSync(`/proc/${d}/stat`, 'utf8'), r = st.slice(st.lastIndexOf(')') + 2).split(' ');
+      if (!kids.has(+r[1])) kids.set(+r[1], []);
+      kids.get(+r[1]).push({ pid: +d, cpu: (+r[11] + +r[12]) / 100 });
+    } catch (e) { /* the process exited */ }
+  }
+  let sum = 0;
+  const walk = (pid, depth) => {
+    if (depth > 8) return;
+    for (const k of kids.get(pid) || []) {
+      let cmd = '';
+      try { cmd = readFileSync(`/proc/${k.pid}/cmdline`, 'utf8'); } catch (e) { /* gone */ }
+      if (cmd.includes('--type=renderer')) sum += k.cpu;
+      walk(k.pid, depth + 1);
+    }
+  };
+  walk(process.pid, 0);
+  return sum;
+}
+
 const ROUTE = { points: [[0, 0], [90, -900], [-70, -1800], [80, -2700], [-60, -3600], [0, -4500]], halfWidth: 600 };
 
+// AD §5.7 L3 (Gerrow Canyon) recipe, minus the deferred fields: a real level palette for judging the canyon look
 export const DESERT_ART = {
-  palette: { ground: '#7a5a44', rock: '#4f3a2e', sediment: '#9a6a48', high: '#a88e76', dust: '#b8a084', wet: '#3a2a22',
-             concrete: '#6d6560', rust: '#6e3a24', accent: '#e0913c',
-             strata: ['#5b4232', '#7a5a44', '#8d6a50', '#4a362c', '#a07a5a', '#6a4c3a'] },
-  sky: { top: '#24314d', mid: '#8a6658', horizon: '#c99a7a', sun: { azimuth: 115, elevation: 24, color: '#ffc890' },
-         clouds: { cover: 0.25 }, ridges: { height: 2 } },
-  fog: { density: 0.0008, heightFalloff: 0.006, inscatter: 0.6 },
-  light: { sun: 6.5, hemi: 1.6, rim: 2.2, exposure: 1.0 },
-  weather: { type: 'dust', intensity: 0.15, wind: [2, 0.5] },
-  surface: { style: 'grit', strataHeight: 9, strataStrength: 0.75, wetness: 0.45 },
+  toneMapping: 'aces',
+  palette: { ground: '#8a4a2c', rock: '#7a3a22', sediment: '#a0603a', high: '#c08a5e', dust: '#d8a07a',
+             wet: '#3a1e12', concrete: '#6e665c', rust: '#7a4128', accent: '#ff9a2e',
+             strata: ['#7a3a22', '#a8583a', '#c9845a', '#5e2a1a', '#e0b48a', '#8a4428'] },
+  sky: { top: '#4f86c6', mid: '#b9d3e8', horizon: '#f2efe9',
+         sun: { azimuth: 105, elevation: 32, color: '#fff0d8', size: 1, glow: 0.7 },
+         clouds: { cover: 0.12, color: '#ffffff' }, ridges: { height: 0.6, color: '#b07a5a' } },
+  fog: { color: '#e9d9c8', density: 0.0012, heightFalloff: 0.004, inscatter: 0.6, sunColor: '#fff4e0' },
+  light: { sun: 8.5, sunColor: '#fff0d8', hemi: 1.1, hemiSky: '#8fb3d9', hemiGround: '#5a2a1a',
+           rim: 1.8, rimColor: '#c86a40', exposure: 0.95, env: 0.8 },
+  grade: { contrast: 1.14, saturation: 1.08, lift: [0.0, 0.0, 0.01], shadowsTint: [0.9, 0.95, 1.1],
+           highlightsTint: [1.04, 1.0, 0.94], vignette: 0.3, grain: 0.03 },
+  bloom: { strength: 0.7, threshold: 0.9 },
+  weather: { type: 'dust', intensity: 0.25, wind: [1, -2] },
+  surface: { style: 'grit', rockSlope: [0.25, 0.45], strataHeight: 9, strataWarp: 1.5, strataStrength: 0.9, wetness: 0.7 },
   scatter: [
     { prop: 'rock_medium', density: 5, scale: [0.7, 2.6], slope: [0, 0.8], collide: true, collideMinScale: 1.8 },
     { prop: 'rock_large', density: 1.4, scale: [1, 2.6], slope: [0.12, 0.9], collide: true, collideMinScale: 1.4, castShadow: true },
@@ -60,6 +103,30 @@ export const SNOW_ART = {
     { prop: 'spire', density: 0.06, scale: [1.5, 3], slope: [0, 0.35], avoidRoute: true, collide: true, castShadow: true },
   ],
 };
+
+/** g.shot replacement for a loaded sandbox (see the scenario body). Returns the file path. */
+export async function robustShot(g, name, o = {}) {
+  const hud = o.hud !== false;
+  const file = `${g.out}/${name}.png`;
+  await g.eval(async (hud) => {
+    await window.__game.settle();
+    window.__game.hud(hud);
+    window.__game.render();
+    const gl = window.__game.ctx.renderer.getContext();
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+  }, hud);
+  try {
+    await g.page.screenshot({ path: file, timeout: 240000 });
+  } catch (e) {
+    g.log(`shot ${name}: page screenshot failed (${String(e.message || e).split('\n')[0]}); saving the canvas`);
+    const url = await g.eval(() => { window.__game.render(); return window.__game.ctx.renderer.domElement.toDataURL('image/png'); });
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(file, Buffer.from(url.split(',')[1], 'base64'));
+  }
+  if (!hud) await g.eval(() => window.__game.hud(true));
+  console.log('[playtest] shot', file);
+  return file;
+}
 
 export function levelDef(id, art, seed = 5150) {
   return {
@@ -100,24 +167,10 @@ export function levelDef(id, art, seed = 5150) {
 }
 
 export default async function (g) {
-  // a full-quality frame in SwiftShader can take 10–20 s right after the view changes; render once (and flush) inside an
-  // evaluate first so the harness screenshot (30 s timeout) only waits for the second, warm frame
-  const shot0 = g.shot.bind(g);
-  g.shot = async (name, o = {}) => {
-    await g.eval(async () => {
-      await window.__game.settle();
-      window.__game.render();
-      const gl = window.__game.ctx.renderer.getContext(), px = new Uint8Array(4);
-      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    });
-    try { return await shot0(name, { ...o, settle: false }); }
-    catch (e) {
-      // a heavily loaded sandbox can still miss the 30 s screenshot deadline: render warm again and retry once
-      g.log(`shot ${name} retry: ${String(e.message || e).split('\n')[0]}`);
-      await g.eval(() => { window.__game.render(); const gl = window.__game.ctx.renderer.getContext(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)); });
-      return shot0(name, { ...o, settle: false });
-    }
-  };
+  // screenshots in a shared, heavily loaded sandbox: render once warm inside an evaluate (a full-quality SwiftShader
+  // frame can take 10–20 s right after the view changes), then take the page screenshot with a long timeout; if the
+  // compositor still can't deliver, save the WebGL canvas itself (preserveDrawingBuffer is on with debug=1)
+  g.shot = (name, o = {}) => robustShot(g, name, o);
   const mode = (g.args.params || []).map(p => p.split('=')).find(([k]) => k === 'p2')?.[1] || 'all';
   const shots = mode !== 'fast', checks = mode !== 'look';
   const DEF = levelDef('p2world', DESERT_ART);
@@ -132,7 +185,21 @@ export default async function (g) {
                                       cells: [window.__game.ctx.world.heightfield.nx, window.__game.ctx.world.heightfield.nz] }));
   g.log('world.load timings (ms):', load.t, 'heightfield:', load.hf, 'grid', load.cells);
   g.assert(s0.state === 'playing' && s0.world, `world.load completed (state ${s0.state})`);
-  g.assert(load.t.total <= 8000, `world.load ≤ 8 s in the sandbox (cold: ${load.t.total} ms, heightfield ${load.t.heightfield} ms)`);
+  // the cold build time: world.load alone (caches dropped, the art applied first as flow does), wall and renderer CPU
+  const cpu0 = rendererCpu(), la0 = loadavg()[0];
+  const cold = await g.eval(async (DEF) => {
+    const H = await import(new URL('src/world/heightfield.js', location.href).href);
+    const T = await import(new URL('src/world/terrain.js', location.href).href);
+    H.clearHeightfieldCache?.(); T.clearTerrainCaches?.();
+    const c = window.__game.ctx, t0 = performance.now();
+    await c.world.load(DEF, { spawnAt: DEF.checkpoints[0].at });
+    return { wall: performance.now() - t0, t: c.world.timings, stages: c.world.heightfield.stats.stages };
+  }, DEF);
+  const cpu = rendererCpu() - cpu0, la = (la0 + loadavg()[0]) / 2, ncpu = cpus().length;
+  g.log(`cold world.load: wall ${(cold.wall / 1000).toFixed(2)} s, renderer CPU ${cpu.toFixed(2)} s, load average ${la.toFixed(1)} on ${ncpu} cores`, cold.t, cold.stages);
+  if (la < ncpu) g.assert(cold.wall <= 8000, `world.load ≤ 8 s in the sandbox (cold wall ${(cold.wall / 1000).toFixed(2)} s, CPU ${cpu.toFixed(2)} s)`);
+  else g.assert(cpu <= 8, `world.load ≤ 8 s in the sandbox: renderer CPU ${cpu.toFixed(2)} s (wall ${(cold.wall / 1000).toFixed(2)} s while the sandbox ran at load ${la.toFixed(1)} on ${ncpu} cores)`);
+  await g.startLevel(DEF, 'cp0');          // back to a flow-started level (the reload is served from the build cache)
   const length = await g.eval(() => window.__game.ctx.world.route.length);
 
   // ------------------------------------------------------------------ 2 + 8. ten route points
@@ -276,8 +343,9 @@ export default async function (g) {
       // render at a small viewport during the flight (uploads and disposals are what count, not pixels)
       const rr = c.renderer, size = rr.getSize(new T.Vector2()), pr = rr.getPixelRatio();
       rr.setPixelRatio(1); rr.setSize(320, 180, false);
+      // steady state at the start: settle, then idle long enough for the terrain cache to drop what this view doesn't use
       at(0); c.cameraRig.setFree(true, { pos, look });
-      G.step(1); w.terrain.settle(c.camera.position); G.render();
+      G.step(1); w.terrain.settle(c.camera.position); G.step(300); G.render();
       const geo0 = c.renderer.info.memory.geometries, built0 = w.terrain.stats().built;
       let maxPend = 0, frames = 0;
       const leg = (from, to) => {
@@ -290,7 +358,8 @@ export default async function (g) {
         }
       };
       leg(0, r.length); leg(r.length, 0);
-      at(0); c.cameraRig.setFree(true, { pos, look }); G.step(2); w.terrain.settle(c.camera.position); G.render();
+      // the same steady state at the same spot after the round trip
+      at(0); c.cameraRig.setFree(true, { pos, look }); G.step(2); w.terrain.settle(c.camera.position); G.step(300); G.render();
       const geo1 = c.renderer.info.memory.geometries;
       rr.setPixelRatio(pr); rr.setSize(size.x, size.y, false);
       return { maxPend, frames, geo0, geo1, built0, built1: w.terrain.stats().built, st: w.terrain.stats() };

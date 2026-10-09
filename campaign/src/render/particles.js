@@ -147,6 +147,7 @@ export class ParticleSystem {
   constructor(ctx, o = {}) {
     this.ctx = ctx;
     this.blending = o.blending === 'alpha' ? 'alpha' : 'additive';
+    this._add = this.blending === 'additive';
     this.max = 0;
     this.cursor = 0;
     this.high = 0;          // high-water mark of used slots
@@ -198,6 +199,7 @@ export class ParticleSystem {
     this.aGround = mk(this.gy, 1);
     g.setAttribute('iPos', this.aPos); g.setAttribute('iCol', this.aCol); g.setAttribute('iMisc', this.aMisc); g.setAttribute('iVel', this.aVel);
     g.setAttribute('iGround', this.aGround);
+    this._attrs = [this.aPos, this.aCol, this.aMisc, this.aVel, this.aGround];
     g.instanceCount = 0;
     g.userData.shared = true;
     this.geo = g;
@@ -241,12 +243,18 @@ export class ParticleSystem {
       M[i * 4] = this.s0[i] + (this.s1[i] - this.s0[i]) * t;
       M[i * 4 + 2] += this.rotV[i] * dt;
       M[i * 4 + 3] = t;
-      C[i * 4 + 3] = this.a0[i] * (t < 0.1 ? t / 0.1 : 1 - (t - 0.1) / 0.9);
+      if (this._add && M[i * 4 + 1] === 3) {
+        // fireball billows: snap on, hold their body, then burn out (the shader cools them as they go)
+        const f = t < 0.45 ? 0 : (t - 0.45) / 0.55;
+        C[i * 4 + 3] = this.a0[i] * (t < 0.05 ? t / 0.05 : 1 - f * f * (3 - 2 * f));
+      } else C[i * 4 + 3] = this.a0[i] * (t < 0.1 ? t / 0.1 : 1 - (t - 0.1) / 0.9);
     }
     this._alive = alive;
     if (alive === 0 && this.high > 0 && this.cursor === 0) this.high = 0;
     this.geo.instanceCount = this.high;
-    for (const a of [this.aPos, this.aCol, this.aMisc, this.aVel, this.aGround]) {
+    const A = this._attrs;
+    for (let k = 0; k < A.length; k++) {
+      const a = A[k];
       a.clearUpdateRanges();
       a.addUpdateRange(0, this.high * a.itemSize);
       a.needsUpdate = true;
@@ -320,6 +328,7 @@ class Glows {
     const mk = (arr, n) => new THREE.InstancedBufferAttribute(arr, n).setUsage(THREE.DynamicDrawUsage);
     this.aPos = mk(this.pos, 3); this.aCol = mk(this.col, 3); this.aPar = mk(this.par, 4);
     this.geo.setAttribute('iPos', this.aPos); this.geo.setAttribute('iCol', this.aCol); this.geo.setAttribute('iPar', this.aPar);
+    this._attrs = [this.aPos, this.aCol, this.aPar];
     this.geo.instanceCount = 0;
     this.geo.userData.shared = true;
     const beat = ctx.materials?.uniforms?.uBeat ?? { value: 0 };
@@ -381,7 +390,8 @@ class Glows {
       this.par[i4] = vis ? r.size : 0; this.par[i4 + 1] = r.minPx; this.par[i4 + 2] = r.pulse; this.par[i4 + 3] = r.phase;
     }
     this.geo.instanceCount = n;
-    for (const a of [this.aPos, this.aCol, this.aPar]) { a.clearUpdateRanges(); a.addUpdateRange(0, n * a.itemSize); a.needsUpdate = true; }
+    const A = this._attrs;
+    for (let k = 0; k < A.length; k++) { const a = A[k]; a.clearUpdateRanges(); a.addUpdateRange(0, n * a.itemSize); a.needsUpdate = true; }
   }
 }
 function applyGlowOpts(r, o) {
@@ -682,7 +692,7 @@ export function install(ctx) {
       ctx.renderer.getDrawingBufferSize(size);
       LIGHT.uPx.value.set(2 / Math.max(1, size.x), 2 / Math.max(1, size.y));
       LIGHT.uSizeMul.value = ctx.tier.name === 'low' ? 1.3 : 1;
-      LIGHT.uMinMul.value = ctx.tier.name === 'low' ? 1.5 : 1;   // AD §4.5: 4 px beacons hold 5+ px on Low (no bloom to spread them)
+      LIGHT.uMinMul.value = ctx.tier.name === 'low' ? 1.8 : 1;   // AD §4.5: 4 px beacons hold 5+ px on Low (no bloom to spread them)
       glows.prepare(scene || ctx.scene);
     },
     /** extra: live counts for tests and budgets */

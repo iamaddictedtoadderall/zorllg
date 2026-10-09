@@ -425,7 +425,8 @@ export function createWeapon(ctx, part, owner) {
     // the hit point and takes no damage. Boss parts count as "anything else" whatever their impMax.
     // P4 ruling (spec gap): a light target that cannot move (immovable: turret, beacon; or no velocity) still takes
     // the 300 dmg + 2000 imp stagger, but is not reeled and does not pull the owner: the cable lets go at once.
-    const light = t && (t.impMax ?? Infinity) <= (st.lightImpMax ?? 1000) && !t.boss;
+    // A structure is "anything else" too, even one a level gives a low impMax.
+    const light = t && (t.impMax ?? Infinity) <= (st.lightImpMax ?? 1000) && !t.boss && t.kind !== 'structure';
     if (light) {
       const info = C?.damage(t, st.dmg ?? 300, st.imp ?? 2000, src('harpoon'));
       sfx(ctx, 'winch', t.pos || hit.point);

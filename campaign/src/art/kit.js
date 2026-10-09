@@ -794,7 +794,7 @@ export function pressureRidge(path, h = 10, o = {}) {
             rot: [tilt, yaw + (rng() - 0.5) * 0.6, (rng() - 0.5) * 0.4], order: 'YXZ' }]);
         }
         if (rng() < 0.6) {
-          const bs = lerp(1, 2.6, rng());
+          const bs = lerp(1, 2.6, rng()) * Math.max(0.4, ks);   // ice blocks scale with the ridge (small ridges stay slab-led)
           parts.push([rockGeo(Math.floor(rng() * 1e6), { cuts: 10, noise: 0.04 }), { pos: [cx + (rng() - 0.5) * width * 0.5, bs * 0.3, cz + (rng() - 0.5) * width * 0.5],
             rot: [rng() * TAU, rng() * TAU, 0], scale: bs }]);
         }

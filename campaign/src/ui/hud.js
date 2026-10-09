@@ -24,6 +24,7 @@ const RADAR_RANGE = 320;                                              // metres 
 const OBJ_LINGER = 6;                                                 // seconds a done/failed objective stays listed
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 const _scr = { x: 0, y: 0, behind: false };
+const placed = new Float32Array(128);                                 // marker label positions this frame (declutter)
 
 const HUD_CSS = `
 #hud.hide-ap #status .row,#hud.hide-ap #status .apb,#hud.hide-ap #status .stb{visibility:hidden}
@@ -48,6 +49,8 @@ const HUD_CSS = `
 #objs li.fading{opacity:0}
 #markers .mk{transition:opacity .25s}
 #markers .mk .d{display:block;margin-top:1px;font-family:var(--f-mono);font-size:10px;color:var(--hud-dim)}
+#markers .mk span{text-shadow:0 1px 2px rgba(0,0,0,.9),0 0 6px rgba(0,0,0,.55)}
+#markers .mk b{box-shadow:0 0 0 1px rgba(0,0,0,.25)}
 #markers .mk.objective b{border-color:var(--accent);background:rgba(224,145,60,.16)}
 #markers .mk.objective span{color:var(--accent)}
 #markers .mk.waypoint b{border-color:var(--hud);border-radius:50%;transform:none}
@@ -73,7 +76,8 @@ const HUD_CSS = `
 #prompt .pb{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--hud-faint)}
 #prompt .pb i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--en)}
 #prompt.tear{border-left-color:var(--accent)}
-#prompt.tear .pb i{background:var(--accent)}
+#prompt.tear .pb{height:3px;background:rgba(224,145,60,.22)}
+#prompt.tear .pb i{background:var(--accent);box-shadow:0 0 8px var(--accent)}
 #prompt.tear span:not(.hold){color:var(--accent);font-weight:700;letter-spacing:.3em}
 #choice{pointer-events:none;width:min(780px,94vw);top:56%}
 #hud.choosing #prompt,#hud.choosing #killfeed,#hud.choosing #progress,#hud.choosing #hint{visibility:hidden}
@@ -106,7 +110,7 @@ const HUD_CSS = `
 #rack .rh{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.24em;color:var(--hud-dim);border-bottom:1px solid var(--hud-faint);padding-bottom:4px}
 #rack .rh b{font-family:var(--f-mono);font-weight:500;letter-spacing:.04em;color:var(--accent)}
 #rack .rs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
-#rack .rc{display:flex;align-items:center;gap:6px;min-width:0;height:24px;padding:0 6px;border:1px solid var(--hud-faint);background:rgba(12,11,14,.35);font-size:12px;letter-spacing:.03em;text-transform:uppercase;white-space:nowrap}
+#rack .rc{display:flex;align-items:center;gap:6px;min-width:0;height:24px;padding:0 6px;border:1px solid var(--hud-faint);background:rgba(12,11,14,.35);font-size:12px;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap}
 #rack .rc i{flex:none;width:7px;height:7px;border-radius:50%;background:#ffbf4a;box-shadow:0 0 8px #ffbf4a}
 #rack .rc span{overflow:hidden;text-overflow:ellipsis}
 #rack .rc.empty{color:var(--hud-faint)}
@@ -131,18 +135,23 @@ const HUD_CSS = `
 #game.touch #mname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #game.touch #objpanel{max-width:33vw}
 #game.touch #objs li{flex-wrap:wrap;column-gap:6px;row-gap:0;line-height:1.25}
-#game.touch #bossbar{top:72px}
-#game.touch #zonecard{top:25%}
+#game.touch #bossbar{top:64px}
+#game.touch #bossbar .stag{margin-top:2px}
+#game.touch #zonecard{top:22%}
+#game.touch #hud.boss-on #zonecard{top:106px}
 #game.touch #zonecard .t{font-size:28px}
 #game.touch #zonecard .s{font-size:11px}
 #game.touch #warn{top:37%}
+#game.touch #hud.zone-on.boss-on #warn{top:calc(106px + 54px)}
+#hud.zone-on.boss-on #warn{top:max(31%,calc(15.5% + 76px))}
+#markers .mk.nolabel span{visibility:hidden}
 #game.touch #prompt{top:calc(50% + 40px)}
 #game.touch #hint{bottom:84px}
 #game.touch #progress{top:calc(50% + 84px)}
 #game.touch #tInteract{right:calc(262px + var(--r));bottom:150px}
 #game.touch #rack .rc{font-size:11px;padding:0 5px;height:20px}
 #game.touch #cineSkip{display:none}
-@media (max-width:760px){#rack{width:260px;bottom:150px}#vitals{display:none}}
+@media (max-width:760px){#rack{width:260px;bottom:150px}#vitals{right:calc(100% + 8px);width:72px}#vitals canvas{width:72px;height:20px}#vitals .bpm{font-size:15px}#vitals .vl span.vm{display:none}}
 `;
 
 export function install(ctx) {
@@ -328,11 +337,14 @@ export function install(ctx) {
     for (const o of vis) {
       let li = el.objs.querySelector(`li[data-id="${CSS.escape(o.id)}"]`);
       const seen = objSeen.get(o.id);
+      const ended = o.state === 'done' || o.state === 'failed';
       if (!li) {
         li = document.createElement('li'); li.dataset.id = o.id;
-        if (!seen || seen.state === 'hidden') li.classList.add('new');
+        if ((!seen || seen.state === 'hidden') && !ended) li.classList.add('new');
       }
-      if (!seen || seen.state !== o.state) objSeen.set(o.id, { state: o.state, at: now });
+      // an objective first seen already ended (restored by a checkpoint restart) is listed but stays out of sight
+      if (!seen) objSeen.set(o.id, { state: o.state, at: ended ? now - OBJ_LINGER - 1 : now });
+      else if (seen.state !== o.state) objSeen.set(o.id, { state: o.state, at: now });
       const prog = o.progress ? `<span class="pg">· ${o.progress.cur} / ${o.progress.max}</span>` : '';
       const tm = o.timer != null ? `<span class="pg">· ${formatTime(Math.ceil(o.timer))}</span>` : '';
       const html = `${o.optional ? '<span class="tg">OPT</span> ' : ''}<span class="tx">${esc(o.text)}</span>${prog}${tm}`;
@@ -385,16 +397,21 @@ export function install(ctx) {
       const act = SLOT_TOUCH[s];
       if (gated) {
         setText(e.querySelector('.wv'), 'OFFLINE'); toggle(e, 'cool', false);
-        ctx.input?.setTouchLabel?.(act, 'OFF', true);
+        const tear = s === 'L' && tearUp();
+        if (s === 'L') setBladeTear(tear);
+        ctx.input?.setTouchLabel?.(act, tear ? '' : 'OFF', !tear);
         continue;
       }
       if (!w) continue;
       const r = w.readout();
       setText(e.querySelector('.wv'), r.label);
       toggle(e, 'cool', r.cooling);
-      // prototype touch labels: ammo, blade cooldown only, missile cooldown or count, kit count
-      const tl = s === 'L' ? (r.cooling ? r.label : '') : s === 'S' ? (r.cooling ? r.label : String(w.ammo)) : String(w.ammo);
-      ctx.input?.setTouchLabel?.(act, tl, r.cooling || r.empty);
+      // prototype touch labels: ammo, blade cooldown only, missile cooldown or count, kit count (the BLADE button
+      // reads TEAR while the TEAR prompt is up, with no sub-label)
+      const tear = s === 'L' && tearUp();
+      if (s === 'L') setBladeTear(tear);
+      const tl = tear ? '' : s === 'L' ? (r.cooling ? r.label : '') : s === 'S' ? (r.cooling ? r.label : String(w.ammo)) : String(w.ammo);
+      ctx.input?.setTouchLabel?.(act, tl, tear ? false : r.cooling || r.empty);
     }
   }
   function partName(id) {
@@ -427,9 +444,23 @@ export function install(ctx) {
     const t = TOUCH_KEYS[key.toUpperCase()];
     return t !== undefined ? t : key;
   }
-  function renderPrompt() {
+  /** the TEAR prompt is up: a candidate, haul enabled, TEAR not gated, the frame not frozen (A5.2) */
+  function tearUp() {
     const h = ctx.haul, p = ctx.player;
-    const tear = h && h.candidate && h.enabled !== false && p?.abilities?.tear !== false && !p?.frozen;
+    return !!(h && h.candidate && h.enabled !== false && p?.abilities?.tear !== false && !p?.frozen);
+  }
+  /** on touch the BLADE button itself reads TEAR while the TEAR prompt is up */
+  const bladeBtn = document.querySelector('#touch .tb[data-act="blade"]'), bladeTxt = bladeBtn?.querySelector('span');
+  let bladeTear = false;
+  function setBladeTear(on) {
+    if (on === bladeTear || !bladeTxt) return;
+    bladeTear = on;
+    bladeTxt.textContent = on ? 'TEAR' : 'BLADE';
+    bladeBtn.classList.toggle('on', on);
+  }
+  function renderPrompt() {
+    const h = ctx.haul;
+    const tear = tearUp();
     const cur = tear ? { text: 'TEAR', key: 'RMB', hold: true, progress: h.holdProgress || 0, tear: true } : basePrompt;
     if (!el.prompt) return;
     if (!cur || !cur.text) {
@@ -452,12 +483,14 @@ export function install(ctx) {
     if (pr.bar) pr.bar.style.display = pg != null && pg > 0 ? '' : 'none';
     setW(pr.fill, pg || 0);
     ctx.input?.showTouchButton?.('interact', !cur.tear);
-    if (cur.tear) ctx.input?.setTouchLabel?.('blade', 'TEAR', false);
   }
 
   // ---------------------------------------------------------------- lock box, boss bar, markers, compass, radar
+  // the viewport in CSS pixels, cached (reading clientWidth after this frame's style writes would force a layout)
+  const view = { w: ctx.canvas.clientWidth || innerWidth, h: ctx.canvas.clientHeight || innerHeight };
+  ctx.events.on('resize', () => { view.w = ctx.canvas.clientWidth || innerWidth; view.h = ctx.canvas.clientHeight || innerHeight; });
   function pxScale() {
-    const h = ctx.canvas.clientHeight || innerHeight;
+    const h = view.h;
     return h / (2 * Math.tan(THREE.MathUtils.degToRad(ctx.camera.fov) / 2));
   }
   function updateLock(p) {
@@ -519,10 +552,10 @@ export function install(ctx) {
   }
   function updateMarkers() {
     const rig = ctx.cameraRig, p = ctx.player;
-    const W = ctx.canvas.clientWidth || innerWidth, H = ctx.canvas.clientHeight || innerHeight;
+    const W = view.w, H = view.h;
     const touch = ctx.input?.isTouch;
     const mx = touch ? 70 : 56, top = touch ? 128 : 168, bot = touch ? 120 : 190;   // clear of objectives/comms/radar/boss bar and weapons
-    let n = 0;
+    let n = 0, nPlaced = 0;
     for (const m of markers) {
       if (!rig || !markerPos(m, _v)) continue;
       const e = markerEl(n++);
@@ -542,6 +575,16 @@ export function install(ctx) {
         const arw = e.firstChild; if (arw) arw.style.transform = `rotate(${a.toFixed(3)}rad)`;
       }
       toggle(e, 'edge', edge);
+      // declutter: a label that would sit on an earlier marker's label is dropped (the diamond stays), and so is the
+      // label of the locked target's marker (the lock box names it already)
+      // (labels are 11 px mono, about 6.6 px a character, two lines: the label and the distance)
+      const hw = edge ? 22 : Math.max(String(m.label ?? '').length, 6) * 3.3 + 3;
+      let clash = !!(m.target && m.target === p?.lock && !edge);
+      for (let k = 0; k < nPlaced && !clash; k++) {
+        if (Math.abs(placed[3 * k] - x) < placed[3 * k + 2] + hw && Math.abs(placed[3 * k + 1] - y) < 26) clash = true;
+      }
+      if (!clash && nPlaced < 42) { placed[3 * nPlaced] = x; placed[3 * nPlaced + 1] = y; placed[3 * nPlaced + 2] = hw; nPlaced++; }
+      toggle(e, 'nolabel', clash);
       e.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-50%)`;
       setText(e.children[2], String(m.label ?? ''));
       const d = p?.active ? Math.hypot(_v.x - p.pos.x, _v.z - p.pos.z) : _v.distanceTo(ctx.camera.position);
@@ -851,6 +894,7 @@ export function install(ctx) {
       api.setPanels({ ap: true, en: true, weapons: true, radar: true, compass: true, objectives: true, lock: true, rack: false });
       api.setSlots({ R: { state: 'auto', label: null }, L: { state: 'auto', label: null }, S: { state: 'auto', label: null }, K: { state: 'auto', label: null } });
       V.mode = 'hidden'; V.override = null; V.spikeN = null; V.fault = null; V.cur = 80;
+      setBladeTear(false);
       explicitBoss = null; autoBoss = null; callsignFrame = null; lastFrameAuto = '';
       setText(el.callsign, ''); setText(el.frameSub, '');
       basePrompt = null; renderPrompt();
@@ -918,6 +962,9 @@ export function install(ctx) {
       }
       if (zoneT <= 0) el.zonecard?.classList.remove('on');
       if (toastT <= 0) el.toast?.classList.remove('on');
+      // stacking: the zone card moves under a visible boss bar, the warnings under both (touch layouts are tight)
+      toggle(el.hud, 'boss-on', !!el.bossbar && !el.bossbar.hidden);
+      toggle(el.hud, 'zone-on', zoneT > 0);
     },
   };
 

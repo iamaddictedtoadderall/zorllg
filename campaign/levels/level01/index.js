@@ -15,13 +15,13 @@
 import * as THREE from 'three';
 import { simDeferred, simResolved, clamp, damp, yawTo, angWrap } from '../../src/core/util.js';
 import { ensureL1Structures, signMesh, L1_STRUCTURE_TYPES, l01Of } from './structures.js';
-import { Tick, Kite, Cutter, Flares, TowedSled, updateWrecks, igniteAt, updateFires, plantFlag, dropSlabs, updateDebris } from './actors.js';
+import { Tick, Kite, Cutter, Flares, TowedSled, updateWrecks, igniteAt, updateFires, plantFlag, dropSlabs, updateDebris, setGlowService } from './actors.js';
 import { registerL1Units } from './units.js';
 import { registerIcebreaker, CutLine } from './icebreaker.js';
 import { FloeField, Sea, elevationAt } from './floes.js';
 import { Water, bubbles } from './water.js';
 import { Drown } from './drown.js';
-import { WakeLights } from './skyline.js';
+import { WakeLights, SteamPlume } from './skyline.js';
 import { mats, ball, shared } from './kit.js';
 
 export { ensureL1Structures };
@@ -56,6 +56,9 @@ export function installLevel01(ctx, mission, DATA, opts = {}) {
   if (ctx.l01) { try { ctx.l01.dispose(); } catch (e) { ctx.recordError?.('level01', e); } }
   const m = mission || ctx.mission;
   ensureL1Structures(ctx);
+  // the level's own glow points (flares, telegraphs, saw glows) ride P1's instanced glows when they exist (A5.4):
+  // no sprite program and no per-sprite draw call; without them they fall back to additive sprites
+  setGlowService(ctx.particles?.glows);
   const L = createRuntime(ctx, m, DATA, opts);
   ctx.l01 = L;
   placeMissingStructures(ctx, opts);
@@ -106,6 +109,7 @@ function createRuntime(ctx, m, DATA, opts) {
     resolve(p, out = new THREE.Vector3()) { return ctx.world.resolve(p, out); },
     player() { const p = ctx.player; return p?.active && p.alive ? p : null; },
     cpIndex(id) { return Math.max(0, CP_ORDER.indexOf(id ?? m?.checkpoint)); },
+    routeS(pos) { return ctx.world?.route?.closest?.(pos.x, pos.z)?.s ?? 0; },
   };
 
   // ── actors and level systems ──
@@ -119,6 +123,7 @@ function createRuntime(ctx, m, DATA, opts) {
   try { L.floes = new FloeField(L); } catch (e) { ctx.recordError?.('level01', e); L.floes = null; }
   L.water = new Water(L, { underArt: L.art.ART_WATER });
   try { L.wakeLights = new WakeLights(L); } catch (e) { ctx.recordError?.('level01', e); }
+  try { L.plume = new SteamPlume(L); } catch (e) { ctx.recordError?.('level01', e); }
   // the tow cable (harpoon on the player, the raid's harpoon on the cutter): one stretched cylinder
   const cg = new THREE.CylinderGeometry(0.07, 0.07, 1, 5); cg.translate(0, 0.5, 0); cg.rotateX(PI / 2);
   L.cable = new THREE.Mesh(cg, mats(ctx).cable); L.cable.visible = false; L.cable.castShadow = false; L.cable.frustumCulled = false;
@@ -141,7 +146,7 @@ function createRuntime(ctx, m, DATA, opts) {
     L.tow = null;
     if (reason === 'boost') {
       const p = ctx.player;
-      if (p) { ctx.fx?.sparks?.(p.center(_c), 16, [1, 0.8, 0.5], 20); ctx.audio?.play?.('impact', p.pos); }
+      if (p) { ctx.fx?.sparks?.(p.center(_c), 16, [1, 0.8, 0.5], 20); ctx.audio?.play?.('hit', p.pos); }
     }
   };
   // ── Gleaner latching (the sprint) ──
@@ -223,6 +228,8 @@ function createRuntime(ctx, m, DATA, opts) {
     L.alcoveGlow = false; L.stencilOn = false; L.holeBub = null; L.sinking = null; L.raidLights?.forEach(s => s.parent?.remove(s)); L.raidLights = null;
     L.reassert = null; L.visor?.remove?.(); L.visor = null; L.watchers = [];
     if (L.drown) { L.drown.dispose(); L.drown = null; }
+    for (const h of L.steamFog || []) h?.stop?.();
+    L.steamFog = null;
     L.wall?.dispose?.(); L.wall = null;
     L.godRay?.parent?.remove(L.godRay); L.godRay = null;
     L.tick.reset(); L.kite.reset(); L.cutter.reset(); L.flares.reset(); L.towedSled.reset(); L.cutLine.reset();
@@ -246,6 +253,7 @@ function createRuntime(ctx, m, DATA, opts) {
     }
     if (ctx.haul) ctx.haul.enabled = true;
     L.wakeLights?.ensure?.();
+    L.plume?.reset?.();
     // what the snapshot's flags carry: planted flags, the dropped sledge, open interactions, panels, the callsign
     const fl = m?.flags || {};
     if (fl['l01:sled1Pos']) {   // sled 1 where its tow skiff died
@@ -266,7 +274,8 @@ function createRuntime(ctx, m, DATA, opts) {
   // ── event listeners ──
   L.listen = () => {
     const on = (type, fn) => L.unsub.push(ctx.events.on(type, (e) => { try { fn(e || {}); } catch (err) { ctx.recordError?.('level01', err); } }));
-    on('level:start', (e) => L.reset(e));
+    on('level:start', (e) => { L.ended = false; L.reset(e); });
+    on('level:complete', () => { L.ended = true; L.amb?.wind?.stop?.(2.5); if (L.amb) L.amb.wind = null; });
     on('level:cleared', () => L.dispose());
     on('player:damaged', () => { if (L.counters) L.counters.playerHits++; });
     on('trigger:fired', (e) => { if (e.id === 't_raid_go' && L.counters) L.counters.playerHits = 0; });
@@ -300,9 +309,12 @@ function createRuntime(ctx, m, DATA, opts) {
     L.unsub = [];
     for (const n of SYSTEMS) ctx.removeSystem?.(n);
     L.drown?.dispose?.(); L.wall?.dispose?.();
+    for (const h of L.steamFog || []) h?.stop?.();
+    L.steamFog = null;
+    L.amb?.wind?.stop?.(0.5); L.amb = null;
     for (const hs of L.glow.values()) for (const h of hs) h?.remove?.();
     L.glow.clear();
-    L.floes?.dispose?.(); L.sea?.dispose?.(); L.wakeLights?.dispose?.(); L.kite?.dispose?.(); L.towedSled?.dispose?.(); L.cutLine?.dispose?.();
+    L.floes?.dispose?.(); L.sea?.dispose?.(); L.wakeLights?.dispose?.(); L.plume?.dispose?.(); L.kite?.dispose?.(); L.towedSled?.dispose?.(); L.cutLine?.dispose?.();
     L.cable?.geometry?.dispose?.();
     if (ctx.l01 === L) ctx.l01 = null;
   };
@@ -425,6 +437,7 @@ function missionTick(L, dt) {
   updateWrecks(L, dt); updateFires(L, dt); updateDebris(L, dt);
   if (L.floes) L.floes.update(dt);
   L.drown?.update(dt);
+  L.plume?.update(dt);
   // the look-at timer (o_look: the kite within 8° of the screen centre for 0.5 s)
   if (L.kite.visible) {
     ctx.camera.getWorldDirection(_d);
@@ -484,6 +497,7 @@ function missionTick(L, dt) {
     }
     if (k >= 1) { L.sinking = null; removeIcebreaker(L, u); }
   }
+  ambience(L, dt);
   // the raid's lights on the ice (before the skiffs arrive)
   if (L.raidLights && (L.raidLightsT -= dt) <= 0) { for (const s of L.raidLights) s.parent?.remove(s); L.raidLights = null; }
   // zone art after the sunrise: re-assert the dawn over the zone's night preset
@@ -496,6 +510,56 @@ function missionTick(L, dt) {
       if (L.sunRunning) ctx.atmosphere?.set?.({ sky: { sun: { elevation: L.sunElev } } }, 3);
     }
     if (L.flag('p:sprint') && id === 'z_cutline') L.music(L.musicDefs.DAWN);
+  }
+}
+
+/**
+ * The level's ambience (L1 §15.5) and the dawn's steam fog (L1 §2.6 Z6). Audio is cosmetic (Math.random timing):
+ *  · the wind over the ice (the 'wind' loop): full on the surface at night, softer after the sunrise, a whisper in the
+ *    cavern, silent underwater;
+ *  · distant ice cracks every 6 to 14 s, panned (deep groans in the cavern instead);
+ *  · the Icebreaker's deep thrum every 4 s, audible from the Teeth (its start position until it is spawned), until the
+ *    finale;
+ *  · after the sunrise, low steam rising off the open-water leads (persistent 'steam' emitters, re-made after a restart).
+ */
+function ambience(L, dt) {
+  const ctx = L.ctx, A = ctx.audio, p = L.player();
+  const S = L.amb || (L.amb = { wind: null, windT: 0, crackT: 4, thrumT: 2 });
+  if (p && A && !L.ended) {
+    const under = !!L.water?.camUnder || L.water?.state === 'water';
+    const s = L.routeS(p.pos);
+    const cavern = s > 322 && s < 640 && p.pos.y < -6;
+    S.windT -= dt;
+    if (S.windT <= 0) {
+      S.windT = 0.5;
+      if (!S.wind && A.ready !== false && A.loop) { try { S.wind = A.loop('wind', { vol: 0 }) || null; } catch (e) { S.wind = null; } }
+      const vol = under || L.drown?.blackout ? 0 : cavern ? 0.05 : L.flag('p:sunrise') ? 0.2 : 0.3;
+      S.wind?.set?.({ vol });
+    }
+    S.crackT -= dt;
+    if (S.crackT <= 0 && !under) {
+      S.crackT = 6 + Math.random() * 8;
+      const a = Math.random() * Math.PI * 2, r = cavern ? 30 + Math.random() * 40 : 160 + Math.random() * 220;
+      _v.set(p.pos.x + Math.cos(a) * r, p.pos.y + (cavern ? 6 : 0), p.pos.z + Math.sin(a) * r);
+      A.play?.(cavern ? 'iceGroan' : 'iceCrack', _v, { vol: cavern ? 0.45 : 0.5, rate: 0.8 + Math.random() * 0.4, range: 900 });
+    }
+    const ib = L.icebreaker;
+    const thrumAt = ib && !ib.hulk ? ib.pos
+      : (!ib && s >= 640 && !cavern && !L.flag('p:field') && !L.flag('p:finale')) ? _w.set(L.DATA.icebreaker.start.x, 4, L.DATA.icebreaker.start.z) : null;
+    S.thrumT -= dt;
+    if (S.thrumT <= 0) {
+      S.thrumT = 4;
+      if (thrumAt && !under) A.play?.('boom', thrumAt, { vol: 0.32, rate: 0.42, range: 2600 });
+    }
+  }
+  // steam fog over the leads in the new sun
+  if (L.steamFog && L.steamFog.some(h => h && h.alive === false)) { for (const h of L.steamFog) h?.stop?.(); L.steamFog = null; }
+  if (!L.steamFog && L.flag('p:sunrise') && ctx.fx?.emitter) {
+    L.steamFog = [];
+    for (const line of L.DATA.floes.leads) for (const [x, z] of line) {
+      _v.set(x, L.DATA.sea + 0.5, z);
+      L.steamFog.push(ctx.fx.emitter('steam', _v.clone(), { rate: 0.3, scale: 2.6, color: [0.92, 0.9, 0.88] }));
+    }
   }
 }
 

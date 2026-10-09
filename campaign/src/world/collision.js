@@ -201,26 +201,17 @@ export class Collision {
     const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
     const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (!(L > 1e-9)) return null;
-    let bestT = Infinity, bestC = null;
-    const H = _hit;
+    // the sweep state lives on the instance (no per-call closures: projectiles call this every step)
+    this._sa = a; this._sdx = dx; this._sdy = dy; this._sdz = dz; this._srad = rad;
+    this._bestT = Infinity; this._bestC = null;
     // ---- colliders: DDA over hash cells
     if (useC && this._list.length) {
       const q = ++this._q;
-      const visit = (cell) => {
-        for (let i = 0; i < cell.length; i++) {
-          const c = cell[i];
-          if (c._q === q) continue;
-          c._q = q;
-          if (!c.enabled) continue;
-          const t = this._sweep(c, a, dx, dy, dz, rad, bestT, _n);
-          if (t < bestT) { bestT = t; bestC = c; H.normal.copy(_n); }
-        }
-      };
       if (rad > PAD - 0.5) {
         // fat sweeps: every cell under the inflated AABB of the segment
         const i0 = Math.floor((Math.min(a.x, b.x) - rad) / CG), i1 = Math.floor((Math.max(a.x, b.x) + rad) / CG);
         const j0 = Math.floor((Math.min(a.z, b.z) - rad) / CG), j1 = Math.floor((Math.max(a.z, b.z) + rad) / CG);
-        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const cell = this._grid.get(ckey(i, j)); if (cell) visit(cell); }
+        for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const cell = this._grid.get(ckey(i, j)); if (cell) this._visit(cell, q); }
       } else {
         let i = Math.floor(a.x / CG), j = Math.floor(a.z / CG);
         const iEnd = Math.floor(b.x / CG), jEnd = Math.floor(b.z / CG);
@@ -228,31 +219,37 @@ export class Collision {
         const tdx = Math.abs(dx) > 1e-12 ? CG / Math.abs(dx) : Infinity, tdz = Math.abs(dz) > 1e-12 ? CG / Math.abs(dz) : Infinity;
         let tmx = Math.abs(dx) > 1e-12 ? ((dx > 0 ? (i + 1) * CG : i * CG) - a.x) / dx : Infinity;
         let tmz = Math.abs(dz) > 1e-12 ? ((dz > 0 ? (j + 1) * CG : j * CG) - a.z) / dz : Infinity;
+        const padT = PAD / Math.max(1e-6, Math.sqrt(dx * dx + dz * dz));
         for (let guard = 0; guard < 4096; guard++) {
           const cell = this._grid.get(ckey(i, j));
-          if (cell) visit(cell);
+          if (cell) this._visit(cell, q);
           if (i === iEnd && j === jEnd) break;
           // cells beyond the best hit so far cannot hold a nearer one (colliders overlap their cells by 5 m, and the
           // hit itself was found in an earlier cell), so stop early
-          const tNext = Math.min(tmx, tmz);
-          if (tNext > 1 || tNext > bestT + PAD / Math.max(1e-6, Math.hypot(dx, dz))) break;
+          const tNext = tmx < tmz ? tmx : tmz;
+          if (tNext > 1 || tNext > this._bestT + padT) break;
           if (tmx < tmz) { tmx += tdx; i += stepI; } else { tmz += tdz; j += stepJ; }
         }
       }
     }
+    const bestT = this._bestT, bestC = this._bestC;
+    this._sa = null;
     // ---- ground: march ≤ 4 m steps up to the best collider hit, then bisect
     let groundT = Infinity;
     if (useG && this.ground) {
-      const gh = (t) => this.groundHeight(a.x + dx * t, a.z + dz * t) + rad;
-      if (a.y >= gh(0)) {
+      const G = this.ground;
+      if (a.y >= G.groundHeight(a.x, a.z) + rad) {
         const tMax = Math.min(1, bestT);
         const steps = Math.max(1, Math.ceil(L * tMax / 4));
         let prev = 0;
         for (let s = 1; s <= steps; s++) {
           const t = tMax * s / steps;
-          if (a.y + dy * t < gh(t)) {
+          if (a.y + dy * t < G.groundHeight(a.x + dx * t, a.z + dz * t) + rad) {
             let lo = prev, hi = t;
-            for (let k = 0; k < 22; k++) { const m = (lo + hi) / 2; if (a.y + dy * m < gh(m)) hi = m; else lo = m; }
+            for (let k = 0; k < 22; k++) {
+              const m = (lo + hi) / 2;
+              if (a.y + dy * m < G.groundHeight(a.x + dx * m, a.z + dz * m) + rad) hi = m; else lo = m;
+            }
             groundT = hi;
             break;
           }
@@ -273,9 +270,20 @@ export class Collision {
       out.t = bestT;
       out.point.set(a.x + dx * bestT, a.y + dy * bestT, a.z + dz * bestT);
       out.ground = false; out.collider = bestC; out.surface = bestC.surface || 'concrete';
-      out.normal.copy(H.normal);
+      out.normal.copy(_hit.normal);
     }
     return out;
+  }
+  /** sweep test against every collider of a hash cell not yet seen in this query (state from segment()) */
+  _visit(cell, q) {
+    for (let i = 0; i < cell.length; i++) {
+      const c = cell[i];
+      if (c._q === q) continue;
+      c._q = q;
+      if (!c.enabled) continue;
+      const t = this._sweep(c, this._sa, this._sdx, this._sdy, this._sdz, this._srad, this._bestT, _n);
+      if (t < this._bestT) { this._bestT = t; this._bestC = c; _hit.normal.copy(_n); }
+    }
   }
   /** entry t in [0, 1] of the ray a + t·d into collider c inflated by rad (Infinity if none or a starts inside) */
   _sweep(c, a, dx, dy, dz, rad, tLimit, nOut) {

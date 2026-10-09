@@ -58,8 +58,9 @@ void main() {
   vec3 vd = normalize(wp - cameraPosition);
   float fwd = pow(max(dot(vd, uLightDir), 0.0), 6.0);
   vec3 light = uHemiC * 0.6 + uSunC * (0.35 + 1.2 * fwd);
+  light *= 1.0 / max(1.0, dot(light, vec3(0.3, 0.59, 0.11)) / 1.3);   // forward scatter glows, but a flake is never a lamp
   float edge = 1.0 - smoothstep(0.35, 0.5, max(abs(rel.x) / uBox.x, max(abs(rel.y) / uBox.y, abs(rel.z) / uBox.z)));
-  float near = smoothstep(1.5, 5.0, -mv.z);
+  float near = smoothstep(2.0, 7.0, -mv.z);   // flakes right at the lens would read as out-of-focus blobs
   float f = cFogAmount(wp);
   vCol = vec4(uColor * light, uAlpha * fade * edge * near * (1.0 - f * 0.8));
   gl_Position = clip;
@@ -178,6 +179,12 @@ export function install(ctx) {
           }
         }
         if (thunderT > 0) { thunderT -= dt; if (thunderT <= 0) ctx.audio?.play?.('thunder', null, { vol: 0.5 + thunderK * 0.4 }); }
+        // a sandstorm also drives sheets of dust through the view: big, faint lit billows streaming with the wind
+        // (the grit streaks alone read as rain); they live in the shared alpha particle pool
+        if (shownType === 'sandstorm') {
+          sheetAcc += dt * 14 * Math.max(0, Math.min(1, c.intensity)) * shownK;
+          while (sheetAcc >= 1) { sheetAcc -= 1; dustSheet(c); }
+        }
       }
       U.uTime.value = weatherTime;
       U.uBox.value.set(T.box[0], T.box[1], T.box[0]);
@@ -199,6 +206,21 @@ export function install(ctx) {
       if (mesh) mesh.visible = U.uIntensity.value > 0.001 && U.uAlpha.value > 0.001;
     },
   };
+  const dustC = new THREE.Color();
+  function dustSheet(c) {
+    const sm = ctx.particles?.smoke; if (!sm) return;
+    const cam = ctx.camera.position, v = U.uVel.value;
+    const ws = Math.hypot(v.x, v.z) || 1, ux = v.x / ws, uz = v.z / ws;
+    const a = Math.random() * Math.PI * 2, r = 12 + Math.random() * 70;
+    const x = cam.x + Math.cos(a) * r - ux * 35, z = cam.z + Math.sin(a) * r - uz * 35;
+    const gy = ctx.world?.groundHeight ? ctx.world.groundHeight(x, z) : cam.y - 8;
+    dustC.set(ctx.atmosphere?.art?.palette?.dust || '#8a7a6a');
+    const k = 0.85 + Math.random() * 0.3;
+    sm.spawn(x, gy + 1 + Math.random() * 16, z, v.x * 0.9, 0.2 + Math.random() * 0.6, v.z * 0.9, 4 + Math.random() * 3,
+             8 + Math.random() * 4, 20 + Math.random() * 12, dustC.r * k, dustC.g * k, dustC.b * k,
+             0.3 * Math.max(0.3, Math.min(1, c.intensity)), 0, 0, Math.random() < 0.5 ? 1 : 5);
+  }
+  let sheetAcc = 0;
   let target = { ...api.current, wind: [0, 0] };
   let blend = null, shownType = 'clear', shownK = 1, weatherTime = 0, strikeT = 4, thunderT = 0, thunderK = 1;
 

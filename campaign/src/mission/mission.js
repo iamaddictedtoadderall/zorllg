@@ -31,6 +31,8 @@
 //    `complete.do`; 'level:complete' follows when that list ends (flow shows the 'complete' state meanwhile).
 //  · Level-registered actions and conditions (registered while a level is loaded, e.g. from custom.install) are
 //    dropped on 'level:cleared'.
+//  · The death screen's line: the mission flag 'deathLine' when set ({ flag: ['deathLine', 'Lost under the ice.'] }),
+//    else LevelDef.deathLine (an extra optional field: a string or a list to pick from), else 'Signal lost.'.
 import * as THREE from 'three';
 import { hashString, clone, clamp, simDeferred, simAll, simResolved, whenSettled, isSettled, isSimPromise } from '../core/util.js';
 import * as LO from '../combat/loadout.js';
@@ -457,6 +459,11 @@ export function install(ctx) {
     if (state === 'failed' && o.def.onFail) m.run(o.def.onFail);
   }
   function killTagOf(t) { return t.tag || (t.encounter ? 'enc:' + t.encounter : null); }
+  /** every unit an encounter will spawn: its groups plus every wave's (counts default to 1) */
+  function plannedUnits(e) {
+    const n = (gs) => (gs || []).reduce((a, g) => a + Math.max(1, Math.floor(g?.count ?? 1)), 0);
+    return n(e.units) + (e.waves || []).reduce((a, w) => a + n(w.units), 0);
+  }
   function checkObjectives() {
     const p = player();
     for (const o of objectives.values()) {
@@ -473,7 +480,8 @@ export function install(ctx) {
           const dead = kills.get(tag) || 0;
           const live = (ctx.combat?.query({ tag }) || []).filter(x => x !== ctx.player).length;
           const enc = t.encounter && !t.tag ? encounters.get(t.encounter) : null;
-          const max = t.count ?? (dead + live + (enc ? enc.pending : 0));
+          // an encounter's count is known up front (its units and every wave), so "0 / 6" shows before it spawns
+          const max = t.count ?? Math.max(dead + live + (enc ? enc.pending : 0), enc ? plannedUnits(enc.def) : 0);
           prog = { cur: Math.min(dead, max), max };
           const done = t.count != null ? dead >= t.count : enc ? enc.state === 'cleared' : (max > 0 && live === 0 && dead > 0);
           if (done) { o.progress = d.showCount ? { cur: max, max } : o.progress; setObjective(o.id, 'done'); continue; }
@@ -771,7 +779,7 @@ export function install(ctx) {
         const ts = (ctx.combat?.query({ tag }) || []).filter(t => t !== ctx.player).slice(0, 12);
         for (const t of ts) {
           const tmp = new THREE.Vector3();
-          list.push({ id: `obj:${o.id}:${t.id}`, pos: () => (t.alive ? t.center(tmp) : null), label: String(t.name || '').toUpperCase(), kind });
+          list.push({ id: `obj:${o.id}:${t.id}`, pos: () => (t.alive ? t.center(tmp) : null), label: String(t.name || '').toUpperCase(), kind, target: t });
           sigs.push(`${o.id}:${t.id}`);
         }
       } else {

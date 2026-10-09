@@ -40,14 +40,24 @@ export default async function (g) {
       const s = await state();
       if (Array.isArray(want) ? want.includes(s) : s === want) return true;
       const vis = await g.eval(() => { const b = document.getElementById('bNext'); return !!b && b.offsetParent !== null; });
-      if (vis) { try { await page.click('#bNext', { timeout: 2000 }); } catch (e) { /* advanced meanwhile */ } }
+      if (vis) {
+        try { await page.click('#bNext', { timeout: 4000 }); }
+        catch (e) { await g.eval(() => document.getElementById('bNext')?.click()); }   // advanced meanwhile, or a slow page
+      }
       await sleep(150);
     }
     return false;
   }
+  /** a real pointer click; on a machine so loaded that the page can't produce the two stable frames Playwright waits
+   *  for, the same element is clicked from the DOM (the screens bind plain 'click' listeners, so the app can't tell) */
   async function click(sel, ms = 20000) {
     await page.waitForSelector(sel, { state: 'visible', timeout: ms });
-    await page.click(sel);
+    try { await page.click(sel, { timeout: 45000 }); }
+    catch (e) {
+      if (!/Timeout/.test(String(e?.message))) throw e;
+      g.log(`click ${sel}: pointer click timed out, clicking from the DOM`);
+      await g.eval((sel) => document.querySelector(sel)?.click(), sel);
+    }
   }
   // levels/campaign.js is P6's; if it is not on disk yet, serve a minimal fixture so the Count has real numbers
   if (!existsSync(join(ROOT, 'levels', 'campaign.js'))) {
@@ -94,13 +104,23 @@ export default async function (g) {
   const flags = () => g.eval(() => JSON.parse(JSON.stringify(window.__game.ctx.mission.flags)));
   const setFlag = (k, v = true) => g.eval(([k, v]) => window.__game.setFlag(k, v), [k, v]);
   const tp = (p, o) => g.teleport(p, o);
-  const rawShot = g.shot.bind(g);
+  // Screenshots: as the harness's g.shot (settle, HUD toggle, render, capture), but CSS animations are frozen for the
+  // capture (finite ones jump to their end state, as a player would see them a moment later) and the timeout is longer.
+  // With the WebGL canvas in the page, every animated frame re-composites it in software, which on a loaded machine
+  // pushed captures past Playwright's 30 s default.
   g.shot = async (name, o = {}) => {
     await sleep(o.wait ?? 700);
-    for (let i = 0; ; i++) {   // a loaded machine can push a software-rendered screenshot past Playwright's 30 s
-      try { return await rawShot(name, o); }
-      catch (e) { if (i >= 4 || !/Timeout/.test(String(e?.message))) throw e; g.log(`screenshot ${name} timed out; retrying`); await sleep(5000); }
+    const hud = o.hud !== false;
+    if (o.settle !== false) await g.eval(() => window.__game.settle());
+    await g.eval((hud) => { window.__game.hud(hud); window.__game.render(); }, hud);
+    const file = join(g.out, `${name}.png`);
+    for (let i = 0; ; i++) {
+      try { await page.screenshot({ path: file, animations: 'disabled', timeout: 120000 }); break; }
+      catch (e) { if (i >= 2 || !/Timeout/.test(String(e?.message))) throw e; g.log(`screenshot ${name} timed out; retrying`); await sleep(3000); }
     }
+    if (!hud) await g.eval(() => window.__game.hud(true));
+    g.log('shot', file);
+    return file;
   };
 
   let s, st, f;
@@ -169,7 +189,8 @@ export default async function (g) {
                wrong: m.flags['p5.wrong'], called: m.flags['p5.called'], markers: c.hud.markers.map(x => x.id), letterbox: c.hud.letterboxOn,
                hint: document.getElementById('hint').textContent, killsBarricade: m.kills('barricade'),
                scrub: m.objective('o_scrub').state, temp: m.objective('o_temp').state, tempSeq: window.__p5.obj.o_temp,
-               tempLi: !!document.querySelector('#objs li[data-id="o_temp"]'), scrubLi: document.querySelector('#objs li[data-id="o_scrub"]')?.dataset.state };
+               tempLi: !!document.querySelector('#objs li[data-id="o_temp"]'), scrubLi: document.querySelector('#objs li[data-id="o_scrub"]')?.dataset.state,
+               ps: c.world.playArea(c.player.pos.x, c.player.pos.z).s, pl: Math.abs(c.world.playArea(c.player.pos.x, c.player.pos.z).l) };
     });
     g.log('action checklist:', act);
     g.assert(act.done && act.text === 'Report to range control' && act.persisted === 7 && act.codex && act.part && act.gate === 'open' && act.barricade === 'destroyed',
@@ -177,6 +198,7 @@ export default async function (g) {
     g.assert(act.inline === 0 && act.scripted === 0 && act.ifThen && act.ifElse && !act.wrong && act.called === 1 && act.killsBarricade === 1,
       'spawn/despawn/kill, if/then/else, call');
     g.assert(act.markers.includes('m_tower') && !act.markers.includes('m_tmp') && !act.letterbox && act.hint.includes('desktop'), 'markers add/remove, letterbox on/off, hint picks the desktop text');
+    g.assert(Math.abs(act.ps - 60) < 6 && act.pl < 6, `player action: teleport to { s: 60 } (s ${act.ps?.toFixed(1)}, |l| ${act.pl?.toFixed(1)})`);
     g.assert(act.scrub === 'failed' && act.scrubLi === 'failed' && act.temp === 'hidden' && !act.tempLi && JSON.stringify(act.tempSeq) === '["active","hidden"]',
       `objective fail and remove actions (o_scrub ${act.scrub}, o_temp ${JSON.stringify(act.tempSeq)}, HUD in step)`);
     // natural progression
@@ -352,8 +374,8 @@ export default async function (g) {
     await g.step(12);
     await tp({ s: 2440 }); await g.step(12);
     const fired = await g.eval(() => ({ fired: [...new Set(window.__p5.fired)], all: window.__game.ctx.mission.def.triggers.map(t => t.id) }));
-    const notFired = fired.all.filter(id => !fired.fired.includes(id) && id !== 't_fail');
-    g.assert(notFired.length === 0, `every trigger fired except t_fail (tested in section 3): missing ${notFired.join(', ') || 'none'}`);
+    const notFired = fired.all.filter(id => !fired.fired.includes(id) && id !== 't_fail' && id !== 't_finish');
+    g.assert(notFired.length === 0, `every trigger fired except t_fail (section 3) and t_finish (section 8): missing ${notFired.join(', ') || 'none'}`);
     const objs = await g.eval(() => ({ seq: window.__p5.obj, now: window.__game.ctx.mission.objectives().map(o => [o.id, o.state]) }));
     const badSeq = objs.now.filter(([id, stt]) => {
       const q = objs.seq[id] || [];
@@ -365,6 +387,12 @@ export default async function (g) {
     g.assert(hm.length === 0, `HUD objective list matches the mission (${hm.join('; ') || 'ok'})`);
     const cs = await g.eval(() => ({ st: window.__game.state(), inp: window.__game.ctx.input.enabled, inv: window.__game.ctx.player.invuln, sim: window.__game.ctx.simRunning }));
     g.assert(cs.st === 'complete' && !cs.inp && cs.inv && cs.sim, `complete.when holds → state 'complete' while complete.do plays (sim on, input off, frame safe) (${JSON.stringify(cs)})`);
+    // a text card shown from complete.do returns to 'complete' (sim on), so the list can finish and the level end
+    await g.eval(() => { void window.__game.ctx.flow.interstitial([{ style: 'black', text: 'A card inside complete.do.', hold: 0.3 }]); });
+    g.assert(await waitState('interstitial', 5000), 'an interstitial during complete.do');
+    await advance('complete', 20000);
+    const cs2 = await g.eval(() => ({ st: window.__game.state(), sim: window.__game.ctx.simRunning }));
+    g.assert(cs2.st === 'complete' && cs2.sim, `after the card: back to 'complete' with the sim running (${JSON.stringify(cs2)})`);
     await g.step(90);
     g.assert(await waitState(['debrief', 'complete'], 5000), 'reaching o_reach completes the test level');
     await g.eval(() => window.__game.ctx.flow.toTitle());
@@ -392,6 +420,7 @@ export default async function (g) {
     const before = await g.eval(() => ({ e: window.__game.ctx.mission.encounterState('e_drones').state, waves: window.__game.ctx.enemies.count({ tag: 'enc:e_waves' }), relay: window.__game.ctx.structures.get('relay').state }));
     g.assert(before.e === 'cleared' && before.waves > 0 && before.relay === 'destroyed', 'state mutated after the checkpoint');
     await g.eval(() => window.__game.ctx.comms.defineSpeakers({ OPS: { name: 'RENAMED' } }));   // a mid-level rename (A5.2)
+    await setFlag('deathLine', 'Lost under the ice.');                                          // the level's death line (L1 §10.5)
     await g.setGod(false);
     await g.eval(() => window.__game.ctx.combat.damage(window.__game.ctx.player, 1e9, 0, { team: 'enemy' }));
     await g.step(6);
@@ -401,6 +430,8 @@ export default async function (g) {
     await g.shot('screen-death', { settle: false });
     const dtext = await g.eval(() => document.getElementById('bRetry').textContent);
     g.assert(/checkpoint/i.test(dtext), `death screen offers a checkpoint retry ("${dtext}")`);
+    const dline = await g.eval(() => document.querySelector('#screen .center-card p')?.textContent);
+    g.assert(dline === 'Lost under the ice.', `death screen shows the level's death line from the 'deathLine' flag (${dline})`);
     await g.eval(() => { window.__p5.starts.length = 0; });
     await click('#bRetry');
     g.assert(await waitState('playing', 30000), 'retry → playing');
@@ -456,14 +487,15 @@ export default async function (g) {
       const text = 'Forty two characters per second, please ok.';   // 44 characters
       let t0 = null, t1 = null, n = 0;
       c.comms.say('OPS', text).then(() => {});
+      // from the tick our line starts to the tick it ends (level lines that triggers queue behind it don't count)
       for (let i = 0; i < 2000; i++) {
         G.step(1);
         n++;
-        if (t0 === null && c.comms.current) t0 = n;
-        if (t0 !== null && !c.comms.busy) { t1 = n; break; }
+        if (t0 === null && c.comms.current?.text === text) t0 = n;
+        if (t0 !== null && c.comms.current?.text !== text) { t1 = n; break; }
       }
       const exp = text.length / 42 + 1.4 + 0.032 * text.length;
-      return { secs: (t1 - t0) / 60, exp, len: text.length, log: c.comms.log.slice(-1)[0] };
+      return { secs: (t1 - t0) / 60, exp, len: text.length, log: c.comms.log.find(l => l.text === text) };
     });
     g.assert(Math.abs(timing.secs - timing.exp) / timing.exp < 0.1, `comms timing ${timing.secs.toFixed(2)} s vs prototype formula ${timing.exp.toFixed(2)} s (within 10%)`);
     g.assert(timing.log?.who === 'OPS' && timing.log?.name === 'OPERATIONS' && timing.log?.text.startsWith('Forty'), 'comms log keeps who, name and text');
@@ -768,9 +800,9 @@ export default async function (g) {
   const hp = await g.eval(() => ({ picks: window.__p5.picks, unlocked: window.__game.ctx.save.unlockedParts().has('harpoon_gaff') }));
   g.assert(hp.picks[0]?.haul === true && !hp.unlocked, `a haul cache on a campaign level: pickup.haul, no save.unlockPart (${JSON.stringify(hp.picks[0])})`);
   await g.eval(() => { const m = window.__game.ctx.mission; m.setFlag('w1', true); m.setFlag('w3', true); window.__game.ctx.hud.fade(1, 0); window.__game.ctx.hud.letterbox(true, 0); });
-  await g.eval(() => window.__game.ctx.mission.complete());
-  await g.step(1);
-  g.assert(await waitState('debrief', 10000), 'campaign level → debrief');
+  await setFlag('p5.finish');   // t_finish: { complete: true } from an action list
+  await g.step(12);
+  g.assert(await waitState('debrief', 10000), 'campaign level → debrief (the { complete: true } action)');
   await sleep(300);
   const cd = await g.eval(() => ({
     title: document.querySelector('#screen h2')?.textContent, rows: [...document.querySelectorAll('#screen .ledger tr')].map(r => r.textContent),

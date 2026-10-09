@@ -349,12 +349,15 @@ export function install(ctx) {
       // ambience bed: wind always, rain with rain; only while a level runs
       const w = ctx.weather?.current;
       const on = ctx.simRunning && !!w;
-      if (on && !bed) bed = { wind: makeLoop('wind', { vol: 0 }), rain: makeLoop('rain', { vol: 0 }) };
+      if (on && !bed) bed = { wind: makeLoop('wind', { vol: 0 }), rain: makeLoop('rain', { vol: 0 }), wv: 0, wr: 1, rv: 0 };
       if (bed) {
         const ws = w ? Math.hypot(w.wind?.[0] || 0, w.wind?.[1] || 0) : 0;
         const storm = w?.type === 'sandstorm' ? 2 : 1;
-        bed.wind.set({ vol: on ? clamp(0.06 + ws * 0.025 * storm, 0, 0.35) : 0, rate: 0.8 + Math.min(1.2, ws * 0.06) });
-        bed.rain.set({ vol: on && w?.type === 'rain' ? clamp(w.intensity, 0, 1) * 0.6 : 0 });
+        const wv = on ? clamp(0.06 + ws * 0.025 * storm, 0, 0.35) : 0, wr = 0.8 + Math.min(1.2, ws * 0.06);
+        const rv = on && w?.type === 'rain' ? clamp(w.intensity, 0, 1) * 0.6 : 0;
+        // only touch the AudioParams when the bed really changes (every set() schedules automation events)
+        if (Math.abs(wv - bed.wv) > 0.002 || Math.abs(wr - bed.wr) > 0.01) { bed.wv = wv; bed.wr = wr; bed.wind.set({ vol: wv, rate: wr }); }
+        if (Math.abs(rv - bed.rv) > 0.002) { bed.rv = rv; bed.rain.set({ vol: rv }); }
       }
     },
     /** extra (tests): render one SFX offline and report its level; also proves the recipe runs without throwing */

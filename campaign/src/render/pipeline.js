@@ -1,15 +1,14 @@
 // render/pipeline.js (P1): renderer configuration, the post chain, grading, runtime tier switching and frame stats
 // (architecture §7.1, §7.2).
 //
-// High:   RenderPass → GTAOPass (settings.ao; half resolution) → UnrealBloomPass → FinalPass   (MSAA ×4 composer target)
-// Medium: RenderPass → UnrealBloomPass → FinalPass → SMAAPass
+// High:   RenderPass → GTAOPass (settings.ao; half resolution) → BloomPass → FinalPass   (MSAA ×4 composer target)
+// Medium: RenderPass → BloomPass → FinalPass → SMAAPass   (BloomPass: the prototype bloom in the UnrealBloomPass slot)
 // Low:    renderer.render(scene, camera); tone mapping and sRGB by the renderer; no grading, bloom or AO.
 // FinalPass (one fragment shader) does chromatic aberration, exposure and tone mapping (the renderer's operator), linear
 // → sRGB, then display-space grading (lift/gamma/gain, contrast, saturation, split tints, desaturate), vignette, grain.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
@@ -84,21 +83,131 @@ void main() {
   gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
 
-/** The prototype's soft-knee bright pass (threshold subtracted), replacing UnrealBloomPass's hard luminosity cut so
- *  sunlit white surfaces glow a little and emissives a lot. Same uniform names as LuminosityHighPassShader. */
-const SOFT_KNEE_FS = /* glsl */`
-uniform sampler2D tDiffuse;
-uniform float luminosityThreshold;
-uniform float smoothWidth;
+// ------------------------------------------------------------------------------------------------ BloomPass
+// The prototype's bloom (AD: "keep the soft-knee bloom"), ported as a composer pass in the UnrealBloomPass slot of
+// arch §7.2: a soft-knee bright pass at half resolution (4-tap prefilter, firefly cap), a 13-tap downsample chain
+// (Jimenez 2014) and a tent-filter upsample chain that accumulates additively, then an additive composite onto the HDR
+// frame before FinalPass tone-maps it. Unlike UnrealBloomPass's truncated (box-like) separable kernels, the result is
+// radially smooth: no square halos around bright lenses. 1 + 5 + 5 + 1 = 12 draw calls.
+//   strength  composite gain (art.bloom.strength)
+//   radius    0..1: upsample weight (0 tight glow … 1 wide halo; 0.6 ≈ the prototype's 0.9)
+//   threshold linear HDR luminance after exposure where the soft knee is centred (art.bloom.threshold)
+const BLOOM_VS = /* glsl */`
 varying vec2 vUv;
+void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const BLOOM_BRIGHT_FS = /* glsl */`
+uniform sampler2D tDiffuse;
+uniform vec2 uTexel;
+uniform float uThreshold, uKnee, uExposure;
+varying vec2 vUv;
+vec3 S(vec2 o) { return min(texture2D(tDiffuse, vUv + uTexel * o).rgb, vec3(20.0)); }
+float W(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b)) * uExposure * 0.25); }   // Karis-style firefly weight
 void main() {
-  vec3 c = min(texture2D(tDiffuse, vUv).rgb, vec3(24.0));
-  float l = max(c.r, max(c.g, c.b));
-  float knee = max(smoothWidth, 1e-3);
-  float s = clamp(l - luminosityThreshold + knee, 0.0, 2.0 * knee);
-  s = s * s / (4.0 * knee);
-  gl_FragColor = vec4(c * (max(s, l - luminosityThreshold) / max(l, 1e-4)), 1.0);
+  vec3 a = S(vec2(-1.0, -1.0)), b = S(vec2(1.0, -1.0)), c = S(vec2(-1.0, 1.0)), d = S(vec2(1.0, 1.0));
+  float wa = W(a), wb = W(b), wc = W(c), wd = W(d);
+  vec3 col = (a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd);
+  float l = max(col.r, max(col.g, col.b)) * uExposure;
+  float k = max(uKnee, 1e-3);
+  float s = clamp(l - uThreshold + k, 0.0, 2.0 * k);
+  s = s * s / (4.0 * k);
+  gl_FragColor = vec4(col * (max(s, l - uThreshold) / max(l, 1e-4)), 1.0);
 }`;
+const BLOOM_DOWN_FS = /* glsl */`
+uniform sampler2D tDiffuse;
+uniform vec2 uTexel;
+varying vec2 vUv;
+vec3 S(float x, float y) { return texture2D(tDiffuse, vUv + uTexel * vec2(x, y)).rgb; }
+void main() {
+  vec3 o = S(0.0, 0.0) * 0.125
+         + (S(-2.0, 2.0) + S(2.0, 2.0) + S(-2.0, -2.0) + S(2.0, -2.0)) * 0.03125
+         + (S(0.0, 2.0) + S(-2.0, 0.0) + S(2.0, 0.0) + S(0.0, -2.0)) * 0.0625
+         + (S(-1.0, 1.0) + S(1.0, 1.0) + S(-1.0, -1.0) + S(1.0, -1.0)) * 0.125;
+  gl_FragColor = vec4(o, 1.0);
+}`;
+const BLOOM_UP_FS = /* glsl */`
+uniform sampler2D tDiffuse;
+uniform vec2 uTexel;
+uniform float uK;
+varying vec2 vUv;
+vec3 S(float x, float y) { return texture2D(tDiffuse, vUv + uTexel * vec2(x, y)).rgb; }
+void main() {
+  vec3 s = (S(-1.0, 1.0) + S(1.0, 1.0) + S(-1.0, -1.0) + S(1.0, -1.0))
+         + (S(0.0, 1.0) + S(-1.0, 0.0) + S(1.0, 0.0) + S(0.0, -1.0)) * 2.0 + S(0.0, 0.0) * 4.0;
+  gl_FragColor = vec4(s / 16.0 * uK, 1.0);
+}`;
+const BLOOM_ADD_FS = /* glsl */`
+uniform sampler2D tDiffuse;
+uniform float uStrength;
+varying vec2 vUv;
+void main() { gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb * uStrength, 1.0); }`;
+
+class BloomPass extends Pass {
+  constructor(resolution, strength = 0.85, radius = 0.6, threshold = 0.85) {
+    super();
+    this.strength = strength; this.radius = radius; this.threshold = threshold; this.knee = 0.3; this.exposure = 1;
+    this.needsSwap = false;
+    this.levels = 6;
+    this.mips = [];
+    for (let i = 0; i < this.levels; i++) {
+      const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false, generateMipmaps: false,
+                                                     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+      rt.texture.name = 'bloom.mip' + i;
+      this.mips.push(rt);
+    }
+    const mk = (fs, u, extra = {}) => new THREE.ShaderMaterial({ name: 'bloom', uniforms: u, vertexShader: BLOOM_VS, fragmentShader: fs,
+                                                                  depthTest: false, depthWrite: false, ...extra });
+    this.bright = mk(BLOOM_BRIGHT_FS, { tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: threshold },
+                                        uKnee: { value: 0.3 }, uExposure: { value: 1 } });
+    this.down = mk(BLOOM_DOWN_FS, { tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2() } });
+    this.up = mk(BLOOM_UP_FS, { tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2() }, uK: { value: 0.9 } },
+                 { blending: THREE.AdditiveBlending, transparent: true });
+    this.add = mk(BLOOM_ADD_FS, { tDiffuse: { value: null }, uStrength: { value: strength } },
+                  { blending: THREE.AdditiveBlending, transparent: true });
+    this.fsQuad = new FullScreenQuad(null);
+    this.size = new THREE.Vector2(1, 1);
+    if (resolution) this.setSize(resolution.x, resolution.y);
+  }
+  setSize(w, h) {
+    this.size.set(w, h);
+    let x = w, y = h;
+    for (const m of this.mips) { x = Math.max(1, Math.round(x / 2)); y = Math.max(1, Math.round(y / 2)); m.setSize(x, y); }
+  }
+  _run(renderer, mat, target) { this.fsQuad.material = mat; renderer.setRenderTarget(target); this.fsQuad.render(renderer); }
+  render(renderer, writeBuffer, readBuffer) {
+    const ac = renderer.autoClear;
+    renderer.autoClear = false;
+    const M = this.mips, n = M.length;
+    // 1. bright pass (soft knee) into the half-resolution level
+    const b = this.bright.uniforms;
+    b.tDiffuse.value = readBuffer.texture;
+    b.uTexel.value.set(1 / Math.max(1, readBuffer.width), 1 / Math.max(1, readBuffer.height));
+    b.uThreshold.value = this.threshold; b.uKnee.value = this.knee; b.uExposure.value = this.exposure;
+    this._run(renderer, this.bright, M[0]);
+    // 2. 13-tap downsample chain
+    for (let i = 1; i < n; i++) {
+      this.down.uniforms.tDiffuse.value = M[i - 1].texture;
+      this.down.uniforms.uTexel.value.set(1 / M[i - 1].width, 1 / M[i - 1].height);
+      this._run(renderer, this.down, M[i]);
+    }
+    // 3. tent upsample, accumulated additively into each finer level
+    const k = Math.min(1.05, Math.max(0.3, 0.45 + 0.75 * (+this.radius || 0)));
+    for (let i = n - 2; i >= 0; i--) {
+      this.up.uniforms.tDiffuse.value = M[i + 1].texture;
+      this.up.uniforms.uTexel.value.set(1 / M[i + 1].width, 1 / M[i + 1].height);
+      this.up.uniforms.uK.value = k;
+      this._run(renderer, this.up, M[i]);
+    }
+    // 4. composite: add onto the HDR frame (FinalPass tone-maps scene + bloom together)
+    this.add.uniforms.tDiffuse.value = M[0].texture;
+    this.add.uniforms.uStrength.value = Math.max(0, +this.strength || 0) * 0.5;
+    this._run(renderer, this.add, this.renderToScreen ? null : readBuffer);
+    renderer.autoClear = ac;
+  }
+  dispose() {
+    for (const m of this.mips) m.dispose();
+    this.bright.dispose(); this.down.dispose(); this.up.dispose(); this.add.dispose();
+  }
+}
 
 class FinalPass extends Pass {
   constructor() {
@@ -215,9 +324,7 @@ export function install(ctx) {
       composer.addPass(P.ao);
     }
     if (t.bloom) {
-      P.bloom = new UnrealBloomPass(new THREE.Vector2(size.x * pr, size.y * pr), bloom.strength, bloom.radius, bloom.threshold);
-      if (P.bloom.highPassUniforms?.smoothWidth) P.bloom.highPassUniforms.smoothWidth.value = 0.3;
-      if (P.bloom.materialHighPassFilter) { P.bloom.materialHighPassFilter.fragmentShader = SOFT_KNEE_FS; P.bloom.materialHighPassFilter.needsUpdate = true; }
+      P.bloom = new BloomPass(new THREE.Vector2(size.x * pr, size.y * pr), bloom.strength, bloom.radius, bloom.threshold);
       composer.addPass(P.bloom);
     }
     P.final = new FinalPass();
@@ -236,7 +343,8 @@ export function install(ctx) {
     u.uLift.value.fromArray(grade.lift); u.uGamma.value.fromArray(grade.gamma); u.uGain.value.fromArray(grade.gain);
     u.uShadowTint.value.fromArray(grade.shadowsTint); u.uHighTint.value.fromArray(grade.highlightsTint);
     u.uTime.value = ctx.clock.realTime;
-    if (P.bloom) { P.bloom.strength = bloom.strength; P.bloom.radius = bloom.radius; P.bloom.threshold = bloom.threshold; }
+    if (P.bloom) { P.bloom.strength = bloom.strength; P.bloom.radius = bloom.radius; P.bloom.threshold = bloom.threshold;
+                   P.bloom.exposure = r.toneMappingExposure * (grade.exposure || 1); }
   }
   const snapGrade = () => { const s = {}; for (const k of GRADE_KEYS_NUM) s[k] = grade[k]; for (const k of GRADE_KEYS_VEC) s[k] = grade[k].slice(); return s; };
   const vec3 = (v, d) => (Array.isArray(v) && v.length >= 3 ? [+v[0], +v[1], +v[2]] : typeof v === 'number' ? [v, v, v] : d);
@@ -315,7 +423,18 @@ export function install(ctx) {
     },
     async warmup() {
       const s = view || ctx.scene, c = viewCam || ctx.camera;
-      try { if (r.compileAsync) await r.compileAsync(s, c); } catch (e) { console.warn('[pipeline] compileAsync failed', e); }
+      // compile against the target the frame really renders into: with the composer that is a linear HDR target with
+      // no tone mapping, so compiling against the screen would build a second, never-used program for every material
+      // (sRGB + tone-mapped variants), doubling the program count on High and Medium
+      const prevRT = r.getRenderTarget();
+      try {
+        if (r.compileAsync) {
+          if (composer) r.setRenderTarget(composer.renderTarget1);
+          const p = r.compileAsync(s, c);   // programs are created synchronously inside; the promise waits for linking
+          r.setRenderTarget(prevRT);
+          await p;
+        }
+      } catch (e) { r.setRenderTarget(prevRT); console.warn('[pipeline] compileAsync failed', e); }
       api.render();   // compiles the post chain and the shadow programs; hidden behind the loading screen
     },
     stats() {

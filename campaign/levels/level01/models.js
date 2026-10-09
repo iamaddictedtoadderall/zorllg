@@ -79,6 +79,17 @@ export function cutterModel(ctx) {
   body.push([slab(3.4, 0.3, 3.8, 0.1), M.iron, 0, -1.25, 0]);                     // belly plate
   for (const s of [-1, 1]) body.push([cyl(0.18, 0.18, 1.2, 8), M.dark, s * 1.2, 1.7, 0.9]);   // exhaust stacks
   body.push([KIT.greebles(() => 0.37, 1.6, 0.8, 1.2), M.iron, 0, -0.3, 1.75]);
+  // the rear, which the player sees all through the cut: a teal hatch panel with a cream stripe, tail lamps, a canvas
+  // tarp roll on the roof and two red fuel drums strapped to the rear step
+  body.push([slab(2.6, 1.4, 0.14, 0.05), M.wake, 0, 0.15, 1.86]);
+  body.push([slab(2.7, 0.22, 0.16, 0.04), M.wakeCream, 0, 0.95, 1.9]);
+  body.push([slab(1.1, 0.9, 0.08, 0.03), M.wakeCream, -0.55, 0.05, 1.95]);                     // patched hatch
+  body.push([slab(0.5, 0.08, 0.12, 0.02), M.steel, -0.55, 0.05, 2.02]);                        // its handle
+  for (const s of [-1, 1]) body.push([slab(0.32, 0.18, 0.1, 0.03), M.amber, s * 1.18, 0.62, 1.95]);   // tail lamps
+  body.push([cyl(0.3, 0.3, 2.7, 10), M.canvas, 0, 1.5, 1.2, 0, 0, PI / 2]);                    // tarp roll
+  for (const s of [-1, 1]) body.push([slab(0.08, 0.66, 0.08, 0.02), M.dark, s * 0.9, 1.5, 1.2]); // its straps
+  body.push([slab(2.9, 0.18, 0.9, 0.05), M.iron, 0, -1.1, 2.15]);                              // rear step
+  for (const s of [-1, 1]) body.push([cyl(0.34, 0.34, 0.85, 10), M.wakeRed, s * 0.85, -0.55, 2.2]);  // fuel drums
   const parts = { body: { pivot: [0, 3.0, 0], items: body,
     anchors: [{ name: 'cab', at: [0, 0.5, -1.7], glow: { color: '#ffb36b', size: 1.6, intensity: 2, pulse: 'flicker' } }] } };
   // four short articulated legs with broad snow feet

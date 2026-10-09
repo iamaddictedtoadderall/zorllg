@@ -154,6 +154,7 @@ export default {
     { id: 't_interact', when: { flag: 'p5.interact' }, do: [{ call: 'p5.addInteract' }] },
     { id: 't_fail', when: { flag: 'p5.fail' }, do: [{ fail: 'Proving run aborted.' }] },
     { id: 't_cine', when: { flag: 'p5.cine' }, do: [{ cinematic: 'sweep' }, { flag: ['p5.sweepDone', true] }] },
+    { id: 't_finish', when: { flag: 'p5.finish' }, do: [{ say: ['OPS', 'Range closed early.'] }, { complete: true }] },
   ],
   events: {
     ev_uplinked: [{ objective: { complete: 'o_manual' } }, { flag: ['p5.uplinked', true] }],
@@ -180,6 +181,7 @@ export default {
       { structure: { id: 'gate_a', state: 'open' } }, { structure: { id: 'barricade_a', state: 'destroyed' } },
       { codex: 'test_codex' }, { unlock: 'mg_r12' },
       { player: { heal: 500, refill: true, freeze: false } }, { player: { yaw: 'route' } },
+      { player: { teleport: { s: 60, l: 0 }, yaw: 'route' } },
       { spawn: { kind: 'drone', count: 2, at: { s: 980, l: 120, h: 12 }, spread: 10, opts: { tags: ['inline'] } } },
       { despawn: { tag: 'inline' } },
       { spawn: { kind: 'drone', at: { s: 990, l: 130, h: 12 }, opts: { tags: ['scripted'] } } }, { kill: { tag: 'scripted' } },
