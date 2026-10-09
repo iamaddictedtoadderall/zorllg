@@ -1,14 +1,21 @@
 // ui/flow.js (P5) — P0 STUB: a working game state machine (§8): title → (select) → briefing → loading → playing ⇄ paused
 // → complete → debrief → title, dead → retry, plus garage, settings, credits and interstitials.
+// A level end (level:complete / level:failed) that arrives while the level is suspended ('paused', 'interstitial',
+// 'loading': the mission can still settle things then, e.g. a debug call or a list started during loading) is held and
+// handled at the first tick back in 'playing', never dropped: mission.complete() runs once per start, so a dropped
+// level:complete would leave the level unable to finish. In 'dead' a level end is dropped (the death screen decides;
+// retry restarts the mission). A checkpoint restart, a new level or quitting discards a held end.
 import { ACT } from '../core/input.js';
 import { LEVELS, loadLevel, nextLevel } from '../../levels/index.js';
 
 const SIM = { playing: true, dead: true, complete: true };
+const SUSPENDED = { paused: true, interstitial: true, loading: true };   // a level end is held, not dropped (header)
 const DEATH_LINES = ['Frame down. Recovery beacon active.', 'AP depleted. Systems offline.', 'Contact lost with the frame.'];
 const CREDITS = ['DAWNWAKE', 'Follow the thaw. Carry what you can.', 'Built with three.js', 'Every model, texture and sound is generated in code.'];
 
 export function install(ctx) {
   let menuToken = 0;
+  let heldEnd = null;   // ['complete' | 'failed', payload] that arrived while suspended
   const S = () => ctx.screens, H = () => ctx.hud;
 
   function set(to) {
@@ -32,7 +39,11 @@ export function install(ctx) {
     ctx.pipeline?.setView(ctx.garage.scene, ctx.garage.camera);
     ctx.garage?.showcase(true);
   }
+  /** the prototype clears #fade at every mission start; a fade/letterbox left by the stopped run must not persist.
+   *  Called before mission.start/restart: a superseded fade settles while the sim is stopped, so its stale list stays held. */
+  function clearOverlays() { H()?.fade(0, 0); H()?.letterbox(false, 0); }
   function teardown() {
+    heldEnd = null;
     if (!ctx.world?.def && !ctx.mission?.def) return;
     if (ctx.mission?.def) ctx.save.addPlayTime(ctx.mission.elapsed);
     ctx.mission?.stop();
@@ -98,6 +109,7 @@ export function install(ctx) {
 
   async function loadAndPlay(level, checkpointId, o, token) {
     ctx.audio?.unlock?.();
+    heldEnd = null;
     set('loading');
     H()?.show(false);
     ctx.garage?.showcase(false);
@@ -106,6 +118,7 @@ export function install(ctx) {
     const def = typeof level === 'string' ? await loadLevel(level) : level;
     if (token !== menuToken) return;
     teardown();
+    clearOverlays();
     ctx.pipeline?.clearView();
     ctx.materials?.setFactions(def.factions || {});
     ctx.materials?.applyPalette(def.art?.palette || {});
@@ -175,7 +188,9 @@ export function install(ctx) {
       if (!ctx.mission?.def) return;
       ++menuToken;
       S().hide();
+      heldEnd = null;
       set('loading');
+      clearOverlays();
       ctx.mission.restart();
       await ctx.world.settle();
       H()?.show(true);
@@ -225,6 +240,7 @@ export function install(ctx) {
       await flow.toTitle();
     },
     update() {
+      if (flow.state === 'playing' && heldEnd) { const [kind, e] = heldEnd; heldEnd = null; (kind === 'complete' ? onComplete : onFailed)(e); return; }
       if (flow.state === 'playing' && ctx.input.pressed(ACT.PAUSE)) flow.pause();
     },
   };
@@ -237,13 +253,23 @@ export function install(ctx) {
     const line = DEATH_LINES[Math.floor(Math.random() * DEATH_LINES.length)];
     ctx.timers.after(2.6, () => { if (flow.state === 'dead') onDeathScreen(line).catch(e => { if (!e?._recorded) ctx.recordError('flow', e); }); });
   });
-  ctx.events.on('level:failed', ({ reason }) => {
-    if (flow.state !== 'playing') return;
+  /** a level end outside 'playing': held while suspended (handled back in 'playing'), otherwise dropped */
+  function holdEnd(kind, e) {
+    if (SUSPENDED[flow.state] && ctx.mission?.def && !heldEnd) heldEnd = [kind, e];
+  }
+  function onFailed({ reason }) {
     set('dead');
     onDeathScreen(reason || 'Mission failed.').catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
+  }
+  ctx.events.on('level:failed', (e) => {
+    if (flow.state !== 'playing') { holdEnd('failed', e); return; }
+    onFailed(e);
   });
-  ctx.events.on('level:complete', ({ levelId, result }) => {
-    if (flow.state !== 'playing') return;
+  ctx.events.on('level:complete', (e) => {
+    if (flow.state !== 'playing') { holdEnd('complete', e); return; }
+    onComplete(e);
+  });
+  function onComplete({ levelId, result }) {
     const def = flow.def;
     set('complete');
     ctx.simRunning = false;
@@ -267,7 +293,7 @@ export function install(ctx) {
       } else if (r === 'garage') { set('garage'); titleView(); await ctx.garage.open({ context: 'title' }); }
       await flow.toTitle();
     })().catch(e => { if (!e?._recorded) ctx.recordError('flow', e); });
-  });
+  }
   ctx.addSystem({ name: 'flow', phase: 'early', when: 'always', update: () => flow.update() });
   ctx.flow = flow;
   return flow;

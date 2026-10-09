@@ -1,5 +1,5 @@
 {
-  "$comment": "Interface manifest derived mechanically from architecture.md \u00a73.6, \u00a74 and \u00a79.2 (P0). tools/scenarios/contract.mjs checks it in the page. 'modules': export name \u2192 typeof. 'classes': prototype methods. 'services': ctx.<name> methods (dotted names reach into sub-objects). 'fields': ctx.<name> members that must exist (any value). 'events': the \u00a73.5 catalogue.",
+  "$comment": "Interface manifest derived mechanically from architecture.md \u00a73.6, \u00a74 and \u00a79.2 (P0). tools/scenarios/contract.mjs checks it in the page. 'modules': export name \u2192 typeof. 'classes': prototype methods. 'services': ctx.<name> methods (dotted names reach into sub-objects). 'fields': ctx.<name> members that must exist (any value; dotted names reach into sub-objects). 'handles': members of objects returned by \u00a74 calls (contract.mjs makes each call with throwaway arguments and cleans up). 'events': the \u00a73.5 catalogue; a scripted run of the test level must emit every one except 'eventsDeferred' (their emitters need package-specific setup, covered by the P4/P5 scenarios).",
   "modules": {
     "src/core/engine.js": {
       "exports": {"createEngine": "function"}
@@ -289,7 +289,7 @@
     "pipeline": ["composer", "grade"],
     "atmosphere": ["sun", "hemi", "rim", "sunDir", "art", "envMap", "fogUniforms"],
     "materials": ["textures"],
-    "particles": ["add", "smoke", "lights", "debris", "decals"],
+    "particles": ["add", "smoke", "lights", "debris", "decals", "lights.count"],
     "weather": ["current"],
     "audio": ["ready", "bus", "noise"],
     "world": ["def", "route", "heightfield", "terrain", "scatter", "focus"],
@@ -372,6 +372,7 @@
     "cinematics": ["mission", "sim"],
     "world": ["world", "always"],
     "structures": ["world", "always"],
+    "cameraRig-sim": ["camera", "sim"],
     "cameraRig": ["camera", "always"],
     "atmosphere": ["fx", "always"],
     "weather": ["fx", "always"],
@@ -417,5 +418,13 @@
       "id", "name", "design", "ap", "en", "enRegen", "enRegenAir", "speed", "qbImpulse", "qbCost", "hoverAccel", "hoverCost",
       "jump", "impMax", "load", "power", "rad", "hgt", "hitR", "weight", "powerDraw", "overweight", "overpower", "speedMul",
       "warnings"
-    ]
+    ],
+  "handles": {
+    "acKit": ["side", "front", "top", "ball", "joint", "cells"],
+    "loop": ["set", "stop"],
+    "emitter": ["pos", "alive", "set", "stop"],
+    "loading": ["set", "close"],
+    "flyby": ["stop", "done"]
+  },
+  "eventsDeferred": ["player:staggered", "pickup"]
 }

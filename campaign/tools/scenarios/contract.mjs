@@ -1,5 +1,7 @@
 // tools/scenarios/contract.mjs (P0): checks every module export, class method, ctx service method/field, __game member,
-// shared registry and system registration against tools/contract.json (§9.5), plus a few core behaviour checks.
+// shared registry, system registration and returned-handle shape against tools/contract.json (§9.5), a few core
+// behaviour checks, and the §3.5 event catalogue at runtime (a scripted run of the test level must emit every event
+// except contract.eventsDeferred; emitters are binding).
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,10 +45,14 @@ export default async function (g) {
       if (!s) { bad('services', `ctx.${svc} missing`); continue; }
       for (const m of methods) { if (typeof get(s, m) === 'function') ok('services'); else bad('services', `ctx.${svc}.${m} is not a function`); }
     }
+    const hasPath = (o, path) => {   // dotted names reach into sub-objects
+      const ks = path.split('.'), last = ks.pop(), parent = ks.length ? get(o, ks.join('.')) : o;
+      return parent != null && last in Object(parent);
+    };
     for (const [svc, fields] of Object.entries(C.fields)) {
       const s = svc === 'ctx' ? ctx : ctx[svc];
       if (!s) { bad('fields', `ctx.${svc} missing`); continue; }
-      for (const f of fields) { if (f in s) ok('fields'); else bad('fields', `${svc === 'ctx' ? 'ctx' : 'ctx.' + svc}.${f} missing`); }
+      for (const f of fields) { if (hasPath(s, f)) ok('fields'); else bad('fields', `${svc === 'ctx' ? 'ctx' : 'ctx.' + svc}.${f} missing`); }
     }
     // __game
     for (const m of C.gameApi) { if (get(window.__game, m) !== undefined) ok('gameApi'); else bad('gameApi', `__game.${m} missing`); }
@@ -146,6 +152,29 @@ export default async function (g) {
       S2.reset({ contract_gate: 'closed' }); if (ctx.collision.pointInSolid(p)) ok('shapes'); else bad('shapes', 'structures.reset restores colliders');
       S2.clear(); ctx.collision.clear(); }
 
+    // ---------------------------------------------------------------- returned handles (§4): members are functions
+    // unless a type test is given. Each call uses throwaway arguments and is cleaned up.
+    const members = (obj, keys, label, typeOf = {}) => {
+      if (!obj || typeof obj !== 'object') { bad('handles', `${label} returned ${obj}`); return; }
+      for (const k of keys) {
+        const t = typeOf[k];
+        if (!(k in obj)) bad('handles', `${label}.${k} missing`);
+        else if (t ? !t(obj[k]) : typeof obj[k] !== 'function') bad('handles', `${label}.${k} has the wrong type (${typeof obj[k]})`);
+        else ok('handles');
+      }
+    };
+    const isV3 = (v) => !!(v && v.isVector3);
+    try { members(mods['src/art/kit.js'].acKit(0.08), C.handles.acKit, 'acKit()'); } catch (e) { bad('handles', `acKit() threw: ${e.message}`); }
+    try { const h = ctx.audio.loop('wind', { vol: 0 }); members(h, C.handles.loop, 'audio.loop()'); h?.stop?.(0); }
+    catch (e) { bad('handles', `audio.loop() threw: ${e.message}`); }
+    try {
+      const h = ctx.fx.emitter('smoke', V3(0, -500, 0), { rate: 0 });
+      members(h, C.handles.emitter, 'fx.emitter()', { pos: isV3, alive: (v) => typeof v === 'boolean' });
+      h?.stop?.(); ctx.fx.clearEmitters();
+    } catch (e) { bad('handles', `fx.emitter() threw: ${e.message}`); }
+    try { const h = ctx.screens.showLoading({ title: 'Contract' }); members(h, C.handles.loading, 'screens.showLoading()'); h?.set?.(0.5, 'contract'); h?.close?.(); }
+    catch (e) { bad('handles', `screens.showLoading() threw: ${e.message}`); }
+
     // ---------------------------------------------------------------- core behaviour
     const U = mods['src/core/util.js'];
     const core = (cond, msg) => { if (cond) ok('core'); else bad('core', msg); };
@@ -197,11 +226,96 @@ export default async function (g) {
     return { fail, count };
   }, contract);
 
+  // ---------------------------------------------------------------- level handles and the §3.5 event catalogue
+  // Records every catalogue event while the core, a load of the test level and a short script (generic: it uses the
+  // loaded def's own trigger, encounter, zone and checkpoint ids) run through all binding emitters, then quits to the
+  // title. Events in contract.eventsDeferred need package-specific setup and are covered by the P4/P5 scenarios.
+  await g.eval((types) => {
+    const c = window.__game.ctx;
+    window.__contractEv = new Set();
+    window.__contractOff = types.map(t => c.events.on(t, () => window.__contractEv.add(t)));
+    c.resize();                                                        // resize
+    c.setTier(c.tier.name);                                            // tier:changed
+    const v = c.settings.get('cameraShake');                           // settings:changed
+    c.settings.set('cameraShake', v === 1 ? 0.9 : 1); c.settings.set('cameraShake', v);
+  }, contract.events);
+  await g.startLevel('test');                                          // state:changed, level:loading/start/ready, player:spawned, target:registered
+  const lv = await g.eval(async (H) => {
+    const G = window.__game, c = G.ctx, def = c.mission.def, fail = [], count = { n: 0 };
+    const V3 = (x, y, z) => new c.THREE.Vector3(x, y, z);
+    const ok = () => count.n++;
+    const bad = (m) => fail.push(m);
+    // flyby() and fx.ambient() handles (they resolve level positions, so they run here)
+    try {
+      const f = c.cinematics.flyby({ model: 'dropship', path: [{ s: 100, h: 80 }, { s: 400, h: 80 }], speed: 60 });
+      for (const k of H.flyby) {
+        if (!f || !(k in f)) bad(`cinematics.flyby().${k} missing`);
+        else if (k === 'done' ? typeof f.done?.then !== 'function' : typeof f[k] !== 'function') bad(`cinematics.flyby().${k} has the wrong type`);
+        else ok();
+      }
+      f?.stop?.();
+    } catch (e) { bad(`cinematics.flyby() threw: ${e.message}`); }
+    try {
+      const h = c.fx.ambient({ kind: 'battle', at: { s: 900 }, radius: 200 });
+      for (const k of H.emitter) { if (h && k in h) ok(); else bad(`fx.ambient().${k} missing`); }
+      h?.stop?.();
+    } catch (e) { bad(`fx.ambient() threw: ${e.message}`); }
+    // drive the binding emitters: sim-dependent ones first, then those that may end the level (objectives, triggers)
+    const sFrom = (r) => Math.min(c.world.route.length - 5, r);
+    const where = [];
+    const mark = (k) => where.push(`${k}:${c.flow.state}`);
+    G.step(12);                                                        // zone:entered (start zone), comms:line (start lines)
+    c.comms.say(Object.keys(def.speakers || {})[0] || 'OPS', 'Contract check.');
+    G.step(6);                                                         // comms:line
+    G.teleport({ s: 80 }, { h: 40 }); G.step(150);                     // player:landed
+    mark('landed');
+    const z0 = (def.zones || [])[0];
+    if (z0) { G.teleport({ s: sFrom((z0.range[0] + z0.range[1]) / 2) }); G.step(12); G.teleport({ s: sFrom(z0.range[1] + 120) }); G.step(12); }   // zone:entered/exited
+    mark('zones');
+    const u = c.enemies.spawn('drone', c.world.resolve({ s: 200, l: 30, h: 20 }, V3()), { tag: 'contract' });
+    c.combat.damage(u, 1e7, 0, { team: 'player' });                    // target:damaged, target:killed
+    const inst = c.structures.place({ id: 'contract_ev_gate', type: 'gate', at: { s: 600, l: 200 } }, c.world.resolve({ s: 600, l: 200 }, V3()), 0);
+    inst.setState('open');                                             // structure:state
+    c.fx.explosion(c.world.resolve({ s: 300, l: 60 }, V3()), 1, { quiet: true });   // fx:explosion
+    c.combat.damage(c.player, 10, 0, { team: 'enemy' });              // player:damaged
+    c.cinematics.play({ keys: [{ t: 0, pos: { s: 40, h: 20 }, look: { s: 120 } }, { t: 0.2, pos: { s: 50, h: 20 }, look: { s: 120 } }] });
+    G.step(120);                                                       // cinematic:start / cinematic:end
+    mark('cinematic');
+    G.checkpoint((def.checkpoints || [])[0]?.id);                      // checkpoint:reached
+    await G.restart(); G.step(2);
+    if (def.encounters?.length) c.mission.run([{ spawn: def.encounters[0].id }]);   // encounter:started, unit:spawned
+    G.step(2); G.killAll(); G.step(12);                                // encounter:cleared
+    mark('encounter');
+    if (def.triggers?.length) G.trigger(def.triggers[0].id);           // trigger:fired
+    G.completeObjective((def.objectives || [])[0]?.id);                // objective:changed
+    G.step(1);
+    window.dispatchEvent(new Event('blur'));                           // input:focuslost (flow pauses when playing)
+    G.step(1); c.flow.resume(); G.step(1);
+    await G.restart(); G.step(2);
+    c.mission.fail('contract');                                        // level:failed
+    G.step(1);
+    await G.restart(); G.step(2);
+    c.combat.damage(c.player, 1e9, 0, { team: 'enemy' }); G.step(2);  // player:died
+    await G.restart(); G.step(2);
+    c.mission.complete(); G.step(2);                                   // level:complete
+    await c.flow.toTitle();                                            // level:cleared
+    G.step(2);
+    const fired = [...window.__contractEv];
+    for (const off of window.__contractOff) off();
+    return { fail, count: count.n, fired, state: c.flow.state, where };
+  }, contract.handles);
+  const want = contract.events.filter(e => !contract.eventsDeferred.includes(e));
+  const missing = want.filter(e => !lv.fired.includes(e));
+  g.assert(lv.fail.length === 0, `contract handles (level): ${lv.count} ok${lv.fail.length ? `, failed: ${lv.fail.join('; ')}` : ''}`);
+  if (missing.length) g.log('events script flow states:', lv.where.join(' '));
+  g.assert(missing.length === 0, `contract events: ${want.length - missing.length}/${want.length} catalogue events emitted${missing.length ? `; never emitted: ${missing.join(', ')}` : ''} (deferred to P4/P5 scenarios: ${contract.eventsDeferred.join(', ')})`);
+  g.assert(lv.state === 'title', `events script returned to the title (${lv.state})`);
+
   const cats = new Set([...Object.keys(res.count), ...Object.keys(res.fail)]);
   for (const c of cats) {
     const f = res.fail[c] || [];
     g.assert(f.length === 0, `contract ${c}: ${res.count[c] || 0} ok${f.length ? `, ${f.length} failed: ${f.slice(0, 12).join('; ')}` : ''}`);
   }
-  const want = ['exports', 'classes', 'getters', 'services', 'fields', 'gameApi', 'registries', 'systems', 'dom', 'shapes', 'core'];
-  g.assert(want.every(c => cats.has(c)), `contract categories checked (${[...cats].join(', ')})`);
+  const want2 = ['exports', 'classes', 'getters', 'services', 'fields', 'gameApi', 'registries', 'systems', 'dom', 'shapes', 'handles', 'core'];
+  g.assert(want2.every(c => cats.has(c)), `contract categories checked (${[...cats].join(', ')})`);
 }

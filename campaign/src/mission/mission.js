@@ -13,10 +13,15 @@
 //  ctx.step(n), so an awaited list would only advance between step() calls. A non-blocking action continues the list at
 //  once; a blocking one returns a simDeferred() promise (core/util.js) that resumes the list synchronously, inside the
 //  tick that settles it. Services that block an action list on sim time or ticks (comms.play, cinematics.play,
-//  flyby().done, barrage, hud.choice, hud.fade) return simDeferred() promises too. A custom action ({ call } or
+//  flyby().done, barrage, hud.choice, hud.fade, cameraRig.blendTo) return simDeferred() promises too. A custom action ({ call } or
 //  registerAction) that blocks MUST return one as well (or the promise of m.run(list)): a plain Promise still works but
 //  resumes on a microtask, which makes the outcome depend on step() chunking; with ?debug=1 that warns once per action.
 //  Only menu-driven waits (flow.interstitial) may stay plain Promises: the sim is stopped while the menu is up.
+//  Pause safety: what a list blocks on MUST count sim time (ctx.timers, a 'sim' system's dt), so it freezes while the
+//  sim is stopped (paused, interstitial, loading, dead): the fade action asks hud.fade for { clock: 'sim' }. As a
+//  backstop, a list never resumes while the sim is stopped: if what it waits on settles then (a real-time UI promise, a
+//  menu), the list resumes at the next mission tick. Otherwise a { complete } or { fail } reached during a pause would be
+//  emitted while flow is not 'playing'.
 import * as THREE from 'three';
 import { hashString, clone, clamp, simDeferred, simAll, whenSettled, isSettled, isSimPromise } from '../core/util.js';
 
@@ -33,6 +38,9 @@ export function install(ctx) {
   let elapsed = 0, gen = 0, running = false, completed = false, trigAcc = 0, cpSnap = null;
   let objectives = new Map(), triggers = new Map(), encounters = new Map(), zonesEntered = new Set(), zonesIn = new Set();
   const warned = new Set();
+  let held = [];   // list continuations whose blocking promise settled while the sim was stopped
+  /** runs fn now while the sim runs; otherwise holds it for the next mission tick (pause safety, header) */
+  const simGate = (fn) => { if (ctx.simRunning) fn(); else held.push(fn); };
 
   const W = () => ctx.world;
   const res = (p) => W().resolve(p, new THREE.Vector3());
@@ -141,14 +149,15 @@ export function install(ctx) {
       }
       case 'choice': {
         const d = simDeferred();
-        whenSettled(ctx.hud?.choice({ title: v.title, options: v.options, seconds: v.seconds }), (k) => {
+        whenSettled(ctx.hud?.choice({ title: v.title, options: v.options, seconds: v.seconds }), (k) => simGate(() => {
+          if (g !== gen) { d.resolve(); return; }
           const opt = v.options.find(o => o.key === k) || v.options.find(o => o.key === v.default) || v.options[0];
           whenSettled(opt ? m.run(opt.do || [], g) : undefined, () => d.resolve());
-        });
+        }));
         return d.promise;
       }
       case 'interstitial': return ctx.flow?.interstitial(v);
-      case 'fade': return ctx.hud?.fade(+v, a.seconds ?? 1);
+      case 'fade': return ctx.hud?.fade(+v, a.seconds ?? 1, { clock: 'sim' });   // sim time even when run during loading
       case 'letterbox': ctx.hud?.letterbox(!!v); return;
       case 'codex': ctx.save?.addCodex(v); return;
       case 'unlock': ctx.save?.unlockPart(v); return;
@@ -283,11 +292,13 @@ export function install(ctx) {
       ctx.hud?.prompt?.(null);
       ctx.comms?.clear();
       if (ctx.player) ctx.player.frozen = false;
+      held = [];   // stale lists only (gen changed above), including any the clears just settled
     },
     /**
      * Runs the list synchronously up to the first action that is still pending, and resumes it the moment that action
      * settles (inside the tick for simDeferred() promises). Returns a simDeferred() promise for the whole list. A list
-     * whose generation is stale (mission.stop/start ran) stops before its next action.
+     * whose generation is stale (mission.stop/start ran) stops before its next action. A list never resumes while the
+     * sim is stopped: a wait that settles then resumes it at the next mission tick (pause safety, header).
      */
     run(list, g = gen) {
       const d = simDeferred();
@@ -302,7 +313,7 @@ export function install(ctx) {
           catch (e) { ctx.recordError?.('mission', e); continue; }
           if (isSettled(r)) continue;
           if (ctx.debug && !isSimPromise(r)) warnPlain(a);
-          whenSettled(r, next, (e) => { ctx.recordError?.('mission', e); next(); });
+          whenSettled(r, () => simGate(next), (e) => { ctx.recordError?.('mission', e); simGate(next); });
           return;
         }
         d.resolve();
@@ -387,6 +398,10 @@ export function install(ctx) {
     },
     fail(reason = 'Mission failed') { if (!m.def) return; ctx.events.emit('level:failed', { levelId: m.def.id, reason }); },
     update(dt) {
+      if (held.length) {   // waits that settled while the sim was stopped resume now
+        const h = held; held = [];
+        for (const fn of h) { try { fn(); } catch (e) { ctx.recordError?.('mission', e); } }
+      }
       if (!running || !m.def) return;
       elapsed += dt;
       trigAcc += dt;

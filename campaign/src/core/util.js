@@ -173,6 +173,12 @@ export class TimerQueue {
 // Rule: a promise that settles because of sim time or a tick (timers, comms typing, cinematic shots, a choice read from
 // input, a fade driven by a system's dt) is created with simDeferred(). A promise that settles because of a DOM event
 // (a menu click) may stay a plain Promise: the sim is stopped while such a menu is up.
+// Rule: a promise that gates sim logic (anything an action list, a shot or an AI step waits on) also COUNTS SIM TIME: it
+// is driven by ctx.timers or by the dt of a `when: 'sim'` system, never by the real dt of an 'always' system. Then it
+// freezes while the sim is stopped (paused, interstitial, loading, dead) and scales with ctx.timeScale. 'Always' systems
+// keep running during a pause, so a countdown there would let a waiting list run on, and a { complete } it reaches while
+// paused would be dropped. Services that serve both gameplay and menus (cameraRig.blendTo/release/setFov, hud.fade) take
+// the clock that is running when they start, or an explicit { clock: 'sim' | 'real' }.
 const SIM = Symbol.for('campaign.simPromise');
 
 /** { promise, resolve, reject }: resolve/reject run whenSettled() callbacks synchronously, then settle the Promise. */

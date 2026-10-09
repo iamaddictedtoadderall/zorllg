@@ -115,6 +115,74 @@ export default async function (g) {
   g.assert(diff(c1, c2).length === 0 && diff(c1, c3).length === 0,
     `state independent of step() chunking (1×240 vs 8×30: ${diff(c1, c2).join(', ') || 'same'}; vs 240 frames: ${diff(c1, c3).join(', ') || 'same'})`);
 
+  // frozen-core promises (§1.4): cameraRig.blendTo settles inside the tick that ends the blend (a simDeferred()), so a
+  // list blocked on it gives the same state for one step(n) and for n rAF-like single ticks.
+  const blendRun = async (mode) => {
+    await g.startLevel('test', 'cp_start');
+    await g.eval(() => {
+      const c = window.__game.ctx, V = c.THREE.Vector3;
+      c.mission.registerAction('smokeShot', () => c.cameraRig.blendTo(new V(0, 60, 0), new V(0, 0, -100), 0.2));
+      c.mission.run([{ call: 'smokeShot' }, { flag: ['shotDone', 1] }, { wait: 0.5 }, { flag: ['later', 1] }]);
+    });
+    const s = mode === 'single' ? await g.step(60) : await g.stepFrames(60);
+    await g.eval(() => window.__game.ctx.cameraRig.release(0));
+    return { flags: s.flags, time: s.time };
+  };
+  const b1 = await blendRun('single'), b2 = await blendRun('frames');
+  g.assert(b1.flags.shotDone === 1 && b1.flags.later === 1 && JSON.stringify(b1) === JSON.stringify(b2),
+    `a list blocked on cameraRig.blendTo resumes inside the tick (step(60) ${JSON.stringify(b1)} vs 60 frames ${JSON.stringify(b2)})`);
+
+  // pause safety (§1.4): what an action list waits on (fade, a camera blend) counts sim time, so nothing runs on while
+  // the game is paused, and a { complete } reached after the pause still ends the level. A checkpoint restart in the
+  // middle of a shot hands the camera back to the player.
+  await g.startLevel('test', 'cp_start');
+  const pz = await g.eval(async () => {
+    const G = window.__game, c = G.ctx, V = c.THREE.Vector3;
+    const U = await import(new URL('src/core/util.js', location.href).href);
+    const out = {};
+    // blendTo is a simDeferred(): observable as settled inside the step() call that finishes it
+    let done = 0;
+    const p0 = c.cameraRig.blendTo(new V(0, 50, 0), new V(0, 0, -100), 0.1);
+    U.whenSettled(p0, () => { done = 1; });
+    G.step(12);
+    out.blendInStep = done;
+    // a blend and a fade freeze while paused
+    const p1 = c.cameraRig.blendTo(new V(0, 70, 0), new V(0, 0, -100), 0.3);
+    G.step(2); c.flow.pause(); G.step(60);
+    out.blendFrozen = !U.isSettled(p1) && c.cameraRig.mode === 'cinematic';
+    c.flow.resume(); G.step(30);
+    out.blendDone = U.isSettled(p1);
+    c.cameraRig.release(0); G.step(1);
+    c.mission.registerAction('smokeShot2', () => c.cameraRig.blendTo(new V(0, 60, 0), new V(0, 0, -100), 0.3));
+    c.mission.run([{ fade: 1, seconds: 0.5 }, { flag: ['pzFade', 1] }, { call: 'smokeShot2' }, { flag: ['pzShot', 1] },
+                   { fade: 0, seconds: 0 }, { complete: true }]);
+    G.step(2); c.flow.pause(); G.step(60);
+    out.duringFade = { state: c.flow.state, flag: c.mission.flags.pzFade ?? 0 };
+    c.flow.resume(); G.step(35);          // the fade ends at 0.5 s of sim time; the shot starts
+    c.flow.pause(); G.step(60);
+    out.duringShot = { state: c.flow.state, fade: c.mission.flags.pzFade ?? 0, shot: c.mission.flags.pzShot ?? 0 };
+    c.flow.resume(); G.step(60);
+    out.end = { state: c.flow.state, shot: c.mission.flags.pzShot ?? 0 };
+    return out;
+  });
+  g.log('pause safety:', pz);
+  g.assert(pz.blendInStep === 1, 'cameraRig.blendTo settles synchronously inside step() (simDeferred)');
+  g.assert(pz.blendFrozen && pz.blendDone, `a gameplay camera blend freezes while paused and finishes after resume (${pz.blendFrozen}, ${pz.blendDone})`);
+  g.assert(pz.duringFade.state === 'paused' && pz.duringFade.flag === 0 && pz.duringShot.fade === 1 && pz.duringShot.shot === 0,
+    `an action list does not advance while paused (fade ${JSON.stringify(pz.duringFade)}, shot ${JSON.stringify(pz.duringShot)})`);
+  g.assert(pz.end.shot === 1 && (pz.end.state === 'complete' || pz.end.state === 'debrief'),
+    `{ complete } reached after a pause ends the level (${pz.end.state})`);
+  await g.startLevel('test', 'cp_start');
+  const rs = await g.eval(async () => {
+    const G = window.__game, c = G.ctx, V = c.THREE.Vector3;
+    c.cameraRig.blendTo(new V(0, 80, 0), new V(0, 0, -100), 5, 40);
+    G.step(10);
+    await G.restart();
+    G.step(2);
+    return { mode: c.cameraRig.mode, fov: c.camera.fov, base: c.settings.get('fov') };
+  });
+  g.assert(rs.mode === 'follow' && rs.fov === rs.base, `checkpoint restart mid-shot returns the camera to the player (${rs.mode}, fov ${rs.fov})`);
+
   const errs = await g.eval(() => window.__game.errors());
   g.assert(errs.length === 0, `no game errors (${errs.map(e => e.system + ': ' + e.message).join('; ')})`);
 }

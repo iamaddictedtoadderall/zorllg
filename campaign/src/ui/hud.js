@@ -1,9 +1,18 @@
 // ui/hud.js (P5) — P0 STUB: show/hide; AP/EN numbers and bars; objectives list; hint/warn text; mission timer;
 // weapon readouts (+ touch labels); zone card and checkpoint toast text; fade and letterbox work. Lock box, markers,
 // compass, radar, boss bar, choice and glitch are no-ops.
-// choice() and fade() return simDeferred() promises (core/util.js) because mission lists block on them (§1.4): fade
-// completes on the 'hud' system's dt (real dt in play, the step dt under __game.step), never on a setTimeout, and the real
-// choice() MUST settle inside the tick that reads INTERACT/ALT or runs out of time.
+//
+// Promises that gate sim logic (§1.4). choice() and fade() return simDeferred() promises (core/util.js) because mission
+// lists and shots block on them. Such a promise MUST also count SIM time, never the real dt of the 'hud' system: 'hud'
+// runs 'always', also while the game is paused, so a countdown there would let a waiting action list run on during the
+// pause (a { complete } reached while paused is lost and the level can never finish).
+//  · fade(to, seconds, o?): the #fade CSS transition is visual only. The promise counts down on the clock that was
+//    running when the fade started: sim time when ctx.simRunning (or o.clock === 'sim'), in the 'hud-sim' system
+//    (ui phase, when 'sim'), so it freezes while paused and scales with ctx.timeScale; real time otherwise (menus, or
+//    o.clock === 'real'), in the 'hud' system. The mission's fade action passes { clock: 'sim' } because def.start runs
+//    during loading. A superseded fade counts as finished.
+//  · the real choice() (P5) MUST settle inside a sim tick: read INTERACT/ALT and count `seconds` down in a 'sim' system
+//    such as 'hud-sim' (or with ctx.timers), so the prompt and its timeout freeze while paused, then resolve with the key.
 import { formatTime, esc, simDeferred, simResolved } from '../core/util.js';
 
 const SLOT4 = ['R', 'L', 'S', 'U'];
@@ -21,7 +30,13 @@ export function install(ctx) {
   };
   const warnings = new Map();
   let hintT = 0, killT = 0, hitT = 0, hurtLevel = 0, zoneT = 0, toastT = 0, lastWarnHTML = '', lastWeapons = null;
-  let fadeLeft = 0, fadeDone = null;
+  let fadeLeft = 0, fadeDone = null, fadeClock = 'real';
+  /** counts the pending fade down when it runs on `clock` ('sim' from 'hud-sim', 'real' from 'hud') */
+  const tickFade = (clock, dt) => {
+    if (!fadeDone || fadeClock !== clock) return;
+    fadeLeft -= dt;
+    if (fadeLeft <= 0) { const f = fadeDone; fadeDone = null; f(); }   // settles inside this tick
+  };
   const setText = (e, t) => { if (e && e.textContent !== t) e.textContent = t; };
   const setW = (e, f) => { if (e) e.style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(2) + '%'; };
 
@@ -73,20 +88,26 @@ export function install(ctx) {
       el.letterbox.style.setProperty('--lb-t', `${seconds}s`);
       el.letterbox.classList.toggle('on', !!on);
     },
-    fade(to, seconds = 1) {
+    /** o.clock: 'sim' | 'real' (default: the clock running now; see the header) */
+    fade(to, seconds = 1, o) {
       const prev = fadeDone; fadeDone = null;
       if (el.fade) {
         el.fade.style.transitionDuration = `${Math.max(0, seconds)}s`;
         el.fade.style.opacity = String(to);
       }
-      prev?.();   // a superseded fade counts as finished
-      if (!el.fade || !(seconds > 0)) return simResolved();
-      const d = simDeferred();
-      fadeDone = d.resolve; fadeLeft = seconds;
-      return d.promise;
+      let p;
+      if (!el.fade || !(seconds > 0)) p = simResolved();
+      else {
+        const d = simDeferred();
+        fadeDone = d.resolve; fadeLeft = seconds;
+        fadeClock = o && (o.clock === 'sim' || o.clock === 'real') ? o.clock : (ctx.simRunning ? 'sim' : 'real');
+        p = d.promise;
+      }
+      prev?.();   // a superseded fade counts as finished (settled after the new one is in place, so its waiter may start another)
+      return p;
     },
     update(dt) {
-      if (fadeDone) { fadeLeft -= dt; if (fadeLeft <= 0) { const f = fadeDone; fadeDone = null; f(); } }
+      tickFade('real', dt);
       hintT -= dt; killT -= dt; hitT -= dt; zoneT -= dt; toastT -= dt;
       hurtLevel = Math.max(0, hurtLevel - dt * 2.2);
       if (ctx.pipeline?.grade) ctx.pipeline.grade.hurt = hurtLevel;
@@ -134,6 +155,8 @@ export function install(ctx) {
       if (toastT <= 0) el.toast?.classList.remove('on');
     },
   };
+  // sim-clock countdowns (fade; P5: choice) run in a 'sim' system so they freeze while the game is paused
+  ctx.addSystem({ name: 'hud-sim', phase: 'ui', when: 'sim', order: -1, update: (dt) => tickFade('sim', dt) });
   ctx.addSystem({ name: 'hud', phase: 'ui', when: 'always', update: (dt) => api.update(dt) });
   ctx.hud = api;
   return api;
