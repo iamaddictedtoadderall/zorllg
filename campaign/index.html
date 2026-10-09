@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dawnwake</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="src/main.js"></script>
+</head>
+<body>
+<div id="game">
+  <canvas id="view"></canvas>
+  <div id="hud" hidden>
+    <div id="vignette"></div>
+    <div id="scan"></div>
+    <div id="glitch"></div>
+    <div id="markers"></div>
+    <div id="objpanel"><div id="mname"></div><ul id="objs"></ul><div id="timer">00:00</div></div>
+    <div id="compass"><div id="compassStrip"></div></div>
+    <canvas id="radar" width="336" height="336"></canvas>
+    <div id="reticle"><div class="br tl"></div><div class="br tr"></div><div class="br bl"></div><div class="br brr"></div><div class="dot"></div><div id="hitmark"></div></div>
+    <div id="lockbox"><div class="frame"></div><div class="info"><div class="nm"></div><div class="bar apb"><i></i></div><div class="bar stb"><i></i></div><div class="stag">STAGGERED</div><div class="dist"></div></div></div>
+    <div id="killfeed">TARGET DESTROYED</div>
+    <div id="warn"></div>
+    <div id="hint"></div>
+    <div id="comms" hidden><div class="who"><canvas id="wave" width="128" height="32"></canvas><span></span></div><div class="line"></div></div>
+    <div id="progress" hidden><div class="pl"></div><div class="bar"><i></i></div></div>
+    <div id="choice" hidden><div class="t"></div><div class="bar"><i></i></div><div class="opts"></div></div>
+    <div id="status">
+      <div class="row"><span class="lbl">AP</span><span id="apNum">0</span></div>
+      <div class="bar apb"><i id="apFill"></i></div>
+      <div class="bar enb"><i id="enFill"></i></div>
+      <div id="enLbl"><span>EN</span><span id="enTxt"></span></div>
+      <div class="bar stb"><i id="stFill"></i></div>
+    </div>
+    <div id="weapons">
+      <div class="wpn" id="wR"><span class="slot">R-ARM</span><span class="wn">Rifle<span class="key">LMB</span></span><span class="wv">0</span></div>
+      <div class="wpn" id="wL"><span class="slot">L-ARM</span><span class="wn">Blade<span class="key">RMB</span></span><span class="wv">READY</span></div>
+      <div class="wpn" id="wS"><span class="slot">SHOULDER</span><span class="wn">Missiles<span class="key">Q</span></span><span class="wv">READY</span></div>
+      <div class="wpn" id="wK"><span class="slot">UTILITY</span><span class="wn">Repair kit<span class="key">R</span></span><span class="wv">0</span></div>
+    </div>
+    <div id="frameTag"><span class="eyebrow" id="frameName">Frame</span> <b id="callsign"></b><div class="sub" id="frameSub"></div></div>
+    <div id="bossbar" hidden><div class="nm"></div><div class="bar"><i></i></div><div class="stag">STAGGERED</div></div>
+    <div id="prompt" hidden><kbd>F</kbd><span></span></div>
+    <div id="zonecard"><div class="t"></div><div class="s"></div></div>
+    <div id="checkpointToast"></div>
+  </div>
+  <div id="touch" hidden>
+    <div id="stickHome">MOVE</div>
+    <div id="stick" hidden><div class="knob"></div></div>
+    <button type="button" class="tb" id="tFire" data-act="fire"><span>FIRE</span><small></small></button>
+    <button type="button" class="tb" id="tBlade" data-act="blade"><span>BLADE</span><small></small></button>
+    <button type="button" class="tb" id="tBoost" data-act="boost"><span>BOOST</span></button>
+    <button type="button" class="tb" id="tJump" data-act="jump"><span>JUMP</span></button>
+    <button type="button" class="tb" id="tMsl" data-act="msl"><span>MSL</span><small></small></button>
+    <button type="button" class="tb" id="tLock" data-act="lock"><span>LOCK</span></button>
+    <button type="button" class="tb" id="tKit" data-act="kit"><span>KIT</span><small></small></button>
+    <button type="button" class="tb" id="tPause" data-act="pause" aria-label="Pause">II</button>
+    <button type="button" class="tb" id="tInteract" data-act="interact" hidden><span>USE</span><small></small></button>
+    <button type="button" class="tb" id="tSkip" data-act="skip" hidden><span>SKIP</span></button>
+    <div id="rotate" hidden>Turn your phone sideways for a wider view</div>
+  </div>
+  <div id="letterbox"><div class="top"></div><div class="bot"></div></div>
+  <div id="screen"></div>
+  <div id="fade"></div>
+  <pre id="dbg" hidden></pre>
+</div>
+<script>
+// Boot fallback: if the module graph (three.js from the CDN) never loads, say so instead of showing a black page.
+setTimeout(function () {
+  if (window.__booted) return;
+  var s = document.getElementById('screen');
+  if (!s) return;
+  s.hidden = false;
+  s.innerHTML = '<div class="center-card"><h2>No signal</h2><p>The 3D engine failed to load. Check your connection and reload.</p></div>';
+}, 12000);
+</script>
+</body>
+</html>
