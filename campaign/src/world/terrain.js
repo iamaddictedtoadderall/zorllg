@@ -287,7 +287,7 @@ uniform float uWet, uGloss, uBump, uSparkle, uSoilTexel;
 uniform vec3 uSunCol, uSunDirT;
 varying vec4 vSurf;
 varying vec3 vTW, vTN;
-float tH, tR, tSnowW, tRockW, tHr, tLedge, tSteep, tRill;
+float tH, tR, tSnowW, tRockW, tHr, tLedge, tSteep, tRill, tPx;
 vec2 tGrad;
 mat2 tRot2( float a ) { float c = cos( a ), s = sin( a ); return mat2( c, -s, s, c ); }
 vec3 tPerturbH( vec3 p, vec3 n, float h, float k ) {
@@ -305,6 +305,9 @@ float tGlint( vec3 wp, vec3 n, vec3 v, vec3 l, float density ) {
 const F_ALBEDO = /* glsl */`
 {
   vec3 wn = normalize( vTN );
+  // the pixel footprint in metres: detail whose height signal is noisier than a pixel can't be bumped by screen
+  // derivatives (2 × 2 quads turn it into blocky speckle), so the derivative bumps fade with it, not with distance
+  tPx = 0.5 * length( fwidth( vTW ) );
   vec2 tUV = vTW.xz * 0.111;
   vec4 soil = texture2D( tSoil, tUV );
   tGrad = vec2( 0.0 );
@@ -345,7 +348,9 @@ const F_ALBEDO = /* glsl */`
   vec3 formCol = textureGrad( tStrata, vec2( fract( band3 ), 0.5 ), vec2( dFdx( band3 ), 0.0 ), vec2( dFdy( band3 ), 0.0 ) ).rgb;
   float tFL = dot( fineCol, vec3( 0.299, 0.587, 0.114 ) ), tML = dot( formCol, vec3( 0.299, 0.587, 0.114 ) );
   vec3 strataCol = formCol * mix( 1.0, clamp( tFL / max( tML, 0.03 ), 0.7, 1.35 ), 0.4 );
-  float band2 = band * 0.233 + 0.37;
+  // the ledge staircase takes the rock height only while its texels are larger than a pixel (pixel-scale wobble on a
+  // step function bumps into speckle)
+  float band2 = ( band - rk.g * 0.15 * smoothstep( 0.03, 0.1, tPx ) ) * 0.233 + 0.37;
   // strong banding belongs on cliffs; moderate rock slopes take a softer share of it (stripes painted across a 30 degree
   // hillside read as contour lines)
   tSteep = smoothstep( uRockSlope.y - 0.05, uRockSlope.y + 0.3, 1.0 - wn.y );
@@ -369,11 +374,12 @@ const F_ALBEDO = /* glsl */`
     // lattice carries erosion only down to ≈ 16 m). The across-slope coordinate is warped by the patch and macro noise,
     // so the rills wander, fan out round spurs and merge
     float tSl = 1.0 - wn.y;
+    // rills fade once a line (≈ 1.2 m wide) gets narrower than about three pixels
     float tRw = smoothstep( 0.05, 0.16, tSl ) * ( 1.0 - smoothstep( 0.4, 0.62, tSl ) ) * ( 1.0 - vSurf.a )
-              * ( 1.0 - smoothstep( 380.0, 720.0, length( vViewPosition ) ) );
+              * ( 1.0 - smoothstep( 0.16, 0.42, tPx ) );
     if ( tRw > 0.001 ) {
       vec2 tSd = wn.xz / max( length( wn.xz ), 1e-3 );
-      float tPh = dot( vTW.xz, vec2( -tSd.y, tSd.x ) ) / 6.5 + tPatch * 2.6 + macro * 5.0 + soil.r * 0.25;
+      float tPh = dot( vTW.xz, vec2( -tSd.y, tSd.x ) ) / 6.5 + tPatch * 2.6 + macro * 5.0 + soil.r * 0.25 * ( 1.0 - smoothstep( 0.02, 0.06, tPx ) );
       float tTri = 1.0 - abs( fract( tPh ) - 0.5 ) * 2.0;
       tRill = smoothstep( 0.62, 1.0, tTri ) * tRw * ( 0.55 + 0.45 * tPatch );
       col *= 1.0 - 0.14 * tRill;
@@ -424,7 +430,7 @@ const F_NORMAL = /* glsl */`
 #else
   vec3 tPert = vec3( tGrad.x, 0.0, tGrad.y ) * 0.07 * uBump * ( 1.0 - tRockW ) * ( 1.0 - smoothstep( 40.0, 160.0, tDist ) );
   normal = normalize( normal - mat3( viewMatrix ) * tPert );
-  normal = tPerturbH( - vViewPosition, normal, tHr, uBump * 0.6 * tRockW * ( 1.0 - smoothstep( 80.0, 260.0, tDist ) ) );
+  normal = tPerturbH( - vViewPosition, normal, tHr, uBump * 0.6 * tRockW * ( 1.0 - smoothstep( 0.04, 0.14, tPx ) ) );
   normal = tPerturbH( - vViewPosition, normal, tLedge, uBump * 0.5 * uStrata.z * tSteep * tRockW * ( 1.0 - 0.6 * tSnowW )
                       * ( 1.0 - smoothstep( 380.0, 1100.0, tDist ) ) );
 #endif

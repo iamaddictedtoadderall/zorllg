@@ -20,6 +20,26 @@ const SLOT_KEY = { R: 'R', L: 'L', S: 'S', U: 'K' };                 // setSlots
 const SLOT_TOUCH = { R: 'fire', L: 'blade', S: 'msl', U: 'kit' };
 const SLOT_ABILITY = { R: 'fire', L: 'blade', S: 'missile', U: 'kit' };
 const PANELS = ['ap', 'en', 'weapons', 'radar', 'compass', 'objectives', 'lock', 'rack'];
+// Clarity pass (docs/todo.md): weapon rows lead with a plain type label taken from PartDef.weapon; the part's own
+// (flavour) name follows, smaller, or is dropped when it says the same thing.
+const TYPE_LABEL = { rifle: 'Rifle', mg: 'Machine gun', shotgun: 'Shotgun', cannon: 'Cannon', blade: 'Blade', missiles: 'Missiles',
+  micromissiles: 'Micro-missiles', mortar: 'Mortar', kit: 'Repair kits', harpoon: 'Harpoon', flares: 'Flares', saw: 'Saw',
+  shock: 'Shock', plasma: 'Plasma', rail: 'Railgun' };
+// touch: the button's own word already names these types, so its badge would only repeat it
+const TOUCH_VERB_TYPES = { R: [], L: ['blade'], S: ['missiles'], U: ['kit'] };
+const TOUCH_SHORT = { mg: 'MG', micromissiles: 'MICRO-MSL', kit: 'KITS', rail: 'RAIL' };
+/** the plain type label of a part ('Rifle', 'Harpoon', 'Repair kits'); unknown types are capitalised, no type → its name */
+export function weaponTypeLabel(part) {
+  const t = part && typeof part.weapon === 'string' ? part.weapon : '';
+  if (!t) return part?.name ? String(part.name) : '';
+  if (TYPE_LABEL[t]) return TYPE_LABEL[t];
+  const s = t.replace(/[_-]+/g, ' ').trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+const sameWords = (a, b) => String(a).toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, '') === String(b).toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, '');
+// explain cards: a key name on desktop → the on-screen button that does the same on touch
+const EX_TOUCH_KEYS = { F: 'USE', E: 'LOCK', TAB: 'LOCK', R: 'KIT', Q: 'MSL', RMB: 'BLADE', LMB: 'FIRE', SPACE: 'JUMP', SHIFT: 'BOOST',
+  ESC: 'II', ESCAPE: 'II', P: 'II', G: '', WASD: 'MOVE', 'W A S D': 'MOVE', MOUSE: 'DRAG' };
 const RADAR_RANGE = 320;                                              // metres from the centre to the rim
 const OBJ_LINGER = 6;                                                 // seconds a done/failed objective stays listed
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
@@ -162,6 +182,45 @@ const HUD_CSS = `
 #game.touch #rack .rc{font-size:11px;padding:0 5px;height:20px}
 #game.touch #cineSkip{display:none}
 @media (max-width:760px){#rack{width:260px;bottom:150px}#vitals{right:calc(100% + 8px);width:72px}#vitals canvas{width:72px;height:20px}#vitals .bpm{font-size:15px}#vitals .vl span.vm{display:none}}
+#weapons .wpn .wn{display:flex;align-items:baseline;min-width:0;overflow:hidden}
+#weapons .wpn .wt,#weapons .wpn .key{flex:none}
+#weapons .wpn .fl{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:9px;font:400 11px var(--f-mono);letter-spacing:.02em;text-transform:none;color:var(--hud-dim)}
+#weapons .wpn .fl:empty,#weapons .wpn.off .fl{display:none}
+#weapons .wpn.off .wn{text-decoration:none}
+#weapons .wpn.off .wt{text-decoration:line-through;text-decoration-thickness:1px}
+@media (max-width:760px){#weapons .wpn .fl{display:none}}
+#wtags{position:absolute;inset:0;pointer-events:none;display:none}
+#game.touch #wtags{display:block}
+#wtags .wtag{position:absolute;left:0;top:0;padding:2px 5px 1px;font:600 9px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;
+  color:var(--hud);background:rgba(12,11,14,.8);border:1px solid var(--hud-faint);border-bottom-color:var(--hud-dim)}
+#wtags .wtag[hidden]{display:none}
+#explain{position:absolute;right:calc(28px + var(--safe-r,0px));top:256px;width:330px;box-sizing:border-box;padding:10px 15px 12px;pointer-events:none;
+  background:linear-gradient(270deg,rgba(12,11,14,.86),rgba(12,11,14,.58));border-right:2px solid var(--accent);z-index:1}
+#explain .eh{display:flex;justify-content:space-between;gap:10px;font:500 10px/1 var(--f-mono);letter-spacing:.22em;color:var(--hud-dim);text-transform:uppercase}
+#explain .eh b{font-weight:600;color:var(--accent);letter-spacing:.2em}
+#explain .tm{display:flex;align-items:center;gap:10px;margin-top:8px}
+#explain .tm b{font:700 21px/1.05 var(--f-display);letter-spacing:.12em;text-transform:uppercase;color:var(--hud)}
+#explain .tm kbd{flex:none;font:600 11px/1 var(--f-mono);letter-spacing:.08em;padding:3px 6px 2px;border:1px solid var(--accent);color:var(--accent);text-transform:uppercase;white-space:nowrap}
+#explain .tm kbd:empty{display:none}
+#explain .tx{margin:6px 0 0;font:400 16px/1.32 var(--f-display);letter-spacing:.02em;color:var(--hud);text-wrap:pretty}
+#explain .ft{margin-top:7px;font:400 11px/1.3 var(--f-mono);color:var(--hud-dim)}
+#explain .ft:empty{display:none}
+#explain .tb{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(224,145,60,.15)}
+#explain .tb i{position:absolute;right:0;top:0;bottom:0;width:100%;background:var(--accent);opacity:.7}
+#explain:not([hidden]){animation:hudExIn .35s ease-out}
+@keyframes hudExIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+#explain.out{opacity:0;transform:translateX(8px);transition:opacity .4s,transform .4s}
+#hud.choosing #explain{visibility:hidden}
+#game.touch #explain{right:auto;left:calc(14px + var(--safe-l,0px));width:min(300px,38vw);padding:8px 12px 10px;border-right:0;border-left:2px solid var(--accent);
+  background:linear-gradient(90deg,rgba(12,11,14,.88),rgba(12,11,14,.6))}
+#game.touch #explain .tm{margin-top:6px}
+#game.touch #explain .tm b{font-size:16px}
+#game.touch #explain .tx{font-size:13px;line-height:1.3;margin-top:4px}
+#game.touch #explain .ft{font-size:10px;margin-top:5px}
+#game.touch #hud.explaining #rack{opacity:.12}
+@keyframes hudExInL{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+#game.touch #explain:not([hidden]){animation-name:hudExInL}
+@media (max-height:520px){#explain{top:min(256px,44vh)}}
 `;
 
 export function install(ctx) {
@@ -197,6 +256,27 @@ export function install(ctx) {
   rackEl.id = 'rack'; rackEl.hidden = true;
   const rackCount = rackEl.querySelector('.rh b'), rackCells = [];
   for (let i = 0; i < 3; i++) rackCells.push(mk('div', 'rc empty', rackEl.querySelector('.rs'), '<i></i><span>—</span>'));
+  // weapon rows: [type label][key][flavour name] (the key cap from index.html is kept)
+  const wrow = {};
+  for (const s of SLOT4) {
+    const e = el.w[s], wn = e?.querySelector('.wn');
+    if (!wn) continue;
+    const key = wn.querySelector('.key')?.textContent ?? '';
+    wn.innerHTML = `<span class="wt"></span>${key ? `<span class="key">${esc(key)}</span>` : ''}<span class="fl"></span>`;
+    wrow[s] = { wt: wn.querySelector('.wt'), fl: wn.querySelector('.fl'), shown: '' };
+  }
+  // touch: the plain type as a small badge on the weapon button, where the button's own word doesn't already say it
+  const tagsEl = mk('div', '', el.hud);
+  tagsEl.id = 'wtags';
+  const wtag = {};
+  for (const s of SLOT4) { const t = mk('span', 'wtag', tagsEl); t.hidden = true; wtag[s] = { el: t, text: '', btn: null }; }
+  let tagsDirty = true, tagsTouch = null;
+  // explain cards (clarity pass): a first-time plain-English note on a term or mechanic
+  const exEl = mk('div', '', el.hud, `<div class="eh"><span class="no">FIELD NOTE</span><b>NEW</b></div><div class="tm"><b></b><kbd></kbd></div>
+    <p class="tx"></p><div class="ft"></div><div class="tb"><i></i></div>`);
+  exEl.id = 'explain'; exEl.hidden = true;
+  const ex = { no: exEl.querySelector('.no'), term: exEl.querySelector('.tm b'), key: exEl.querySelector('.tm kbd'), tx: exEl.querySelector('.tx'),
+               ft: exEl.querySelector('.ft'), bar: exEl.querySelector('.tb i') };
   // skip indicator for skippable shots
   const skipEl = mk('div', '', game, `<div class="st">Hold <b>Space</b> to skip</div><div class="sb"><i></i></div>`);
   skipEl.id = 'cineSkip'; skipEl.hidden = true;
@@ -380,14 +460,47 @@ export function install(ctx) {
   }
 
   // ---------------------------------------------------------------- weapons, slots, rack, prompt
+  /** [type label, flavour name] for a slot: a setSlots label replaces both; the flavour is dropped when it only repeats
+   *  the type ('Repair kits') */
+  function rowNames(s, w) {
+    const cfg = slots[s], part = w?.part;
+    if (cfg.label != null) return [cfg.label, ''];
+    if (!part) return ['', ''];
+    const type = weaponTypeLabel(part), name = part.name ? String(part.name) : '';
+    return [type, name && !sameWords(name, type) ? name : ''];
+  }
+  /** the touch badge text for a slot: the short plain type, unless the button's own word already says it */
+  function touchTag(s, w) {
+    const cfg = slots[s], t = w?.part?.weapon;
+    if (cfg.label != null) return String(cfg.label).toUpperCase();
+    if (!t || TOUCH_VERB_TYPES[s].includes(t)) return '';
+    return TOUCH_SHORT[t] || weaponTypeLabel(w.part).toUpperCase();
+  }
+  function placeTags() {
+    tagsDirty = false;
+    if (!ctx.input?.isTouch) return;
+    const hr = el.hud.getBoundingClientRect();
+    for (const s of SLOT4) {
+      const tg = wtag[s];
+      tg.btn = tg.btn || document.querySelector(`#touch .tb[data-act="${SLOT_TOUCH[s]}"]`);
+      const r = tg.btn?.getBoundingClientRect();
+      if (!r || !r.width) { tg.el.style.transform = 'translate(-999px,-999px)'; continue; }
+      tg.el.style.transform = `translate(${(r.left + r.width / 2 - hr.left).toFixed(1)}px,${(r.top - hr.top - 1).toFixed(1)}px) translate(-50%,-100%)`;
+    }
+  }
   function updateWeapons(p) {
-    if (p.weapons !== lastWeapons) {   // the player replaces the weapons object on every setLoadout
+    if (p.weapons !== lastWeapons) {   // the player replaces the weapons object on every setLoadout (setSlots resets it too)
       lastWeapons = p.weapons;
       for (const s of SLOT4) {
-        const wn = el.w[s]?.querySelector('.wn'), w = p.weapons?.[s];
-        if (wn && wn.firstChild && w) wn.firstChild.textContent = slots[s].label ?? w.part.name;
+        const r = wrow[s], w = p.weapons?.[s];
+        if (r) { const [t, f] = rowNames(s, w); setText(r.wt, t); setText(r.fl, f); r.fl.title = f; r.shown = t; }
+        const tag = touchTag(s, w);
+        if (tag !== wtag[s].text) { wtag[s].text = tag; setText(wtag[s].el, tag); tagsDirty = true; }
       }
     }
+    const isTouch = !!ctx.input?.isTouch;
+    if (isTouch !== tagsTouch) { tagsTouch = isTouch; tagsDirty = true; }
+    if (tagsDirty && isTouch) placeTags();
     const ab = p.abilities;
     const recent = ctx.clock.realTime - levelStartAt < 1;
     for (const s of SLOT4) {
@@ -396,15 +509,13 @@ export function install(ctx) {
       const gated = cfg.state === 'offline' || (cfg.state === 'auto' && !!ab && ab[SLOT_ABILITY[s]] === false);
       const hidden = cfg.state === 'hidden';
       show(e, !hidden);
+      show(wtag[s].el, isTouch && !hidden && !gated && !!wtag[s].text && !(s === 'L' && bladeTear));
       if (slotGated[s] && !gated && !recent) {
         e.classList.remove('online'); void e.offsetWidth; e.classList.add('online');
         api.glitch(0.3); ctx.audio?.play?.('confirm', null);
       }
       slotGated[s] = gated;
       toggle(e, 'off', gated);
-      const wn = e.querySelector('.wn');
-      const name = cfg.label ?? w?.part?.name ?? '';
-      if (wn?.firstChild && wn.firstChild.textContent !== name) wn.firstChild.textContent = name;
       const act = SLOT_TOUCH[s];
       if (gated) {
         setText(e.querySelector('.wv'), 'OFFLINE'); toggle(e, 'cool', false);
@@ -501,6 +612,71 @@ export function install(ctx) {
     if (pr.bar) pr.bar.style.display = pg != null && pg > 0 ? '' : 'none';
     setW(pr.fill, pg || 0);
     ctx.input?.showTouchButton?.('interact', !cur.tear);
+  }
+
+  // ---------------------------------------------------------------- explain cards (clarity pass)
+  // explain({ id, term, text, key }): the first time an id is seen, record { id, term, text, key } in
+  // save.flags.glossary (the pause menu's Field notes list them in that order) and queue a card. Cards show one at a
+  // time; a card's time runs only while the player can see it (sim running, no hideHud shot, not under a fade, no
+  // choice open), so a note never expires behind a cinematic or a black screen.
+  const EX = { queue: [], cur: null, t: 0, dur: 0, out: 0, gap: 0 };
+  /** a { desktop, touch } pair → the side for this device; anything else → itself */
+  const forDevice = (v) => (v && typeof v === 'object') ? (ctx.input?.isTouch ? (v.touch ?? v.desktop) : (v.desktop ?? v.touch)) : v;
+  /** the key cap for this device: on touch a keyboard key (or 'Hold RMB') names the on-screen button instead */
+  function exKey(k) {
+    const v = forDevice(k);
+    if (v == null || v === '') return '';
+    const s = String(v).trim();
+    if (!ctx.input?.isTouch || (k && typeof k === 'object' && k.touch != null)) return s;
+    const up = s.toUpperCase();
+    if (up in EX_TOUCH_KEYS) return EX_TOUCH_KEYS[up];
+    const m = /^(hold|tap|press)\s+(.+)$/i.exec(s);
+    if (m && m[2].toUpperCase() in EX_TOUCH_KEYS) { const b = EX_TOUCH_KEYS[m[2].toUpperCase()]; return b ? `${m[1]} ${b}` : ''; }
+    return s;
+  }
+  function glossaryList() {
+    try { const g = ctx.save?.getFlag?.('glossary'); return Array.isArray(g) ? g : []; } catch (e) { return []; }
+  }
+  const exCanRun = () => ctx.simRunning && !cine && (api.fadeLevel ?? 0) < 0.6 && !CH.def && !el.hud.hidden
+    && (ctx.flow?.state ?? 'playing') === 'playing';
+  function exShow(e) {
+    EX.cur = e; EX.t = 0; EX.out = 0;
+    const text = String(forDevice(e.text) ?? '');
+    EX.dur = clamp(4.5 + 0.055 * (text.length + String(e.term || '').length), 6.5, 13);
+    const n = glossaryList().findIndex(x => x && x.id === e.id);
+    setText(ex.no, n >= 0 ? `FIELD NOTE ${String(n + 1).padStart(2, '0')}` : 'FIELD NOTE');
+    setText(ex.term, String(e.term || ''));
+    setText(ex.key, exKey(e.key));
+    setText(ex.tx, text);
+    setText(ex.ft, n === 0 ? (ctx.input?.isTouch ? 'Notes are kept under II › Field notes.' : 'Notes are kept under Pause (Esc) › Field notes.') : '');
+    if (ctx.input?.isTouch) {   // under the objectives list, whatever its length
+      const op = document.getElementById('objpanel'), hr = el.hud.getBoundingClientRect();
+      const r = op && op.offsetParent !== null ? op.getBoundingClientRect() : null;
+      exEl.style.top = Math.round(Math.max(96, r && r.height ? r.bottom - hr.top + 10 : 96)) + 'px';
+    } else exEl.style.top = '';
+    exEl.classList.remove('out');
+    exEl.hidden = false;
+    exEl.style.animation = 'none'; void exEl.offsetWidth; exEl.style.animation = '';
+    toggle(el.hud, 'explaining', true);
+    setW(ex.bar, 1);
+    ctx.audio?.play?.('blip', null);
+  }
+  function exHide() {
+    EX.cur = null; EX.gap = 0.6;
+    exEl.hidden = true; exEl.classList.remove('out');
+    toggle(el.hud, 'explaining', false);
+  }
+  function tickExplain(dt) {
+    if (!EX.cur) {
+      if (EX.gap > 0) { if (exCanRun()) EX.gap -= dt; return; }
+      if (EX.queue.length && exCanRun()) exShow(EX.queue.shift());
+      return;
+    }
+    if (EX.out > 0) { EX.out -= dt; if (EX.out <= 0) exHide(); return; }
+    if (!exCanRun()) return;
+    EX.t += dt;
+    setW(ex.bar, 1 - EX.t / EX.dur);
+    if (EX.t >= EX.dur) { exEl.classList.add('out'); EX.out = 0.42; }
   }
 
   // ---------------------------------------------------------------- lock box, boss bar, markers, compass, radar
@@ -924,6 +1100,39 @@ export function install(ctx) {
     },
     /** extra: hide the HUD panels for a hideHud cinematic (comms, letterbox and fade stay) */
     setCinematic(on) { cine = !!on; toggle(el.hud, 'cine', cine); toggle(game, 'cine', cine); },
+    // ---- clarity pass (docs/todo.md)
+    /** explain({ id, term, text, key? }): a short first-time hint card (term in bold, one or two sentences, an optional
+     *  key or button). text and key may be { desktop, touch }; a plain key ('F', 'Hold RMB') names the on-screen button
+     *  on touch. Only the first call for an id does anything: it records the entry in save.flags.glossary (kept in the
+     *  order met, listed in the pause menu's Field notes) and queues the card. Returns true when recorded. Never throws. */
+    explain(o) {
+      try {
+        if (!o || typeof o !== 'object') return false;
+        const term = o.term == null ? '' : String(o.term).trim();
+        const str = (v) => (v == null ? '' : String(v).trim());
+        const pair = (v) => (v && typeof v === 'object') ? { ...(v.desktop != null ? { desktop: str(v.desktop) } : {}), ...(v.touch != null ? { touch: str(v.touch) } : {}) } : str(v);
+        const text = pair(o.text);
+        const id = o.id != null && String(o.id).trim() ? String(o.id).trim() : term ? 'term:' + term.toLowerCase() : '';
+        if (!id || (!term && !forDevice(text))) return false;
+        const list = glossaryList();
+        if (list.some(x => x && x.id === id) || EX.cur?.id === id || EX.queue.some(x => x.id === id)) return false;
+        const entry = { id, term, text };
+        if (o.key != null && o.key !== '') entry.key = pair(o.key);
+        const lv = ctx.mission?.def?.id; if (lv) entry.level = String(lv);
+        try { ctx.save?.setFlag?.('glossary', [...list.filter(Boolean).map(x => ({ ...x })), entry]); }
+        catch (e) { console.warn('[hud] explain: could not save the glossary', e); }
+        EX.queue.push(entry);
+        try { ctx.events.emit('hud:explain', { id, term }); } catch (e) { console.warn('[hud] explain listener', e); }
+        return true;
+      } catch (e) { console.warn('[hud] explain', e); return false; }
+    },
+    /** extra: the card on screen ({ id, term, visible, left }), or null; queued ids (tests) */
+    get explainState() {
+      return EX.cur ? { id: EX.cur.id, term: EX.cur.term, visible: !exEl.hidden && !exEl.classList.contains('out'), left: Math.max(0, EX.dur - EX.t), queued: EX.queue.map(x => x.id) }
+                    : (EX.queue.length ? { id: null, queued: EX.queue.map(x => x.id) } : null);
+    },
+    /** extra: the recorded glossary (save.flags.glossary), in the order met */
+    get glossary() { return glossaryList().map(x => ({ ...x })); },
     /** extra: the skip indicator for skippable shots (frac = hold progress 0..1, or null to hide) */
     skipHint(frac) {
       if (frac == null) { show(skipEl, false); return; }
@@ -985,6 +1194,7 @@ export function install(ctx) {
       updateVitals(dt);
       if (panels.rack) updateRack();
       renderPrompt();
+      tickExplain(dt);
       updateBoss(dt);
       updateMarkers();
       updateCompass();
@@ -1021,7 +1231,11 @@ export function install(ctx) {
   ctx.events.on('resize', placeRack);
   ctx.events.on('player:damaged', (e) => { if (e?.blocked) blockT = 0.35; });
   ctx.events.on('level:start', () => { levelStartAt = ctx.clock.realTime; callsignFrame = null; lastFrameAuto = ''; for (const s of SLOT4) slotGated[s] = false; });
-  ctx.events.on('level:cleared', () => { markers = []; explicitBoss = null; autoBoss = null; if (CH.def) endChoice(null); api.prompt(null); api.progress(null); });
+  ctx.events.on('level:cleared', () => {
+    markers = []; explicitBoss = null; autoBoss = null; if (CH.def) endChoice(null); api.prompt(null); api.progress(null);
+    EX.queue.length = 0; if (EX.cur) exHide(); EX.gap = 0;   // the notes stay in the glossary (Field notes)
+  });
+  ctx.events.on('resize', () => { tagsDirty = true; });
 
   // sim-clock countdowns (fade, choice) run in a 'sim' system so they freeze while the game is paused
   ctx.addSystem({ name: 'hud-sim', phase: 'ui', when: 'sim', order: -1, update: (dt) => { tickFade('sim', dt); tickChoice(dt); } });

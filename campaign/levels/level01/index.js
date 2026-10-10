@@ -23,6 +23,7 @@ import { Water, bubbles } from './water.js';
 import { Drown } from './drown.js';
 import { WakeLights, SteamPlume, AbeyanceImpostor } from './skyline.js';
 import { mats, ball, shared } from './kit.js';
+import { Explainer } from './terms.js';
 
 export { ensureL1Structures };
 
@@ -122,6 +123,7 @@ function createRuntime(ctx, m, DATA, opts) {
   L.sea = new Sea(L);
   try { L.floes = new FloeField(L); } catch (e) { ctx.recordError?.('level01', e); L.floes = null; }
   L.water = new Water(L, { underArt: L.art.ART_WATER });
+  L.terms = new Explainer(L);         // first-time explainer cards (the clarity pass, terms.js)
   try { L.wakeLights = new WakeLights(L); } catch (e) { ctx.recordError?.('level01', e); }
   try { L.plume = new SteamPlume(L); } catch (e) { ctx.recordError?.('level01', e); }
   try { L.abeyImp = new AbeyanceImpostor(L); } catch (e) { ctx.recordError?.('level01', e); }
@@ -205,7 +207,8 @@ function createRuntime(ctx, m, DATA, opts) {
   };
   L.openSled = (id) => {
     L.setFlag('l01:open:' + id, true);
-    ctx.mission?.addInteract?.({ id: 'flag_' + id, at: () => L.sledPos(id, new THREE.Vector3()), r: 14, seconds: 1.5, label: 'FLAG SLEDGE', flag: id });
+    ctx.mission?.addInteract?.({ id: 'flag_' + id, at: () => L.sledPos(id, new THREE.Vector3()), r: 14, seconds: 1.5, label: 'FLAG SLEDGE', flag: id,
+                                 marker: id !== 'sled3' });   // sled 3's objective carries its own marker
   };
   L.plantSledFlag = (id) => {
     if (L.flagMeshes[id]) return;
@@ -270,6 +273,8 @@ function createRuntime(ctx, m, DATA, opts) {
     if (fl['l01:callsign']) L.setCallsign(fl['l01:callsign'].name, fl['l01:callsign'].frame);
     if (fl['l01:stencil']) L.stencilOn = true;
     if (fl['p:sunrise']) L.dawnArt = true;
+    L.terms.reset();
+    L.rackSeen = new Set(ctx.haul?.rack || []);   // parts already racked at this start were explained when they arrived
   };
 
   // ── event listeners ──
@@ -278,7 +283,11 @@ function createRuntime(ctx, m, DATA, opts) {
     on('level:start', (e) => { L.ended = false; L.reset(e); });
     on('level:complete', () => { L.ended = true; L.amb?.wind?.stop?.(2.5); if (L.amb) L.amb.wind = null; });
     on('level:cleared', () => L.dispose());
-    on('player:damaged', () => { if (L.counters) L.counters.playerHits++; });
+    on('player:damaged', (e) => {
+      if (L.counters) L.counters.playerHits++;
+      if (!e.blocked && (e.amount ?? 1) > 0 && L.flag('p:awake')) L.terms.request('ap');   // the frame's first real hit
+    });
+    on('pickup', () => L.terms.request(['cache', 'rack', 'bench']));
     on('trigger:fired', (e) => { if (e.id === 't_raid_go' && L.counters) L.counters.playerHits = 0; });
     on('target:damaged', (e) => {
       if (!L.counters) return;
@@ -439,6 +448,11 @@ function missionTick(L, dt) {
   if (L.floes) L.floes.update(dt);
   L.drown?.update(dt);
   L.plume?.update(dt);
+  // the clarity pass: a card for each part the first time it enters the rack, and for the first Gleaner latch
+  const rack = ctx.haul?.rack;
+  if (rack?.length && L.rackSeen) for (const id of rack) if (!L.rackSeen.has(id)) { L.rackSeen.add(id); L.terms.request(['rack', 'bench', id]); }
+  if (L.counters.latches > 0) L.terms.request('latch');
+  L.terms.update(dt);
   // the look-at timer (o_look: the kite within 8° of the screen centre for 0.5 s)
   if (L.kite.visible) {
     ctx.camera.getWorldDirection(_d);
@@ -634,6 +648,8 @@ function registerActions(L) {
   });
   reg('hudSlots', (a) => ctx.hud?.setSlots?.(a));
   reg('vitals', (a) => ctx.hud?.vitals?.(a));
+  // first-time explainer cards (terms.js): { call: 'term', args: { id } } or { ids: [...] }
+  reg('term', (a) => L.terms.request(a.ids || a.id));
   reg('idleFacing', (a) => { if (ctx.player) ctx.player.idleFacing = a.yaw ?? null; });
   reg('callsign', (a) => L.setCallsign(a.name ?? 'JUNO', a.frame ?? 'CANTOR 7'));
   reg('renameSpeaker', (a) => {

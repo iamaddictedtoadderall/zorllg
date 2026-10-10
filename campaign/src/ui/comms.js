@@ -12,6 +12,9 @@
 // `chime: true` (the OPEN channel) interrupts the same way, plays the 'chime' SFX, waits 1.05 s, then types. play()
 // keeps a script together: a script that contains a chime line or a high-priority line jumps the queue as a block.
 // The box is visible only in the flow states playing, paused, complete and dead.
+// Clarity pass: an optional SpeakerDef.tag ('your scout') shows after the name on the first line that speaker says in
+// a playthrough (save.flags.commsMet records { who: tag }; flow clears it on a New game). A level that later gives the
+// speaker a different tag shows the new one once. The tag rides in the log entry and the 'comms:line' payload.
 import { simDeferred, simResolved, injectCSS } from '../core/util.js';
 
 const CPS = 42;                        // prototype characters per second at commsSpeed 1
@@ -24,7 +27,13 @@ const CSS = `
 #comms{z-index:3;pointer-events:none;overflow:hidden}
 #comms:not([hidden]){animation:commsIn .16s ease-out}
 @keyframes commsIn{from{opacity:0}to{opacity:1}}
-#comms .who{min-height:16px}
+#comms .who{min-height:16px;min-width:0}
+#comms .who .tg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:10px;border-left:1px solid var(--hud-faint);
+  font:italic 500 13px/1.1 var(--f-display);letter-spacing:.06em;text-transform:none;color:var(--hud-dim);animation:commsTag .6s ease-out}
+#comms .who .tg:empty{display:none}
+#comms.noname .who .tg{padding-left:0;border-left:0}
+@keyframes commsTag{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+#game.touch #comms .who .tg{font-size:11px;padding-left:7px}
 #comms .who .chan{font:500 10px/1 var(--f-mono);letter-spacing:.14em;padding:2px 5px 1px;border:1px solid currentColor;opacity:.75}
 #comms .who .chan:empty{display:none}
 #comms.noname .who span.nm{display:none}
@@ -72,6 +81,9 @@ export function install(ctx) {
   if (nameEl) nameEl.classList.add('nm');
   let chanEl = box?.querySelector('.who .chan');
   if (whoEl && !chanEl) { chanEl = document.createElement('i'); chanEl.className = 'chan'; whoEl.insertBefore(chanEl, nameEl || null); }
+  // clarity pass: SpeakerDef.tag ('your scout') shows after the name the first time that speaker talks in a playthrough
+  let tagEl = box?.querySelector('.who .tg');
+  if (whoEl && !tagEl) { tagEl = document.createElement('span'); tagEl.className = 'tg'; whoEl.appendChild(tagEl); }
   const lineEl = box?.querySelector('.line');
   let statEl = box?.querySelector('.stat');
   if (box && !statEl) { statEl = document.createElement('div'); statEl.className = 'stat'; box.appendChild(statEl); }
@@ -100,6 +112,21 @@ export function install(ctx) {
     if (cur) finish();
   }
 
+  /** speakers met this playthrough: save.flags.commsMet = { who: the tag shown }. Flow clears it on a New game. */
+  function metMap() {
+    try { const m = ctx.save?.getFlag?.('commsMet'); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; } catch (e) { return {}; }
+  }
+  /** the tag to show with this line: the speaker's tag the first time the speaker talks (or the first time after the
+   *  level gives the speaker a different tag), else '' */
+  function firstTag(who, s) {
+    const t = typeof s?.tag === 'string' ? s.tag.trim() : '';
+    if (!t) return '';
+    const met = metMap();
+    if (met[who] === t) return '';
+    try { ctx.save?.setFlag?.('commsMet', { ...met, [who]: t }); } catch (e) { console.warn('[comms] could not save commsMet', e); }
+    return t;
+  }
+
   function startLine() {
     cur = queue.shift(); typed = 0; holdT = 0; blipT = 0; phase = 'type';
     if (cur.wait !== undefined) { setVisible(false); return; }
@@ -121,11 +148,15 @@ export function install(ctx) {
     }
     if (nameEl) nameEl.textContent = name;
     if (chanEl) chanEl.textContent = sp.channel && sp.channel !== 'LOCAL' ? sp.channel : '';
+    const tag = firstTag(cur.who, sp);
+    if (tagEl) tagEl.textContent = tag;
     if (lineEl) lineEl.textContent = '';
     lastShown = '';
-    api.log.push({ who: cur.who, name, text: cur.text, t: ctx.mission?.elapsed ?? ctx.clock.time });
+    const entry = { who: cur.who, name, text: cur.text, t: ctx.mission?.elapsed ?? ctx.clock.time };
+    if (tag) entry.tag = tag;
+    api.log.push(entry);
     if (api.log.length > 200) api.log.splice(0, api.log.length - 200);
-    ctx.events.emit('comms:line', { who: cur.who, text: cur.text });
+    ctx.events.emit('comms:line', tag ? { who: cur.who, text: cur.text, tag } : { who: cur.who, text: cur.text });
     if (cur.chime) {
       phase = 'chime';
       box?.classList.add('chiming');

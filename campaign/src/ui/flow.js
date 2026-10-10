@@ -152,7 +152,7 @@ export function install(ctx) {
       if (r === 'continue' && curLevel) { await flow.startLevel(curLevel.id, cur.checkpoint?.checkpoint ?? undefined); return; }
       if (r === 'new') {
         const first = LEVELS.filter(l => !l.hidden).sort((a, b) => a.order - b.order)[0];
-        if (first && await briefing(first.id, token)) return;
+        if (first && await briefing(first.id, token, { newGame: true })) return;
       } else if (r === 'select') {
         set('levelSelect');
         const id = await S().showLevelSelect({ levels: levelList() });
@@ -169,13 +169,18 @@ export function install(ctx) {
     }
   }
   /** briefing for a level; resolves true when the level was started (or the menu was taken over) */
-  async function briefing(id, token) {
+  async function briefing(id, token, o = {}) {
     const def = typeof id === 'string' ? await loadLevel(id) : id;
     while (token === menuToken) {
       set('briefing');
       const r = await S().showBriefing({ level: def, canFit: !def.campaign });
       if (token !== menuToken) return true;
-      if (r === 'start') { await flow.startLevel(def); return true; }
+      if (r === 'start') {
+        // a New game is a new playthrough: the radio voices introduce themselves again (comms speaker tags). The
+        // glossary (Field notes) is the player's own knowledge and stays.
+        if (o.newGame) ctx.save.setFlag('commsMet', {});
+        await flow.startLevel(def); return true;
+      }
       if (r === 'garage' && !def.campaign) {
         set('garage'); ctx.music?.setTheme('garage');
         await ctx.garage.open({ context: 'briefing', levelId: def.id });

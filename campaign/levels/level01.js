@@ -390,10 +390,13 @@ const flags = (...names) => names.map(n => ({ flag: [n, true] }));
 const done = (...ids) => ids.map(id => ({ objective: { complete: id } }));
 const add = (...ids) => ids.map(id => ({ objective: { add: id } }));
 const ifNone = (tag, then) => ({ if: { not: { custom: 'unitAlive', args: { tag } } }, then });
+// the clarity pass (docs/todo.md): a first-time explainer card for each term, at the moment it first appears
+// (levels/level01/terms.js holds the texts and paces them; P5's hud.explain shows them and lists them in Field notes)
+const term = (...ids) => ({ call: 'term', args: { ids } });
 const HINT = {
   walk: { desktop: 'W A S D to walk', touch: 'Left thumb to walk' },
   saw: { desktop: 'Right click to saw', touch: 'Tap BLADE to saw' },
-  jump: { desktop: 'Space to jump. Hold it in the air to hover. Hover burns EN.', touch: 'JUMP. Hold it in the air to hover.' },
+  jump: { desktop: 'Space to jump. Hold it in the air to hover. Hover burns energy (EN).', touch: 'JUMP. Hold it in the air to hover. Hover burns energy (EN).' },
   lock: { desktop: 'Aim near a target to lock on. Left click fires. E holds the lock.', touch: 'Aim near a target to lock on. FIRE shoots. LOCK holds it.' },
   qb: { desktop: 'Shift + direction to quick boost. Snaps harpoon cables.', touch: 'BOOST + direction to dash. Snaps harpoon cables.' },
   tear: { desktop: 'Hold right click to TEAR', touch: 'Hold BLADE to TEAR' },
@@ -418,10 +421,11 @@ const SEG_Z6 = [...SEG_HARVEST, 't_collar', 't_finale', 't_hull_hint'];
 const triggers = [
   // Z1 · the cut (fresh starts only)
   { id: 't_look', when: { objective: 'o_look' }, do: [
-      { comms: 'c_watchNorth' }, { call: 'kite', args: { follow: 'tick', h: 85, side: 'north' } }, ...add('o_cut'), hint('walk_cutter', HINT.walk) ] },
+      { comms: 'c_watchNorth' }, { call: 'kite', args: { follow: 'tick', h: 85, side: 'north' } }, ...add('o_cut'), hint('walk_cutter', HINT.walk),
+      term('wake') ] },
   { id: 't_block1_near', when: { enter: { at: { s: 115, l: -55 }, r: 30 } }, after: 't_look', do: [
       { comms: 'c_block1_near' }, hint('saw') ] },
-  { id: 't_block1', when: { structure: 'block1', state: 'destroyed' }, do: [{ comms: 'c_block1' }, { call: 'sledLoad', args: { n: 1 } }] },
+  { id: 't_block1', when: { structure: 'block1', state: 'destroyed' }, do: [{ comms: 'c_block1' }, { call: 'sledLoad', args: { n: 1 } }, term('water')] },
   { id: 't_block2', when: { structure: 'block2', state: 'destroyed' }, do: [{ comms: 'c_block2' }, { call: 'sledLoad', args: { n: 2 } }] },
   { id: 't_block3', when: { structure: 'block3', state: 'destroyed' }, do: [{ comms: 'c_block3' }, { call: 'sledLoad', args: { n: 3 } }] },
   { id: 't_raid', when: { objective: 'o_cut' }, do: [
@@ -431,7 +435,7 @@ const triggers = [
       { spawn: 'e_raid' }, ...flags('p:raid') ] },
   // the raid proper: t 0 is the skiffs sailing in (L1 §5 E1); the fail-safe counts from here, not from the lights
   { id: 't_raid_go', when: { flag: 'p:raid' }, after: 't_raid', do: [
-      { music: { theme: DREDGE } }, { call: 'vitals', args: { spike: 128 } },
+      { music: { theme: DREDGE } }, { call: 'vitals', args: { spike: 128 } }, term('skiffs', 'vitals'),
       { wait: 4 }, { comms: 'c_raid_sled' },
       { wait: 4 }, { comms: 'c_raid_gully' }, ...add('o_gully') ] },
   { id: 't_raid_hit', when: { custom: 'playerHit' }, after: 't_raid_go', do: [{ comms: 'c_raid_hit' }] },
@@ -443,7 +447,7 @@ const triggers = [
   { id: 't_name', when: { all: [{ pass: 460 }, { flag: 'p:awake' }] }, do: [{ comms: 'c_name' }] },
   { id: 't_signal', when: { all: [{ pass: 560 }, { flag: 'p:awake' }] }, do: [{ comms: 'c_signal' }] },
   { id: 't_shaft', when: { all: [{ enter: { at: { s: 625 }, r: 26 } }, { flag: 'p:awake' }] }, do: [
-      { call: 'abilities', args: { preset: 'jump' } }, { comms: 'c_shaft' }, hint('jump'),
+      { call: 'abilities', args: { preset: 'jump' } }, { comms: 'c_shaft' }, hint('jump'), term('remembered', 'en'),
       ...done('o_up'), ...add('o_climb') ] },
   // out of the shaft (L1 §10.3: "Moth rises above y +8 at the shaft"), or standing on the shelf near it however the
   // player got there (a fast climb can carry Moth well past the rim before it lands)
@@ -460,21 +464,22 @@ const triggers = [
   { id: 't_idle_north', when: { all: [{ enterZone: 'z_teeth' }, { custom: 'idleNorthReached' }] }, do: [{ comms: 'c_idle_north' }] },
   { id: 't_pin', when: { all: [{ pass: 820 }, { flag: 'outOfShaft' }] }, do: [
       { spawn: 'e_pin' }, { music: { theme: DREDGE } }, { waitFor: { custom: 'enemyWithin', args: { r: 300 } }, timeout: 10 },
-      { call: 'abilities', args: { preset: 'lock' } }, { comms: 'c_pin' }, hint('lock'),
+      { call: 'abilities', args: { preset: 'lock' } }, { comms: 'c_pin' }, hint('lock'), term('carbine'),
       ...done('o_kit'), ...add('o_skiffs'), ...flags('p:pin') ] },
   { id: 't_qb', when: { any: [{ custom: 'harpoonTelegraph' }, { timer: 45, since: 't_pin' }] }, after: 't_pin', do: [
-      { call: 'abilities', args: { add: ['boost'] } }, { comms: 'c_qb' }, hint('qb') ] },
+      { call: 'abilities', args: { add: ['boost'] } }, { comms: 'c_qb' }, hint('qb'), term('qb') ] },
   { id: 't_stagger_hint', when: { all: [{ custom: 'anyStaggered' }, { flag: 'p:pin' }] }, do: [
-      hint('stagger', 'Staggered targets take extra damage, and loose parts can be torn off.') ] },
+      hint('stagger', 'Staggered targets take extra damage, and loose parts can be torn off.'), term('stagger') ] },
   { id: 't_tear', when: { custom: 'tearAvailable', args: { r: 40 } }, after: 't_pin', do: [
-      { comms: 'c_tear' }, hint('tear') ] },
+      { comms: 'c_tear' }, hint('tear'), term('tear') ] },
   { id: 't_first_tear', when: { all: [{ custom: 'rackCount', args: { gte: 1 } }, { flag: 'outOfShaft' }] }, do: [
-      { call: 'hudPanels', args: { rack: true } }, hint('haul', 'HAUL 1/3. Parts go to the Bench at the end of the walk.'), { comms: 'c_first_tear' } ] },
+      { call: 'hudPanels', args: { rack: true } }, hint('haul', 'HAUL 1/3. Torn-off parts go to the Bench when the level ends.'), { comms: 'c_first_tear' },
+      term('rack', 'bench') ] },
   { id: 't_tear_failsafe', when: { all: [{ cleared: 'e_pin' }, { not: { custom: 'rackCount', args: { gte: 1 } } }] }, do: [
       { spawn: { kind: 'skiff', at: { s: 1120, l: 0 }, opts: { name: SKIFF, tags: ['pin3'],
         config: { variant: 'gaffer', haul: 'harpoon_gaff', startAp: 1000, staggerOnFirstHit: true, lead: 0 } } } } ] },
   { id: 't_sled1', when: { killed: { tag: 'sled1tow' } }, do: [
-      { comms: 'c_sled1' }, ...add('o_sled1'), { call: 'flagSled', args: { id: 'sled1' } }, hint('flag') ] },
+      { comms: 'c_sled1' }, ...add('o_sled1'), { call: 'flagSled', args: { id: 'sled1' } }, hint('flag'), term('sledge') ] },
   { id: 't_sled1_done', when: { flag: 'sled1' }, do: [{ comms: 'c_sled1_done' }, ...done('o_sled1')] },
   { id: 't_pin_wave', when: { custom: 'waveStarted', args: { encounter: 'e_pin', wave: 1 } }, do: [{ comms: 'c_pin_wave' }] },
   { id: 't_pin_clear', when: { cleared: 'e_pin' }, do: [
@@ -482,11 +487,11 @@ const triggers = [
       { call: 'tick', args: { path: [{ s: 960, l: 30 }, { s: 1000, l: 10 }], speed: 10, pinned: false } },
       { wait: 4 }, { comms: 'c_whatfor' } ] },
   { id: 't_gleaners', when: { all: [{ pass: 1060 }, { flag: 'p:pinClear' }] }, do: [
-      { spawn: 'e_gleaners' }, { music: { stinger: 'dread' } }, { comms: 'c_gleaners' }, ...add('o_wrecks'), ...flags('p:gleaners') ] },
+      { spawn: 'e_gleaners' }, { music: { stinger: 'dread' } }, { comms: 'c_gleaners' }, ...add('o_wrecks'), ...flags('p:gleaners'), term('gleaners') ] },
   { id: 't_blade', when: { any: [{ custom: 'enemyWithin', args: { r: 30, kind: 'gleaner' } }, { timer: 8, since: 't_gleaners' }] }, after: 't_gleaners', do: [
-      { call: 'abilities', args: { add: ['blade'] } }, { comms: 'c_blade' }, hint('blade') ] },
+      { call: 'abilities', args: { add: ['blade'] } }, { comms: 'c_blade' }, hint('blade'), term('psalter') ] },
   { id: 't_blade_kill', when: { custom: 'bladeKill' }, after: 't_blade', do: [{ comms: 'c_blade_kill' }] },
-  { id: 't_carrier', when: { custom: 'waveStarted', args: { encounter: 'e_gleaners', wave: 1 } }, do: [{ music: { theme: DREDGE } }, { comms: 'c_carrier' }] },
+  { id: 't_carrier', when: { custom: 'waveStarted', args: { encounter: 'e_gleaners', wave: 1 } }, do: [{ music: { theme: DREDGE } }, { comms: 'c_carrier' }, term('carrier')] },
   { id: 't_burn', when: { cleared: 'e_gleaners' }, do: [
       ...flags('p:burn'), { music: { theme: NIGHT } }, { comms: 'c_burn', wait: true }, { call: 'burnWrecks', args: { zone: 'z_teeth' } },
       ...add('o_abeyance'), { call: 'tick', args: { follow: 'player', distance: 90 } } ] },
@@ -496,21 +501,23 @@ const triggers = [
   { id: 't_apron', when: { all: [{ pass: 1370 }, { flag: 'p:burn' }] }, do: [
       { checkpoint: 'cp_abeyance' }, ...flags('p:apron'), { call: 'tick', args: { park: { s: 1360, l: 50 } } },
       { spawn: 'e_apron' }, { music: { stinger: 'dread' } }, { comms: 'c_ghost', wait: true },
-      { music: { theme: DREDGE } }, { call: 'abilities', args: { add: ['missile'] } }, { comms: 'c_missiles' }, hint('msl'),
+      term('ghost'),
+      { music: { theme: DREDGE } }, { call: 'abilities', args: { add: ['missile'] } }, { comms: 'c_missiles' }, hint('msl'), term('chorus'),
       ...done('o_abeyance'), ...add('o_sexton') ] },
   { id: 't_enemy_flares', when: { custom: 'carrierFlared' }, do: [{ comms: 'c_enemy_flares' }] },
   { id: 't_surge', when: { health: { tag: 'sexton', below: 0.5 } }, do: [{ comms: 'c_surge' }] },
   { id: 't_repair', when: { all: [{ flag: 'p:apron' }, { any: [{ health: { below: 0.55 } }, { killed: { tag: 'sexton' } }] }] }, do: [
-      { call: 'abilities', args: { add: ['kit'] } }, { comms: 'c_repair' }, hint('kit') ] },
+      { call: 'abilities', args: { add: ['kit'] } }, { comms: 'c_repair' }, hint('kit'), term('repair') ] },
   { id: 't_sexton_dead', when: { killed: { tag: 'sexton' } }, do: [
-      ...flags('p:sexton'), { music: { theme: NIGHT } }, { wait: 3 }, { comms: 'c_drums', wait: true },
+      ...flags('p:sexton'), { music: { theme: NIGHT } }, { wait: 3 }, { comms: 'c_drums', wait: true }, term('turnback'),
       ...add('o_climb2'), { comms: 'c_climb' },
       { call: 'tick', args: { path: [{ s: 1500, l: 0 }, { s: 1545, l: 3 }, { s: 1625, l: 30 }], speed: 6, parkAtEnd: true } } ] },
   { id: 't_hold_sled', when: { custom: 'tickAt', args: { s: 1540, r: 14 } }, do: [
-      { comms: 'c_hardtack' }, { spawn: 'e_hold' }, ...add('o_sled2'),
+      { comms: 'c_hardtack' }, { spawn: 'e_hold' }, ...add('o_sled2'), term('rigs'),
       { marker: { id: 'm_winch', at: abey(-10.2, 8, -2), label: 'WINCH', kind: 'poi' } } ] },
   { id: 't_winch', when: { structure: 'winchLock', state: 'destroyed' }, do: [
-      { marker: { remove: 'm_winch' } }, { call: 'flagSled', args: { id: 'sled2' } } ] },
+      { marker: { remove: 'm_winch' } }, { call: 'flagSled', args: { id: 'sled2' } },
+      { objective: { text: ['o_sled2', 'Flag the freed sledge in the hold'] } }, term('sledge') ] },
   { id: 't_sled2_done', when: { flag: 'sled2' }, do: [{ comms: 'c_hardtack_done' }, ...done('o_sled2')] },
   { id: 't_floor2', when: { all: [{ custom: 'aboveY', args: { y: 40, near: { s: ABEY_S }, r: 45 } }, { flag: 'p:sexton' }] }, do: [
       { spawn: 'e_shaft' }, { comms: 'c_shaft_gleaners' } ] },
@@ -528,27 +535,27 @@ const triggers = [
   // Z5 · the cut-line
   { id: 't_field', when: { all: [{ pass: 1720 }, { flag: 'crown' }, { custom: 'onGround' }] }, do: [
       { checkpoint: 'cp_cutline' }, ...flags('p:field'), { spawn: 'e_field' }, { spawn: 'e_icebreaker' },
-      { music: { theme: DREDGE, intensity: 1 } }, { comms: 'c_pa1' } ] },
+      { music: { theme: DREDGE, intensity: 1 } }, { comms: 'c_pa1' }, term('dredge', 'icebreaker') ] },
   { id: 't_heads_hint', when: { timer: 15, since: 't_field' }, do: [{ comms: 'c_heads_hint' }] },
   { id: 't_hull_hint', when: { custom: 'hullHit' }, do: [hint('hull', 'ARMOURED. Hit the drill heads.')] },
-  { id: 't_spotlight', when: { custom: 'inFloodlight' }, do: [{ comms: 'c_spotlight' }] },
+  { id: 't_spotlight', when: { custom: 'inFloodlight' }, do: [{ comms: 'c_spotlight' }, term('floodlight')] },
   { id: 't_head1', when: { killed: { tag: 'drillhead', count: 1 } }, do: [{ comms: 'c_head1' }] },
   { id: 't_crack', when: { custom: 'sawSweep' }, do: [{ comms: 'c_crack' }] },
   { id: 't_pa2', when: { timer: 20, since: 't_head1' }, do: [{ comms: 'c_pa2' }] },
   { id: 't_head2', when: { killed: { tag: 'drillhead', count: 2 } }, do: [{ comms: 'c_head2' }] },
-  { id: 't_harvest', when: { flag: 'ib:phase', eq: 3 }, do: [{ checkpoint: 'cp_harvest' }, { comms: 'c_auger' }] },
-  { id: 't_collar', when: { custom: 'collarHitFromAbove' }, do: [hint('collar', 'Get below the collar. Fire from the Raft.')] },
+  { id: 't_harvest', when: { flag: 'ib:phase', eq: 3 }, do: [{ checkpoint: 'cp_harvest' }, { comms: 'c_auger' }, term('collar')] },
+  { id: 't_collar', when: { custom: 'collarHitFromAbove' }, do: [hint('collar', 'Get below the collar. Fire up at it from the floes.')] },
   { id: 't_finale', when: { killed: { tag: 'drillhead', count: 3 } }, do: [{ event: 'finale' }] },
 
   // Z6 · the floes (the sprint's flags gate them, so cold starts at cp_floes work)
   { id: 't_rot', when: { all: [{ flag: 'p:sprint' }, { any: [{ custom: 'touchedGold' }, { custom: 'sprintTime', args: { gte: 12 } }] }] }, do: [
-      { comms: 'c_rot' }, hint('rot', 'Gold ice breaks soon after you land on it. Blue ice holds.') ] },
+      { comms: 'c_rot' }, hint('rot', 'Gold ice breaks soon after you land on it. Blue ice holds.'), term('rot') ] },
   { id: 't_sink', when: { all: [{ flag: 'p:sprint' }, { custom: 'sprintTime', args: { gte: 8 } }] }, do: [
       { call: 'icebreakerSink' }, { wait: 2 }, { comms: 'c_sink' } ] },
   { id: 't_leads', when: { custom: 'skiffRun' }, after: 't_sink', do: [{ comms: 'c_leads' }] },
   { id: 't_hunt', when: { all: [{ flag: 'l01:hunt' }, { custom: 'enemyWithin', args: { r: 120, kind: 'gleaner' } }] }, do: [{ comms: 'c_hunt' }] },
   { id: 't_sled3', when: { all: [{ flag: 'p:sprint' }, { any: [{ enter: { at: [1010, 262], r: 220 } }, { custom: 'sprintTime', args: { gte: 25 } }] }] }, do: [
-      { comms: 'c_sled3' }, ...add('o_sled3'), { call: 'flagSled', args: { id: 'sled3' } } ] },
+      { comms: 'c_sled3' }, ...add('o_sled3'), { call: 'flagSled', args: { id: 'sled3' } }, term('sledge') ] },
   { id: 't_sled3_done', when: { flag: 'sled3' }, do: [{ comms: 'c_sled3_done' }, ...done('o_sled3')] },
   { id: 't_sled3_lost', when: { flag: 'sled3Lost' }, do: [{ comms: 'c_sled3_lost' }, { objective: { fail: 'o_sled3' } }] },
   { id: 't_withme', when: { all: [{ flag: 'p:sprint' }, { any: [
@@ -573,7 +580,11 @@ const def = {
           'Three blocks from the west cut before we go. Take the cutter and the boy. The boy flies, you cut.\n' +
           "Don't go past the ridges. Don't wait for the sun.\n" +
           '— O. Desh, the Bench',
-    objectives: ['Cut three blocks', 'Back before the sun'], fine: 'Keep up.', showMap: false,
+    objectives: ['Cut three blocks of ice with the cutter', 'Get back to the convoy before sunrise'],
+    // the fine print is the plain-English key to the note (the clarity pass): Wake words, glossed once, nothing more
+    fine: 'Keep up.  ·  You are Juno. The Wake is your convoy. The edge is the line of sunrise; it creeps west, so the Wake ' +
+          "keeps moving. The cutter is your ice-cutting walker. The Bench is Oma Desh's workshop rig.",
+    showMap: false,
   },
   intro: [{ style: 'black', hold: 9, text:
     'GAUNT. One day lasts ten years. The dawn walks west, eleven kilometres a day. Behind it, the ground burns. ' +
@@ -583,19 +594,21 @@ const def = {
 
   // SpeakerDef additions are A5.2's; MOTH fixed per A2 #24. The label changes to MOTH only at the naming.
   speakers: {
-    JUNO:      { name: 'JUNO', color: '#ffb547', voice: { base: 220, wave: 'triangle' }, style: 'internal',
+    // `tag` (the clarity pass): who the voice is to the player, shown beside the name the first time it speaks. Spoiler
+    // rules: the frame's tag never names it, and the Foreman's says only what the player hears.
+    JUNO:      { name: 'JUNO', tag: 'you', color: '#ffb547', voice: { base: 220, wave: 'triangle' }, style: 'internal',
                  channel: 'LOCAL', font: 'sans', speed: 1.0, static: 0 },
-    MOTH:      { name: 'CANTOR 7', color: '#7fe9ff', voice: { base: 330, wave: 'sine' }, style: 'internal',
-                 channel: 'LOCAL', font: 'monoCaps', speed: 1 },
-    KIT:       { name: 'KIT · TICK', color: '#c6e86a', voice: { base: 520, wave: 'square', jitter: 0.15 }, style: 'radio',
-                 channel: 'WAKE', speed: 1.4, static: 0.25 },
-    OMA:       { name: 'OMA · BENCH', color: '#f2e6d0', voice: { base: 180, wave: 'sawtooth' }, style: 'radio',
-                 channel: 'WAKE', speed: 0.8, static: 0.25, weight: 600 },
-    FOREMAN:   { name: '', color: '#e9d79a', voice: { base: 140, wave: 'sine' }, style: 'intercept',
+    MOTH:      { name: 'CANTOR 7', tag: 'the machine you climbed into', color: '#7fe9ff', voice: { base: 330, wave: 'sine' },
+                 style: 'internal', channel: 'LOCAL', font: 'monoCaps', speed: 1 },
+    KIT:       { name: 'KIT · TICK', tag: 'your brother, the scout', color: '#c6e86a', voice: { base: 520, wave: 'square', jitter: 0.15 },
+                 style: 'radio', channel: 'WAKE', speed: 1.4, static: 0.25 },
+    OMA:       { name: 'OMA · BENCH', tag: "the convoy's elder and mechanic", color: '#f2e6d0', voice: { base: 180, wave: 'sawtooth' },
+                 style: 'radio', channel: 'WAKE', speed: 0.8, static: 0.25, weight: 600 },
+    FOREMAN:   { name: '', tag: 'unknown voice, open channel', color: '#e9d79a', voice: { base: 140, wave: 'sine' }, style: 'intercept',
                  channel: 'OPEN', speed: 0.7, italic: true, static: 0, chime: true },
-    BOOT:      { name: '', color: '#9fb8c4', voice: { base: 900, wave: 'square' }, style: 'system',
+    BOOT:      { name: '', tag: 'machine start-up text', color: '#9fb8c4', voice: { base: 900, wave: 'square' }, style: 'system',
                  font: 'monoCaps', speed: 1.8 },
-    DREDGE_PA: { name: 'DREDGE · ICEBREAKER', color: '#d0583a', voice: { base: 160, wave: 'sawtooth', jitter: 0.3 },
+    DREDGE_PA: { name: 'DREDGE · ICEBREAKER', tag: 'enemy loudspeaker', color: '#d0583a', voice: { base: 160, wave: 'sawtooth', jitter: 0.3 },
                  style: 'intercept', channel: 'DREDGE', speed: 1.0, static: 0.7 },
   },
 
@@ -675,26 +688,28 @@ const def = {
   ],
 
   objectives: [
-    { id: 'o_look', text: "Find Kit's kite", kind: 'manual' },
-    { id: 'o_cut', text: 'Cut three blocks', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
-    { id: 'o_gully', text: 'Run for the east gully', kind: 'reach', at: { s: 320 }, r: 30, marker: true },
-    { id: 'o_up', text: 'Find a way up', kind: 'reach', at: { s: 625 }, r: 26, marker: true },
-    { id: 'o_climb', text: 'Climb out', kind: 'flag', flag: 'outOfShaft' },
-    { id: 'o_kit', text: 'Reach Kit', kind: 'reach', at: { s: 860, l: 40 }, r: 80, marker: { s: 900, l: 70, h: 6 } },
-    { id: 'o_skiffs', text: 'Drive the skiffs off Tick', kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
-    { id: 'o_sled1', text: 'Flag the sledge', kind: 'flag', flag: 'sled1', optional: true },
-    { id: 'o_wrecks', text: 'Keep the Gleaners off the wrecks', kind: 'kill', target: { encounter: 'e_gleaners' }, marker: 'targets' },
-    { id: 'o_abeyance', text: 'Make for the Abeyance', kind: 'reach', at: { s: 1370 }, r: 80, marker: true },
-    { id: 'o_sexton', text: 'Destroy the Sexton', kind: 'kill', target: { tag: 'sexton' }, marker: 'targets' },
-    { id: 'o_climb2', text: 'Climb the Abeyance', kind: 'flag', flag: 'crown', marker: abey(0, 124, 0) },
-    { id: 'o_sled2', text: "Free Hardtack's sledge", kind: 'flag', flag: 'sled2', optional: true },
-    { id: 'o_heads', text: "Break the Icebreaker's drill heads", kind: 'destroy', target: { tag: 'drillhead', count: 3 },
+    // the clarity pass: every objective says plainly what to do and where, and uses only words already met; `label` is the
+    // short marker text (mission markers show the first 28 characters)
+    { id: 'o_look', text: "Look up and find Kit's kite", kind: 'manual' },
+    { id: 'o_cut', text: 'Cut three ice blocks at the orange flags', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
+    { id: 'o_gully', text: 'Run east into the gully', label: 'GULLY', kind: 'reach', at: { s: 320 }, r: 30, marker: true },
+    { id: 'o_up', text: 'Find a way up: head for the light', label: 'WAY UP', kind: 'reach', at: { s: 625 }, r: 26, marker: true },
+    { id: 'o_climb', text: 'Jump and hover up the shaft', kind: 'flag', flag: 'outOfShaft' },
+    { id: 'o_kit', text: 'Reach Kit under the red flare', label: 'KIT', kind: 'reach', at: { s: 860, l: 40 }, r: 80, marker: { s: 900, l: 70, h: 6 } },
+    { id: 'o_skiffs', text: 'Destroy the skiffs attacking Tick', kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
+    { id: 'o_sled1', text: 'Flag the sledge the skiff dropped', kind: 'flag', flag: 'sled1', optional: true },
+    { id: 'o_wrecks', text: 'Destroy the Gleaners at the wrecks', kind: 'kill', target: { encounter: 'e_gleaners' }, marker: 'targets' },
+    { id: 'o_abeyance', text: 'Head for the giant frozen ship', label: 'FROZEN SHIP', kind: 'reach', at: { s: 1370 }, r: 80, marker: true },
+    { id: 'o_sexton', text: 'Destroy the Sexton, the green-lit frame', kind: 'kill', target: { tag: 'sexton' }, marker: 'targets' },
+    { id: 'o_climb2', text: 'Climb up inside the Abeyance to the top', label: 'TOP', kind: 'flag', flag: 'crown', marker: abey(0, 124, 0) },
+    { id: 'o_sled2', text: 'Break the winch lock chaining the sledge', kind: 'flag', flag: 'sled2', optional: true },
+    { id: 'o_heads', text: "Break the Icebreaker's three drill heads", kind: 'destroy', target: { tag: 'drillhead', count: 3 },
       showCount: true, marker: 'targets' },
-    { id: 'o_surface', text: 'Surface', kind: 'flag', flag: 'surfaced' },
-    { id: 'o_shore', text: "Follow Kit's flares to the shore", kind: 'reach', at: { s: 3130 }, r: 60, marker: { s: 3150, l: 0, h: 4 } },
-    { id: 'o_sled3', text: 'Flag the drifting sledge', kind: 'flag', flag: 'sled3', optional: true,
+    { id: 'o_surface', text: 'Rise to the light above you', kind: 'flag', flag: 'surfaced' },
+    { id: 'o_shore', text: "Follow Kit's flares to the shore", label: 'SHORE', kind: 'reach', at: { s: 3130 }, r: 60, marker: { s: 3150, l: 0, h: 4 } },
+    { id: 'o_sled3', text: 'Flag the sledge on the floe to the south', label: 'SLEDGE', kind: 'flag', flag: 'sled3', optional: true,
       failIf: { flag: 'sled3Lost' }, marker: { x: 1010, z: 262, y: FLOE_TOP + 4 } },
-    { id: 'o_bench', text: 'Bring the frame in', kind: 'reach', at: DATA.shore.cradle, r: 18, marker: true },
+    { id: 'o_bench', text: 'Walk to the Bench, under the work lamp', label: 'THE BENCH', kind: 'reach', at: DATA.shore.cradle, r: 18, marker: true },
   ],
 
   encounters,
@@ -727,7 +742,7 @@ const def = {
       { call: 'abilities', args: { preset: 'walk' } }, { call: 'idleFacing', args: { yaw: 0 } },
       { call: 'hudPanels', args: { all: true, en: false, radar: false, weapons: false, rack: false } },
       { music: { theme: NIGHT } }, { comms: 'c_walk' },
-      ...add('o_up'), hint('walk'),
+      ...add('o_up'), hint('walk'), term('frame'),
     ],
 
     finale: [
@@ -747,7 +762,7 @@ const def = {
       { call: 'gleanerHunt', args: { on: true } }, { spawn: 'e_floes' },
       { comms: 'c_surfaced' },
       ...add('o_shore'),
-      { wait: 3 }, { comms: 'c_icing' }, { call: 'hoverIcing', args: { scale: 2 } },
+      { wait: 3 }, { comms: 'c_icing' }, { call: 'hoverIcing', args: { scale: 2 } }, term('icing'),
     ],
 
     shore: [
@@ -846,9 +861,9 @@ const def = {
     c_qb: [{ who: 'MOTH', text: 'Lateral thrust… remembered.' }],
     c_tear: [{ who: 'MOTH', text: 'That part is loose. This frame can take it.' }],
     c_first_tear: [{ who: 'JUNO', text: "Huh. Oma'll want that." }],
-    c_sled1: [{ who: 'KIT', text: "That's our SLED. He was towing our sled." }, { who: 'JUNO', text: 'Flag it. Big Mercy can fetch it later.' }],
+    c_sled1: [{ who: 'KIT', text: "That's our SLED. He was towing our sled." }, { who: 'JUNO', text: 'Flag it. The Wake can fetch it later.' }],
     c_sled1_done: [{ who: 'KIT', text: "Flagged! That's a tank. A whole tank. I'm counting it." }],
-    c_pin_wave: [{ who: 'KIT', text: 'More sails, east lead! Two!' }],
+    c_pin_wave: [{ who: 'KIT', text: 'More sails, from the east! Two!' }],
     c_pin_clear: [{ who: 'KIT', text: 'Okay so that was AMAZING, and also I nearly died, so.' }, { who: 'JUNO', text: 'Drink something.' }],
     c_whatfor: [{ who: 'MOTH', text: 'Query: what is this frame for?' }, { who: 'JUNO', text: 'Water first. Then we argue about what you are.' }],
     c_gleaners: [{ who: 'KIT', text: 'Green lights. Jun, those are Gleaners.' }, { who: 'JUNO', text: "They're here for the skiff crews." },
@@ -870,7 +885,7 @@ const def = {
     c_climb: [{ who: 'KIT', text: "I can't see past the ridges from down here. Get up top. Eyes on." },
               { who: 'JUNO', text: "Climbing. Drive through. Don't stop." },
               { who: 'KIT', text: 'Not stopping. Not looking. Not looking at ANY of it.' }],
-    c_hardtack: [{ who: 'KIT', text: "Jun, there's a sled in here. Hardtack's paint. It's chained to their winch." },
+    c_hardtack: [{ who: 'KIT', text: "Jun, there's one of OUR sleds in here. Hardtack's. It's chained to their winch." },
                  { who: 'JUNO', text: "I'll get the winch." }],
     c_hardtack_done: [{ who: 'KIT', text: 'Two tanks! TWO!' }],
     c_shaft_gleaners: [{ who: 'MOTH', text: 'Movement above.' }],
@@ -878,7 +893,7 @@ const def = {
                 { who: 'MOTH', text: 'Unknown. Logged.' }],
     c_cutline: [{ who: 'KIT', text: "That's the ice we came for. They're taking all of it." },
                 { who: 'KIT', text: "And it's cutting right between us and the beach." }, { who: 'JUNO', text: 'Then it stops cutting.' }],
-    c_detour: [{ who: 'KIT', text: "Tick can't swim. I'm going round by the north fast-ice. Meet you on the beach." },
+    c_detour: [{ who: 'KIT', text: "Tick can't swim. I'm going round the north way, on the shore ice. Meet you on the beach." },
                { who: 'JUNO', text: 'Keep the kite on me.' }, { who: 'KIT', text: "Kite's on you. No strings attached. Okay, one string." }],
     c_pa1: [{ who: 'DREDGE_PA', text: "Cut and haul. Cut and haul. Shift's not over." }],
     c_heads_hint: [{ who: 'KIT', text: "Kite says the saw heads go soft when they're cutting. Hit them low." }],
@@ -887,7 +902,7 @@ const def = {
     c_crack: [{ who: 'MOTH', text: 'The ice is splitting toward this frame. Move off the line.' }],
     c_pa2: [{ who: 'DREDGE_PA', text: 'Cut and— cut and haul. Cut and haul.' }],
     c_head2: [{ who: 'KIT', text: "TWO! It's got one head left and it looks ANGRY." }],
-    c_auger: [{ who: 'MOTH', text: 'The bow drill is armoured above. Exposed from below.' }, { who: 'JUNO', text: 'Down on the raft, then.' }],
+    c_auger: [{ who: 'MOTH', text: 'The bow drill is armoured above. Exposed from below.' }, { who: 'JUNO', text: 'Down on the floes, then.' }],
     c_sunrise: [{ who: 'KIT', text: 'Jun. Jun, the sun. Look east.' }],
     c_ice_changing: [{ who: 'MOTH', text: 'The ice is changing.' }],
     c_fall: [{ who: 'JUNO', text: 'Hold—', hold: 0.4 }],
@@ -904,9 +919,9 @@ const def = {
     c_icing: [{ who: 'MOTH', text: 'Vents are icing. Hover is limited.' }, { who: 'JUNO', text: 'Then we hop.' }],
     c_rot: [{ who: 'MOTH', text: 'Sunlit ice is failing. Shadowed ice holds.' }, { who: 'JUNO', text: 'Blue holds, gold breaks. Got it.' }],
     c_sink: [{ who: 'KIT', text: "It's going under. The whole thing's going UNDER." }],
-    c_leads: [{ who: 'KIT', text: "Skiffs in the leads! They don't care about the sun, they FLOAT—" }],
+    c_leads: [{ who: 'KIT', text: "Skiffs on the open water! They don't care about the sun, they FLOAT—" }],
     c_hunt: [{ who: 'KIT', text: 'Why are the Gleaners all coming at YOU?' }, { who: 'JUNO', text: "I'm the biggest thing out here." }],
-    c_sled3: [{ who: 'KIT', text: "Sled on a floe, south! Lark's Rest paint. It's in the shade. For now." }],
+    c_sled3: [{ who: 'KIT', text: "Sled on a floe, south! One of ours, Lark's Rest. It's in the shade. For now." }],
     c_sled3_done: [{ who: 'KIT', text: "THREE tanks! Oma's going to— she's going to nod, probably!" }],
     c_sled3_lost: [{ who: 'KIT', text: "Lost it. Doesn't matter. Keep going." }],
     c_withme: [{ who: 'JUNO', text: 'You with me?' }, { who: 'MOTH', text: 'I am here.' }],
@@ -933,6 +948,7 @@ const def = {
     { call: 'vitals', args: { mode: 'live', bpm: 80 } },
     { call: 'tick', args: { park: DATA.tick.park0, show: true } }, { call: 'kite', args: { follow: 'tick', h: 85, show: true } },
     { cinematic: 'vista' },
+    term('cutter', 'kite'),
     { wait: 1.5 }, { comms: 'c_morning' },
     ...add('o_look'), hint('look', { desktop: 'Mouse to look', touch: 'Drag the right side to look' }),
     { waitFor: { any: [{ custom: 'lookingAt', args: { target: 'kite', deg: 8, hold: 0.5 } }, { objective: 'o_look' }] } },
@@ -944,11 +960,11 @@ const def = {
       { call: 'restoreCommon', args: { cp: 'cp_cavern' } }, ...flags('p:fell', 'p:awake'), ...disable(...SEG_Z2),
       { art: ART_UNDER, blend: 0 },
       { call: 'abilities', args: { preset: 'walk' } }, { call: 'idleFacing', args: { yaw: 0 } },
-      { music: { theme: NIGHT } }, ...add('o_up'), hint('walk') ],
+      { music: { theme: NIGHT } }, ...add('o_up'), hint('walk'), term('frame') ],
     cp_ridges: [
       { call: 'restoreCommon', args: { cp: 'cp_ridges' } }, ...flags('p:fell', 'p:awake', 'outOfShaft'), ...disable(...SEG_Z3),
       { art: ART_TEETH, blend: 0 }, { call: 'abilities', args: { preset: 'jump' } },
-      ...done('o_up', 'o_climb'),
+      ...done('o_up', 'o_climb'), term('remembered', 'en'),
       { call: 'tick', args: { park: { s: 900, l: 70 }, pinned: true, show: true } }, { call: 'kite', args: { follow: 'tick', h: 80, show: true } },
       { call: 'kitFlare', args: { at: { s: 900, l: 70, h: 160 }, burst: true } }, { music: { theme: NIGHT } },
       ...add('o_kit') ],
@@ -958,7 +974,7 @@ const def = {
       { art: ART_ABEY, blend: 0 }, { call: 'abilities', args: { preset: 'missiles' } },
       { call: 'tick', args: { park: { s: 1360, l: 50 }, show: true } }, { call: 'kite', args: { follow: 'tick', h: 90, show: true } },
       ifNone('sexton', [{ spawn: 'e_apron' }]), { music: { theme: DREDGE } },
-      ...done('o_abeyance'), ...add('o_sexton') ],
+      ...done('o_abeyance'), ...add('o_sexton'), term('ghost', 'chorus') ],
     cp_cutline: [
       { call: 'restoreCommon', args: { cp: 'cp_cutline' } },
       ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron', 'p:sexton', 'crown', 'p:field'),
@@ -966,7 +982,8 @@ const def = {
       { art: ART_PREDAWN, blend: 0 }, { call: 'abilities', args: { preset: 'full' } },
       { call: 'tick', args: { hide: true } }, { call: 'kite', args: { follow: 'player', h: 90, show: true } },
       ifNone('field', [{ spawn: 'e_field' }]), ifNone('icebreaker', [{ spawn: 'e_icebreaker' }]),
-      { music: { theme: DREDGE, intensity: 1 } }, ...add('o_heads'), { comms: 'c_pa1' }, { wait: 15 }, { comms: 'c_heads_hint' } ],
+      { music: { theme: DREDGE, intensity: 1 } }, ...add('o_heads'), { comms: 'c_pa1' }, term('dredge', 'icebreaker'),
+      { wait: 15 }, { comms: 'c_heads_hint' } ],
     cp_harvest: [
       { call: 'restoreCommon', args: { cp: 'cp_harvest' } },
       ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron', 'p:sexton', 'crown', 'p:field'),
@@ -974,7 +991,7 @@ const def = {
       { art: ART_PREDAWN, blend: 0 }, { call: 'abilities', args: { preset: 'full' } },
       { call: 'tick', args: { hide: true } }, { call: 'kite', args: { follow: 'player', h: 90, show: true } },
       ifNone('icebreaker', [{ spawn: 'e_icebreaker' }]), { call: 'icebreaker', args: { phase: 3 } },
-      { music: { theme: DREDGE, intensity: 1.2 } }, ...add('o_heads'), { comms: 'c_auger' } ],
+      { music: { theme: DREDGE, intensity: 1.2 } }, ...add('o_heads'), { comms: 'c_auger' }, term('icebreaker', 'collar') ],
     cp_floes: [
       { call: 'restoreCommon', args: { cp: 'cp_floes' } },
       ...flags('p:fell', 'p:awake', 'outOfShaft', 'p:pin', 'p:pinClear', 'p:gleaners', 'p:burn', 'p:apron', 'p:sexton', 'crown',
@@ -986,7 +1003,7 @@ const def = {
       { call: 'icebreakerSink', args: { instant: true } }, { call: 'floes', args: { reset: true, start: true } },
       { call: 'sunClock', args: { start: true } }, { call: 'hoverIcing', args: { scale: 2 } },
       { call: 'gleanerHunt', args: { on: true } }, ifNone('floeskiff', [{ spawn: 'e_floes' }]),
-      { music: { theme: DAWN } }, ...done('o_heads', 'o_surface'), ...add('o_shore') ],
+      { music: { theme: DAWN } }, ...done('o_heads', 'o_surface'), ...add('o_shore'), term('icing') ],
   },
 
   // no `complete` block: the 'naming' event ends the level with { complete: true }
