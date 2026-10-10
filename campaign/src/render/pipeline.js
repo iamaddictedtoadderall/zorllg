@@ -100,8 +100,10 @@ uniform sampler2D tDiffuse;
 uniform vec2 uTexel;
 uniform float uThreshold, uKnee, uExposure;
 varying vec2 vUv;
-vec3 S(vec2 o) { return min(texture2D(tDiffuse, vUv + uTexel * o).rgb, vec3(20.0)); }
-float W(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b)) * uExposure * 0.25); }   // Karis-style firefly weight
+vec3 S(vec2 o) { return min(texture2D(tDiffuse, vUv + uTexel * o).rgb, vec3(48.0)); }
+// Karis-style firefly weight, kept gentle: it only tames extreme sub-pixel sparkles, so a small but genuinely bright
+// lamp or ghost beacon (a few pixels at 1 km) still blooms into a readable halo
+float W(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b)) * uExposure * 0.07); }
 void main() {
   vec3 a = S(vec2(-1.0, -1.0)), b = S(vec2(1.0, -1.0)), c = S(vec2(-1.0, 1.0)), d = S(vec2(1.0, 1.0));
   float wa = W(a), wb = W(b), wc = W(c), wd = W(d);

@@ -832,6 +832,8 @@ function restoreCommon(L, cp) {
       const pan = { ap: true, compass: true, objectives: true, en: i >= 2, weapons: i >= 3, radar: i >= 3, lock: i >= 3, rack: i >= 3 && (ctx.haul?.rack?.length ?? 0) > 0 };
       L.setPanels(pan);
     }
+    // AP, the compass and the objectives are never hidden once the frame is awake (a snapshot can't turn them off)
+    L.setPanels({ ap: true, compass: true, objectives: true });
     if ((ctx.haul?.rack?.length ?? 0) > 0) L.setPanels({ rack: true });
     // vitals: Juno's heart until the drowning (cp_floes sets locked itself)
     if (i < 6) ctx.hud?.vitals?.({ mode: 'live', ...(i === 1 ? { spike: 96, decay: 40 } : {}) });

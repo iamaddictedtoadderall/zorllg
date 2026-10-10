@@ -69,10 +69,11 @@ export function install(ctx) {
       float r = length(vP);
       if (r > 1.0) discard;
       // a soft leading band (heat and dust pushed outward) that widens as it slows, and a faint haze inside it
-      float w = mix(0.09, 0.26, uK);
-      float band = exp(-pow((r - (1.0 - w)) / w, 2.0)) * (0.75 + 0.25 * sin(atan(vP.y, vP.x) * 7.0 + r * 9.0));
-      float trail = smoothstep(0.1, 1.0 - w, r) * (1.0 - smoothstep(1.0 - w, 1.0, r)) * 0.12;
-      float a = (band + trail) * uO * (1.0 - cFogAmount(vW) * 0.8);
+      // the band sits well inside the quad's rim, so it fades to nothing before the disc's edge (no hard outline)
+      float w = mix(0.05, 0.12, uK), c0 = 1.0 - 2.4 * w;
+      float band = exp(-pow((r - c0) / w, 2.0)) * (0.7 + 0.3 * sin(atan(vP.y, vP.x) * 7.0 + r * 9.0));
+      float trail = smoothstep(0.25, c0, r) * (1.0 - smoothstep(c0, c0 + w, r)) * 0.06;
+      float a = (band + trail) * uO * (1.0 - smoothstep(0.9, 1.0, r)) * (1.0 - cFogAmount(vW) * 0.8);
       gl_FragColor = vec4(uCol * a, 1.0);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
@@ -147,15 +148,22 @@ export function install(ctx) {
     for (let i = 0; i < n; i++) {
       const s = R(0.85, 1.15);
       sm.spawn(pos.x + R(-spread, spread), pos.y + R(0, 1.5), pos.z + R(-spread, spread), R(-6, 6), R(1, 5), R(-6, 6),
-               R(1.2, 2.4), R(2, 4), R(6, 11), cr * s, cg * s, cb * s, 0.55, 1.5, -0.5, Math.random() < 0.5 ? 5 : 1);
+               R(1.2, 2.4), R(2.3, 4.5), R(7, 12.5), cr * s, cg * s, cb * s, 0.45, 1.5, -0.5, Math.random() < 0.65 ? 5 : 1);
     }
   }
+  /** a rising, widening smoke column: lobed billows of mixed size and speed (never one round blob), the lower ones
+   *  denser and darker, the high ones thinner, drifting with the wind */
   function smokePuff(pos, scale, n, dark = 0.12) {
     const sm = P()?.smoke; if (!sm) return;
+    const sq = Math.sqrt(scale), wx = windX(), wz = windZ();
     for (let i = 0; i < n; i++) {
-      const g = dark * R(0.85, 1.25);
-      sm.spawn(pos.x + R(-2, 2) * scale, pos.y + R(-0.5, 2) * scale, pos.z + R(-2, 2) * scale, R(-4, 4) * scale, R(3, 8) * Math.sqrt(scale),
-               R(-4, 4) * scale, R(2, 4), R(3, 5) * scale, R(10, 16) * scale, g, g * 0.94, g * 0.9, 0.86, 1.2, -1.2, Math.random() < 0.5 ? 1 : 2);
+      const t = n > 1 ? i / (n - 1) : 0.5;                  // 0 = low, slow and dense … 1 = high, fast and thin
+      const g = dark * R(0.85, 1.3) * (1 + 0.35 * t);
+      const big = R(0.75, 1.25);
+      sm.spawn(pos.x + R(-1.8, 1.8) * scale, pos.y + (R(-0.3, 1.2) + t * 2.2) * scale, pos.z + R(-1.8, 1.8) * scale,
+               R(-3.5, 3.5) * scale + wx, (2 + 9 * t * R(0.7, 1.2)) * sq, R(-3.5, 3.5) * scale + wz,
+               R(2.6, 4.6), R(2.5, 4.5) * scale * big, R(9, 15) * scale * big, g, g * 0.95, g * 0.9,
+               R(0.62, 0.82) * (1 - 0.25 * t), 1.1, -1.2, Math.random() < 0.5 ? 1 : 2);
     }
   }
   function explosion(pos, scale = 1, o = {}) {
@@ -182,17 +190,18 @@ export function install(ctx) {
     if (sm) {
       // lit smoke: dark billows rising and growing; a second, higher puff for big blasts. Spawned before the fire
       // billows so the opaque fire draws over the smoke it turns into (the alpha pool draws in spawn order)
-      smokePuff(pos, s, Math.max(3, Math.round(12 * s * k)), 0.065);
-      if (s >= 2) later(1.0, (p, a) => smokePuff(_v2.set(p.x, p.y + 6 * a, p.z), a, Math.max(2, Math.round(6 * a * tierK())), 0.055), pos, s);
+      smokePuff(pos, s, Math.max(4, Math.round(12 * s * k)), 0.08);
+      if (s >= 2) later(1.0, (p, a) => smokePuff(_v2.set(p.x, p.y + 6 * a, p.z), a, Math.max(2, Math.round(6 * a * tierK())), 0.07), pos, s);
       // dust ring: palette dust billows rushing outward low to the ground (not on Low)
       if (ctx.tier.name !== 'low') {
         const gy = groundAt(pos.x, pos.z);
         if (pos.y - gy < 6 * s) {
-          const nd = Math.round(16 * k);
+          // big, thin, overlapping billows so the ring reads as one rolling wall of dust, not a row of dust balls
+          const nd = Math.round(20 * k);
           for (let i = 0; i < nd; i++) {
-            const a = (i / Math.max(1, nd)) * TAU + R(-0.2, 0.2);
-            sm.spawn(pos.x + Math.cos(a) * s, gy + 0.8 * s, pos.z + Math.sin(a) * s, Math.cos(a) * 25 * s, R(0.5, 2), Math.sin(a) * 25 * s,
-                     R(1.2, 2.2), 2 * s, 7 * s, dustCol.r, dustCol.g, dustCol.b, 0.55, 3, -0.3, 5);
+            const a = (i / Math.max(1, nd)) * TAU + R(-0.2, 0.2), sp = 25 * s * R(0.75, 1.15);
+            sm.spawn(pos.x + Math.cos(a) * s, gy + 0.8 * s, pos.z + Math.sin(a) * s, Math.cos(a) * sp, R(0.5, 2), Math.sin(a) * sp,
+                     R(1.3, 2.4), 2.6 * s, 9.5 * s, dustCol.r, dustCol.g, dustCol.b, 0.4, 3, -0.3, Math.random() < 0.6 ? 5 : 1);
           }
         }
       }
@@ -400,7 +409,7 @@ export function install(ctx) {
       for (let i = 0; i < n; i++) {
         const a = (i / Math.max(1, n)) * TAU + R(-0.2, 0.2), sp = R(10, 18) * Math.sqrt(s);
         sm.spawn(pos.x + Math.cos(a) * 2.5, pos.y + 0.4, pos.z + Math.sin(a) * 2.5, Math.cos(a) * sp, R(0.5, 2.5), Math.sin(a) * sp,
-                 R(0.9, 1.8), 1.5 * s, R(4, 7) * s, dustCol.r, dustCol.g, dustCol.b, 0.6, 3, -0.2, 5);
+                 R(0.9, 1.8), 1.7 * s, R(4.5, 8) * s, dustCol.r, dustCol.g, dustCol.b, 0.48, 3, -0.2, 5);
       }
     }
     shockwave(pos, 4 * s, '#d8c8b0', 0.3);
@@ -556,23 +565,28 @@ export function install(ctx) {
     h.resolved = true;
     return true;
   }
+  /** a random point near an ambient's centre at height y0..y1 above the ground (shared temp: no per-frame closure) */
+  function pickNear(h, y0, y1) {
+    const p = h.pos, rad = h.radius;
+    _v.set(p.x + R(-1, 1) * rad, 0, p.z + R(-1, 1) * rad);
+    return _v.setY(groundAt(_v.x, _v.z) + R(y0, y1));
+  }
   function runAmbient(h, dt) {
     if (!(h.intensity > 0) || !resolveAt(h)) return;
     const ps = P(); if (!ps) return;
     h.t += dt; h.timer -= dt * h.intensity;
     const add = ps.add, p = h.pos, rad = h.radius;
-    const pick = (y0, y1) => _v.set(p.x + R(-1, 1) * rad, 0, p.z + R(-1, 1) * rad).setY(groundAt(_v.x, _v.z) + R(y0, y1));
     switch (h.kind) {
       case 'battle': {
         if (h.timer <= 0) {
           h.timer = R(0.25, 1.4);
-          const q = pick(0, 6);
+          const q = pickNear(h, 0, 6);
           add.spawn(q.x, q.y + 4, q.z, 0, 0, 0, R(0.25, 0.6), R(14, 30), R(30, 50), h.col.r * 2.4, h.col.g * 2, h.col.b * 1.5, 1, 0, 0, 7);
           add.spawn(q.x, q.y + 4, q.z, 0, 5, 0, R(1.0, 1.8), R(14, 24), R(26, 40), 1.3, 0.5, 0.15, 0.8, 0.5, 0, 3);
           if (Math.random() < 0.25) ctx.audio?.play?.('boom', q, { range: 6000, vol: 0.35 });
         }
         if (Math.random() < dt * 6 * h.intensity) {   // tracer arcs
-          const q = pick(2, 20), a = Math.random() * TAU, sp = R(250, 400);
+          const q = pickNear(h, 2, 20), a = Math.random() * TAU, sp = R(250, 400);
           add.spawn(q.x, q.y, q.z, Math.cos(a) * sp, R(10, 60), Math.sin(a) * sp, R(0.4, 0.9), 5, 5, 2.6, 1.2, 0.45, 1, 0, 30, 1);
         }
         break;
@@ -580,7 +594,7 @@ export function install(ctx) {
       case 'flak': {
         if (h.timer <= 0) {
           h.timer = R(0.15, 0.7);
-          const q = pick(120, 380);
+          const q = pickNear(h, 120, 380);
           add.spawn(q.x, q.y, q.z, 0, 0, 0, 0.18, R(6, 10), R(14, 20), 3, 2.4, 1.6, 1, 0, 0, 2);
           ps.smoke.spawn(q.x, q.y, q.z, 0, 0.5, 0, R(3, 6), 6, 14, 0.08, 0.08, 0.08, 0.7, 0.2, 0, 1);
         }
@@ -590,7 +604,7 @@ export function install(ctx) {
         if (h.timer <= 0) {
           h.timer = R(4, 12);
           ctx.atmosphere?.lightning?.(R(0.6, 1.2));
-          const q = pick(0, 0);
+          const q = pickNear(h, 0, 0);
           later(R(0.6, 2.4), (pp) => ctx.audio?.play?.('thunder', pp, { range: 9000, vol: 0.8 }), q);
         }
         break;
@@ -599,11 +613,11 @@ export function install(ctx) {
         if (!h.lights) {
           h.lights = [];
           for (let i = 0; i < 3; i++) {
-            const m = beamConeMaterial(h.col, 0.14);
+            const m = beamConeMaterial(h.col, 0.11);
             const geo = new THREE.ConeGeometry(30, 900, 20, 1, true); geo.translate(0, -450, 0); geo.rotateX(Math.PI);
             const mesh = new THREE.Mesh(geo, m);
             mesh.userData.noAO = true; mesh.frustumCulled = false; mesh.renderOrder = 6;
-            const q = pick(0, 2);
+            const q = pickNear(h, 0, 2);
             mesh.position.set(q.x, q.y, q.z);
             ctx.levelRoot.add(mesh);
             h.lights.push({ mesh, ph: Math.random() * TAU, sp: R(0.15, 0.35) });
@@ -617,7 +631,7 @@ export function install(ctx) {
       }
       case 'fires': {
         if (Math.random() < dt * 8 * h.intensity) {
-          const q = pick(0, 1);
+          const q = pickNear(h, 0, 1);
           add.spawn(q.x, q.y + 2, q.z, 0, R(2, 5), 0, R(0.6, 1.2), R(4, 8), R(1, 3), 3.5, 1.6, 0.5, 1, 0.5, -2, 3);
           ps.smoke.spawn(q.x, q.y + 6, q.z, windX(), R(4, 7), windZ(), R(5, 9), 5, 18, 0.09, 0.085, 0.08, 0.55, 0.1, -0.3, 1);
         }
@@ -641,8 +655,8 @@ export function install(ctx) {
         uniform vec3 uCol; varying vec3 vW; varying vec3 vN; varying float vT;
         void main() {
           vec3 v = normalize(cameraPosition - vW);
-          float edge = pow(abs(dot(normalize(vN), v)), 1.6);
-          float along = pow(vT, 2.2) * 0.9 + 0.1 * vT;   // uv.y is 1 at the lamp (the cone's tip)
+          float edge = pow(abs(dot(normalize(vN), v)), 2.6);                    // soft, hazy edges
+          float along = (pow(vT, 2.2) * 0.9 + 0.1 * vT) * smoothstep(0.0, 0.3, vT);   // uv.y is 1 at the lamp; the far end dissolves
           float a = edge * along * (1.0 - cFogAmount(vW) * 0.8);
           gl_FragColor = vec4(uCol * a, 1.0);
           #include <tonemapping_fragment>
@@ -669,7 +683,7 @@ export function install(ctx) {
         const k = r.t / r.dur;
         if (k >= 1) { r.alive = false; r.mesh.visible = false; continue; }
         const e = 1 - (1 - k) * (1 - k) * (1 - k);
-        r.mesh.scale.setScalar(Math.max(0.01, r.r * e));
+        r.mesh.scale.setScalar(Math.max(0.01, r.r * e * 1.2));   // the band rides at ≈ 0.75–0.9 of the quad
         r.mesh.material.uniforms.uK.value = k;
         r.mesh.material.uniforms.uO.value = (1 - k) * (1 - k);
       }

@@ -320,47 +320,100 @@ export function genSparkAtlas(cw, seed = 71) {
   return { data, w, h };
 }
 
+/**
+ * Cauliflower lobes for a billow cell: a big central lobe and a ring of smaller ones, all inside the sprite's unit
+ * circle (sprite coordinates s ∈ [−1, 1]). Each billow is the union of these soft hemispheres, so it has distinct
+ * rounded lobes that each catch the light on their sunny side — smoke that reads as volume, not as a hairy ball.
+ */
+function billowLobes(seed, n, main, ring, rMin, rMax, squash = 1) {
+  const r = mulberry32(seed), L = [{ x: (r() - 0.5) * 0.08, y: -0.04 + (r() - 0.5) * 0.06, r: main }];
+  const a0 = r() * Math.PI * 2;
+  for (let i = 0; i < n; i++) {
+    const a = a0 + (i / n) * Math.PI * 2 + (r() - 0.5) * 0.8;
+    const rad = rMin + (rMax - rMin) * r();
+    const d = Math.min(ring * (0.6 + 0.55 * r()), 0.94 - rad);
+    L.push({ x: Math.cos(a) * d, y: Math.sin(a) * d * squash, r: rad });
+  }
+  // a few small knobs riding on the upper half: the billowing top of a puff
+  for (let i = 0; i < 3; i++) {
+    const a = Math.PI * (0.2 + 0.6 * r()), d = 0.2 + 0.35 * r(), rad = rMin * (0.6 + 0.4 * r());
+    L.push({ x: Math.cos(a) * d, y: Math.sin(a) * d * squash, r: Math.min(rad, 0.94 - d) });
+  }
+  return L;
+}
+/**
+ * Soft union of hemispheres (log-sum-exp, so the creases between lobes are rounded): out.f is 0 at the rim … 1 at a
+ * lobe's centre, out.h the height in sprite units (its gradient gives the lit-billow normal).
+ */
+function lobeEval(L, sx, sy, out) {
+  let sf = 0, sh = 0, any = false;
+  const KF = 9, KH = 14;
+  for (let i = 0; i < L.length; i++) {
+    const o = L[i], dx = sx - o.x, dy = sy - o.y, q = 1 - (dx * dx + dy * dy) / (o.r * o.r);
+    if (q <= -0.6) continue;
+    const qq = Math.max(q, 0);
+    const fi = q > 0 ? 1 - Math.sqrt(1 - q) : q * 0.5;   // 1 − d/r inside, a short negative tail outside
+    sf += Math.exp(KF * fi);
+    sh += Math.exp(KH * o.r * Math.sqrt(qq));
+    any = true;
+  }
+  out.f = any ? Math.log(sf) / KF : -1;
+  out.h = any ? Math.max(0, Math.log(sh) / KH) : 0;
+  return out;
+}
+
 /** alpha atlas, 4 × 2 cells: RG sprite-space normal (0..1), B detail, A density */
 export function genSmokeAtlas(cw, seed = 81) {
   const w = cw * 4, h = cw * 2, data = new Uint8Array(w * h * 4);
-  const nA = fbmTile(seed, 3, 3, 5, 0.55), nB = fbmTile(seed + 50, 3, 3, 5, 0.55), nC = fbmTile(seed + 90, 6, 6, 3, 0.5);
+  // coarse noise only (no octave finer than ~1/16 of the sprite): edges stay soft and rounded, never hairy
+  const nA = fbmTile(seed, 3, 3, 3, 0.5), nB = fbmTile(seed + 50, 4, 4, 3, 0.5), nC = fbmTile(seed + 90, 8, 8, 2, 0.5);
+  const lobes = {
+    1: billowLobes(seed + 1, 7, 0.56, 0.4, 0.28, 0.42),
+    2: billowLobes(seed + 2, 9, 0.5, 0.42, 0.24, 0.38),
+    5: billowLobes(seed + 5, 10, 0.46, 0.44, 0.22, 0.36, 0.8),
+    7: billowLobes(seed + 7, 8, 0.54, 0.4, 0.26, 0.4),
+  };
+  const LE = { f: 0, h: 0 };
   const hgt = new Float32Array(cw * cw), den = new Float32Array(cw * cw), det = new Float32Array(cw * cw);
   for (let cell = 0; cell < 8; cell++) {
     const ox = (cell % 4) * cw, oy = Math.floor(cell / 4) * cw;
     for (let y = 0; y < cw; y++) for (let x = 0; x < cw; x++) {
       const u = (x + 0.5) / cw - 0.5, v = (y + 0.5) / cw - 0.5, r = Math.sqrt(u * u + v * v) * 2;
+      const sx = u * 2, sy = v * 2;
       const k = y * cw + x;
       let D = 0, H = 0, B = 0.5;
       const s = cell * 0.37;
       switch (cell) {
         case 0: D = sstep(1, 0, r) ** 1.5; H = Math.sqrt(Math.max(0, 1 - r * r)); break;
-        case 1: case 2: {
-          const n = (cell === 1 ? nA : nB)((u + 0.5) * 0.5 + s, (v + 0.5) * 0.5 + s * 1.7);
-          const n2 = nC((u + 0.5) + s, (v + 0.5) + s);
-          const rr = r + (n - 0.5) * 0.9 + (n2 - 0.5) * 0.25;
-          D = sstep(1.0, 0.45, rr) * (0.75 + 0.25 * n2);
-          H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.6 + 0.6 * n);
-          B = n2; break;
+        case 1: case 2: case 5: case 7: {
+          // lobed billow: soft rounded lobes; a gentle, coarse warp breaks the circles without fraying the rim
+          const n = (cell === 2 ? nB : nA)((u + 0.5) * 0.5 + s, (v + 0.5) * 0.5 + s * 1.7);
+          const n2 = nC((u + 0.5) * 0.5 + s * 0.5, (v + 0.5) * 0.5 + s);
+          const wk = cell === 5 ? 0.34 : 0.16;   // dust is wispier: a stronger warp frays its outline into drifts
+          const wx = sx + (n - 0.5) * wk, wy = sy + (n2 - 0.5) * wk;
+          lobeEval(lobes[cell], wx, wy, LE);
+          const f = LE.f + (n - 0.5) * 0.12;
+          const fade = sstep(1.0, 0.86, r);
+          if (cell === 5) {          // dust clump: softer, thinner, a little patchy inside
+            D = sstep(-0.04, 0.95, f) * (0.62 + 0.3 * n2) * fade;   // a soft, thin core: never a cotton ball
+            H = LE.h * 0.8; B = 0.4 + 0.3 * n2;
+          } else if (cell === 7) {   // fire billow: B = heat (hot lobe cores, cool rim)
+            D = sstep(0.0, 0.32, f) * fade;
+            H = LE.h;
+            B = clamp01((0.18 + 0.95 * sstep(0.0, 0.85, LE.f)) * (0.62 + 0.5 * n2));
+          } else {
+            D = sstep(0.0, 0.42, f) * (0.86 + 0.14 * n2) * fade;
+            H = LE.h; B = 0.5 + (n2 - 0.5) * 0.7;
+          }
+          break;
         }
         case 3: {   // wisp: stretched, thin
           const n = nA((u + 0.5) * 0.4 + 0.7, (v + 0.5) * 1.2 + 0.2);
-          const rr = Math.sqrt(u * u * 4 + v * v * 0.9) * 2 + (n - 0.5) * 0.8;
-          D = sstep(1, 0.3, rr) * 0.8; H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))); B = n; break;
+          const rr = Math.sqrt(u * u * 4 + v * v * 0.9) * 2 + (n - 0.5) * 0.6;
+          D = sstep(1, 0.3, rr) * 0.8; H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * 0.6; B = n; break;
         }
         case 4: { const d = (r - 0.75) / 0.12; D = Math.exp(-d * d) * sstep(1, 0.92, r); H = 0.5; break; }
-        case 5: {   // dust clump: a soft, lumpy puff with a little grain inside (reads as dust, not sponge)
-          const n = nC((u + 0.5) * 0.9 + 0.3, (v + 0.5) * 0.9 + 0.9), n2 = nB((u + 0.5) * 0.6 + 0.2, (v + 0.5) * 0.6 + 0.6);
-          const rr = r + (n2 - 0.5) * 0.75;
-          D = sstep(1, 0.3, rr) ** 1.3 * (0.8 + 0.2 * n); H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.7 + 0.5 * n2); B = 0.35 + 0.3 * n; break;
-        }
         case 6: { const a = Math.atan2(v, u), rr = r * (1 + 0.35 * Math.sin(a * 3 + 1) + 0.2 * Math.sin(a * 5)); D = sstep(0.75, 0.6, rr); H = 1 - rr; B = 0.3; break; }   // chip
-        case 7: {   // fire billow: a lumpy, cauliflower puff; B = heat structure (hot lobes inside, cool ragged rim)
-          const n = nB((u + 0.5) * 0.7 + 0.61, (v + 0.5) * 0.7 + 0.23), n2 = nC((u + 0.5) * 1.3 + 0.17, (v + 0.5) * 1.3 + 0.71);
-          const rr = r + (n - 0.5) * 0.95 + (n2 - 0.5) * 0.3;
-          D = sstep(1.0, 0.5, rr);
-          H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.6 + 0.6 * n);
-          B = clamp01(sstep(1.05, 0.1, rr) * (0.45 + 0.75 * n2)); break;
-        }
       }
       den[k] = clamp01(D); hgt[k] = H; det[k] = B;
     }
@@ -368,7 +421,9 @@ export function genSmokeAtlas(cw, seed = 81) {
       const k = y * cw + x;
       const hx = hgt[y * cw + Math.min(cw - 1, x + 1)] - hgt[y * cw + Math.max(0, x - 1)];
       const hy = hgt[Math.min(cw - 1, y + 1) * cw + x] - hgt[Math.max(0, y - 1) * cw + x];
-      let nx = -hx * cw * 0.12, ny = -hy * cw * 0.12;
+      // slope-true normals (H is in sprite units: 2 px of central difference span 4 / cw of s), so a lobe's rim
+      // faces sideways and its top faces the viewer
+      let nx = -hx * cw * 0.22, ny = -hy * cw * 0.22;
       const l = Math.sqrt(nx * nx + ny * ny + 1); nx /= l; ny /= l;
       const i = ((oy + y) * w + ox + x) * 4;
       data[i] = clamp01(nx * 0.5 + 0.5) * 255; data[i + 1] = clamp01(ny * 0.5 + 0.5) * 255;

@@ -73,10 +73,16 @@ varying vec3 vDir;
 // the aurora frame (x right, y forward), h = its height. The footprint is written in polar form, r(θ) = D(1 + m(θ))/cos θ,
 // so every view azimuth θ hits it exactly once (no iteration, no seams), and a ray pattern that depends on θ alone is a
 // set of vertical lines on the sheet, which is what aurora rays are.
-vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth) {
+// span: the curtain's own arc of azimuth (radians either side of the heading). Each curtain ends somewhere else, and
+// each end fades over ≈ 30° with a long squared tail: against a near-black sky the eye sees anything above a few
+// percent, so a plain linear fade (or ends that line up) reads as a hard vertical cut.
+vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth, vec2 span) {
   float lh = length(dh);
   if (dh.y <= 0.0 || lh < 1e-4) return vec3(0.0);
   float th = atan(dh.x, dh.y);
+  float ends = smoothstep(span.x, span.x + 0.52, th) * smoothstep(span.y, span.y - 0.52, th);
+  ends *= ends;
+  if (ends <= 0.0) return vec3(0.0);
   float p1 = th * 3.1 + ph + t * 0.021, p2 = th * 8.7 + ph * 2.3 - t * 0.034;
   float m = 0.2 * sin(p1) + 0.07 * sin(p2) + 0.07 * (cNoise(vec2(th * 6.0 + ph * 5.0, t * 0.012)) - 0.5);
   float dm = 0.62 * cos(p1) + 0.61 * cos(p2);
@@ -93,10 +99,10 @@ vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth) {
   float rays = 0.12 + 0.88 * r1 * r1 * r1 + 0.4 * r2 * r2 * r2 * smoothstep(2.4, 1.0, abs(u));
   // patches that brighten and fade along the curtain, and its ends
   float seg = 0.1 + 0.9 * smoothstep(0.3, 0.8, cNoise(vec2(u * 0.9 + ph * 3.0, t * 0.025)));
-  float ends = smoothstep(3.6, 1.2, abs(u));   // fade gently toward the ends: a fold seen far off-axis never reads as a cut
-  // emission integrates through the sheet: brighter where it is seen edge-on (the folds)
+  // emission integrates through the sheet: brighter where it is seen edge-on (the folds); the boost never outlives
+  // the curtain's end fade
   float g = dm / (1.0 + m) + u;
-  float graze = pow(min(sqrt(1.0 + g * g), 5.0), 0.6);
+  float graze = 1.0 + (pow(min(sqrt(1.0 + g * g), 5.0), 0.6) - 1.0) * ends;
   vec3 col = mix(uAurA, uAurB * 0.85, smoothstep(0.3, 1.05, z)) + uAurA * 0.45 * exp(-zp * 22.0);
   return col * prof * rays * seg * ends * graze * 0.42;
 }
@@ -125,9 +131,9 @@ void main() {
     vec2 dh = vec2(dot(d.xz, rgt), dot(d.xz, uAurF));
     float t = uSkyTime * uAurSpeed;
     float D = 1.0 / tan(radians(clamp(uAurH - 12.0, 6.0, 80.0)));   // the main curtain's base sits 12° below the band centre
-    vec3 acc = cAurCurtain(dh, h, D, 0.0, t, 1.3);
-    if (uAurBands > 1.5) acc += cAurCurtain(dh, h, D * 1.75, 2.1, t, 1.1) * 0.7;
-    if (uAurBands > 2.5) acc += cAurCurtain(dh, h, D * 2.7, 4.7, t, 0.9) * 0.5;
+    vec3 acc = cAurCurtain(dh, h, D, 0.0, t, 1.3, vec2(-1.28, 1.2));
+    if (uAurBands > 1.5) acc += cAurCurtain(dh, h, D * 1.75, 2.1, t, 1.1, vec2(-0.95, 1.32)) * 0.7;
+    if (uAurBands > 2.5) acc += cAurCurtain(dh, h, D * 2.7, 4.7, t, 0.9, vec2(-1.33, 0.85)) * 0.5;
     c += acc * uAur * smoothstep(0.0, 0.1, h) * (1.0 - cl * 0.7);
   }
   // 5. stars (hashed cells, twinkling) and a faint galactic band; hidden by bright sky, cloud and the dawn rim
@@ -344,9 +350,13 @@ export function install(ctx) {
   const envGround = new THREE.Mesh(new THREE.CircleGeometry(60, 32), groundMat);
   envGround.rotation.x = -Math.PI / 2; envGround.position.y = -4;
   envScene.add(envSky, envGround);
-  let pmrem = null, envRT = null, cubeRT = null, cubeCam = null;
+  let pmrem = null, envRT = null, cubeRT = null, cubeCam = null, envDirty = false, installing = true;
 
   function buildEnv() {
+    // during install the cube render, the prefilter and their shader compiles wait for the first tick or render,
+    // so the page finishes loading sooner (every later apply builds the environment right away)
+    if (installing) { envDirty = true; return; }
+    envDirty = false;
     try {
       if (!pmrem) pmrem = new THREE.PMREMGenerator(renderer);
       // ground bounce: the palette ground lit by sun and sky, hazed toward the fog
@@ -790,11 +800,13 @@ export function install(ctx) {
     /** extra (pipeline): per-render placement for whichever camera renders the main scene */
     prepare(cam) {
       cam = cam || ctx.camera;
+      if (envDirty) { envDirty = false; buildEnv(); }
       followShadow(focusPoint(cam));
       placeSkyline(cam);
     },
     update(dt = 0) {
       skyU.uSkyTime.value = ctx.clock.realTime;
+      if (envDirty) { envDirty = false; buildEnv(); }
       if (blend) {
         blend.t += dt;
         const k = blend.dur > 0 ? Math.min(1, blend.t / blend.dur) : 1;
@@ -827,5 +839,6 @@ export function install(ctx) {
   ctx.addSystem({ name: 'atmosphere', phase: 'fx', when: 'always', update: (dt) => api.update(dt) });
   ctx.atmosphere = api;
   api.apply({});
+  installing = false;
   return api;
 }

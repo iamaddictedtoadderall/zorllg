@@ -452,7 +452,8 @@ export default async function (g) {
   if (on('skyline')) {
   // skyline objects (arch §5.8): every built-in kind on the horizon ahead of an 80 m vista, under the level's art
   const sk = await g.eval(() => {
-    const a = window.__p1.route(260, 0, 80), b = window.__p1.route(1500, 0, 20);
+    // high above the canyon (its walls hide the horizon from the 80 m vista), so the skyline row is in view
+    const a = window.__p1.route(260, 0, 420), b = window.__p1.route(1500, 0, 20);
     const az = (Math.atan2(b[0] - a[0], -(b[2] - a[2])) * 180 / Math.PI + 360) % 360;
     return { a, az };
   });
@@ -478,6 +479,27 @@ export default async function (g) {
     await shot(`night-aurora-${tier}`, { hud: false, settle: false });
     await lookDir([P0[0], P0[1] + 320, P0[2]], 92, 2, 400, 70);
     await shot(`night-rim-${tier}`, { hud: false, settle: false });
+    // the aurora's curtains end softly wherever they leave the frame: no hard vertical cut in the sky. Compare the
+    // mean luminance of neighbouring 8 px column strips over the upper sky (stars average out over 200 rows).
+    const cut = await g.eval(() => {
+      const c = window.__game.ctx, cv = c.canvas;
+      window.__game.render();
+      const W = cv.clientWidth, sx = cv.width / W, sy = cv.height / cv.clientHeight;
+      const t = document.createElement('canvas'); t.width = Math.round(W * sx); t.height = Math.round(200 * sy);
+      const g2 = t.getContext('2d'); g2.drawImage(cv, 0, 20 * sy, t.width, t.height, 0, 0, t.width, t.height);
+      const d = g2.getImageData(0, 0, t.width, t.height).data, cols = [];
+      const strip = Math.max(1, Math.round(8 * sx));
+      for (let x0 = 0; x0 + strip <= t.width; x0 += strip) {
+        let s = 0, n = 0;
+        for (let y = 0; y < t.height; y += 2) for (let x = x0; x < x0 + strip; x++) { const i = (y * t.width + x) * 4; s += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; n++; }
+        cols.push(s / n);
+      }
+      let worst = 0, at = 0, peak = 0;
+      for (let i = 1; i < cols.length; i++) { const j = Math.abs(cols[i] - cols[i - 1]); if (j > worst) { worst = j; at = i * 8; } peak = Math.max(peak, cols[i]); }
+      return { worst, at, peak };
+    });
+    g.log(`night rim ${tier}: aurora column step`, JSON.stringify(cut));
+    g.assert(cut.worst < 0.03, `${tier}: the aurora fades out at its ends, no hard vertical cut (largest step between 8 px column strips ${cut.worst.toFixed(3)} at x ${cut.at}, peak ${cut.peak.toFixed(3)})`);
   }
   // ghost glow at 1 km: ≥ 4 px
   async function ghostGlow(tier) {

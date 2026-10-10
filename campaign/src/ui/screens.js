@@ -40,7 +40,10 @@ const SCREEN_CSS = `
   #screen .doc .actions .btn{padding-block:9px}
   #screen .pause-wrap .doc .actions{margin:16px 0 0;padding:0;grid-template-columns:1fr 1fr}
   #screen .pause-wrap .doc .actions .btn{font-size:14px;padding-inline:12px}
-  .pause-wrap .doc h2{font-size:34px}
+  .pause-wrap .doc h2{display:none}
+  .pause-wrap .doc .hdr{font-size:12px;color:var(--hud);letter-spacing:.2em;padding-bottom:8px}
+  .pause-wrap .doc .hdr span:last-child{color:var(--hud-dim);letter-spacing:.06em}
+  .pause-wrap .doc h3{margin-top:12px}
   .debrief-top{flex-wrap:nowrap}
   .rank{width:62px;height:62px;font-size:38px;flex:none}
 }
@@ -175,12 +178,43 @@ const SCREEN_CSS = `
   .ledger td:first-child{font-size:13px;white-space:nowrap}
   .debrief-top h2{font-size:clamp(28px,5vw,40px)}
 }
+#bNotes .cnt{display:inline-block;min-width:18px;margin-left:10px;padding:1px 5px 0;font:600 11px/1.4 var(--f-mono);letter-spacing:0;text-align:center;vertical-align:2px;color:var(--ink);background:var(--accent)}
+#bNotes .cnt:empty{display:none}
+.pause-log i.tg{font-style:italic;font-family:var(--f-display);font-size:12px;color:var(--hud-dim);margin-right:8px}
+#screen .doc.notes-doc{width:min(760px,calc(100% - 32px));margin-inline:auto;display:flex;flex-direction:column;max-height:calc(100% - 32px)}
+.notes-doc .notes-list{list-style:none;margin:16px 0 0;padding:0 6px 0 0;overflow-y:auto;min-height:0;flex:1 1 auto;scrollbar-width:thin;scrollbar-color:var(--hud-faint) transparent;counter-reset:none}
+.notes-list li{display:grid;grid-template-columns:30px 1fr;gap:3px 12px;padding:11px 0 12px;border-bottom:1px solid var(--hud-faint)}
+.notes-list li:first-child{border-top:1px solid var(--hud-faint)}
+.notes-list .n{font:500 11px/22px var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.notes-list .tt{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.notes-list .tt b{font:700 19px/1.1 var(--f-display);letter-spacing:.12em;text-transform:uppercase;color:var(--hud)}
+.notes-list .tt kbd{font:600 11px/1 var(--f-mono);letter-spacing:.06em;padding:3px 6px 2px;border:1px solid var(--accent);color:var(--accent);text-transform:uppercase;white-space:nowrap}
+.notes-list p{grid-column:2;margin:0;font:400 16px/1.42 var(--f-display);letter-spacing:.02em;color:rgba(233,227,211,.86);text-wrap:pretty;max-width:62ch}
+.notes-empty{margin-top:18px;font:400 15px/1.5 var(--f-mono);color:var(--hud-dim);max-width:52ch}
+#screen .doc.notes-doc .actions{position:static;margin:18px 0 0;padding:0;background:none}
+#bNotes{white-space:nowrap}
+.notes-doc .notes-list.more{-webkit-mask-image:linear-gradient(#000 calc(100% - 26px),transparent);mask-image:linear-gradient(#000 calc(100% - 26px),transparent)}
+@media (max-height:520px){
+  #bNotes .cnt{display:none}
+  #screen:has(.notes-doc){padding-block:8px}
+  #screen .doc.notes-doc{max-height:100%;padding-top:12px;padding-bottom:14px}
+  .notes-doc .hdr{padding-bottom:6px}
+  .notes-doc h2{font-size:26px;margin-top:8px}
+  .notes-doc .sub{display:none}
+  .notes-doc .notes-list{margin-top:8px}
+  .notes-list li{padding:7px 0 8px;grid-template-columns:26px 1fr}
+  .notes-list .tt b{font-size:16px}
+  .notes-list p{font-size:14px;line-height:1.35}
+  #screen .doc.notes-doc .actions{margin-top:10px}
+  #screen .doc.notes-doc .actions .btn{padding:7px 20px;font-size:14px}
+}
 `;
 
 export function install(ctx) {
   injectCSS('screens', SCREEN_CSS);
   const root = document.getElementById('screen');
   let pending = null, escValue = undefined, typer = 0, typing = null;
+  let subBack = null;   // a sub-page's Back (Esc), e.g. the pause menu's Field notes
   const timers = new Set();
   const later = (fn, ms) => { const id = setTimeout(() => { timers.delete(id); fn(); }, ms); timers.add(id); return id; };
 
@@ -189,7 +223,7 @@ export function install(ctx) {
   function open(name, html, cls = '', escV = undefined) {
     close(null);
     seq++;
-    api.current = name;
+    api.current = name; api.page = null;
     game?.classList.add('menu-up');
     root.className = cls;
     root.innerHTML = html;
@@ -199,7 +233,7 @@ export function install(ctx) {
     return new Promise(res => { pending = res; });
   }
   function close(value) {
-    clearTimeout(typer); typing = null;
+    clearTimeout(typer); typing = null; subBack = null;
     for (const id of timers) clearTimeout(id);
     timers.clear();
     const p = pending; pending = null;
@@ -256,6 +290,7 @@ export function install(ctx) {
     if (!pending || root.hidden) return;
     if (e.repeat && (e.code === 'Escape' || e.code === 'KeyP')) return;   // a held Esc must not toggle pause on and off
     if (typing && (e.code === 'Enter' || e.code === 'Space' || e.code === 'NumpadEnter')) { e.preventDefault(); typing(); return; }
+    if (e.code === 'Escape' && subBack) { e.preventDefault(); subBack(); return; }
     if (e.code === 'Escape' && escValue !== undefined) { e.preventDefault(); done(escValue); return; }
     if (e.code === 'KeyP' && api.current === 'pause') { e.preventDefault(); done('resume'); return; }
     if ((e.code === 'Enter' || e.code === 'NumpadEnter') && (!document.activeElement || document.activeElement === document.body || !root.contains(document.activeElement))) {
@@ -382,6 +417,27 @@ export function install(ctx) {
     }
   }
 
+  // ---------------------------------------------------------------- field notes (clarity pass)
+  /** a { desktop, touch } pair → this device's side; anything else → itself */
+  const forDevice = (v) => (v && typeof v === 'object') ? (ctx.input?.isTouch ? (v.touch ?? v.desktop) : (v.desktop ?? v.touch)) : v;
+  /** the glossary entries in the order met: m.notes, else ctx.hud.glossary, else save.flags.glossary */
+  function fieldNotes(list) {
+    let src = Array.isArray(list) ? list : null;
+    if (!src) { try { src = ctx.hud?.glossary ?? ctx.save?.getFlag?.('glossary'); } catch (e) { src = null; } }
+    return (Array.isArray(src) ? src : []).filter(x => x && (x.term || x.text)).map(x => ({
+      id: String(x.id ?? ''), term: String(x.term ?? ''), text: String(forDevice(x.text) ?? ''), key: x.key != null ? String((typeof ctx.hud?.explainKey === 'function' ? ctx.hud.explainKey(x.key) : forDevice(x.key)) ?? '') : '' }));
+  }
+  function notesHTML(notes, title) {
+    const items = notes.map((n, i) => `<li><span class="n">${String(i + 1).padStart(2, '0')}</span><div class="tt"><b>${esc(n.term)}</b>${n.key ? `<kbd>${esc(n.key)}</kbd>` : ''}</div><p>${esc(n.text)}</p></li>`).join('');
+    return `<div class="doc notes-doc">
+        <div class="hdr"><span>PAUSED · FIELD NOTES</span><span>${notes.length} note${notes.length === 1 ? '' : 's'}${title ? ' · ' + esc(title) : ''}</span></div>
+        <h2>Field notes</h2>
+        <div class="sub">Terms and systems, in the order you met them</div>
+        ${items ? `<ol class="notes-list" id="notesList">${items}</ol>` : '<div class="notes-empty">No notes yet. The first time a new term or system comes up, a short note explains it, and it is kept here.</div>'}
+        <div class="actions">${btn('bNotesBack', 'Back', false, 'autofocus')}</div>
+      </div>`;
+  }
+
   const api = {
     current: null,
     hide() {
@@ -464,29 +520,64 @@ export function install(ctx) {
         close() { if (api.current === 'loading' && seq === mine) api.hide(); },
       };
     },
-    showPause(m = {}) {
+    /** the pause menu. Field notes (the clarity pass) open inside it: a sub-page listing every glossary entry the
+     *  player has met (ctx.hud.glossary, or m.notes), with Back (or Esc) returning to the menu; the promise still
+     *  resolves only with 'resume' | 'restart' | 'settings' | 'quit'. o.notes: true opens straight on the notes. */
+    showPause(m = {}, o = {}) {
       const objs = (m.objectives || []).filter(o => o.state !== 'hidden')
         .map(o => `<li class="${o.state}">${o.optional ? '<span class="pg">OPT</span> ' : ''}${esc(o.text)}${o.progress ? ` <span class="pg">${o.progress.cur} / ${o.progress.max}</span>` : ''}</li>`).join('');
-      const log = (m.commsLog || []).slice(-40).map(l => `<div><b style="color:${esc(ctx.comms?.speaker?.(l.who)?.color || 'var(--hud)')}">${esc(l.name || '·')}</b>${esc(l.text)}</div>`).join('');
-      const p = open('pause', `<div class="pause-wrap">
+      const log = (m.commsLog || []).slice(-40).map(l => `<div><b style="color:${esc(ctx.comms?.speaker?.(l.who)?.color || 'var(--hud)')}">${esc(l.name || '·')}</b>${l.tag ? `<i class="tg">${esc(l.tag)}</i>` : ''}${esc(l.text)}</div>`).join('');
+      const notes = fieldNotes(m.notes);
+      const menuHTML = () => `<div class="pause-wrap">
           <div class="doc">
             <div class="hdr"><span>PAUSED</span><span>${esc(m.title || '')} · ${formatTime(ctx.mission?.elapsed ?? 0)}</span></div>
             <h2>Paused</h2>
             ${objs ? `<h3>Objectives</h3><ul class="objlist">${objs}</ul>` : ''}
-            <div class="actions" style="margin-top:22px">${btn('bRes', 'Resume', false, 'autofocus')}${btn('bRetry', 'Restart from checkpoint', true)}${btn('bSet', 'Settings', true)}${btn('bQuit', 'Quit to title', true)}</div>
+            <div class="actions" style="margin-top:22px">${btn('bRes', 'Resume', false, 'autofocus')}${btn('bRetry', 'Restart from checkpoint', true)}<button type="button" class="btn ghost" id="bNotes">Field notes<span class="cnt">${notes.length || ''}</span></button>${btn('bSet', 'Settings', true)}${btn('bQuit', 'Quit to title', true)}</div>
           </div>
           <div class="pause-side">
             ${m.drawMap ? `<div class="panel"><div class="kv"><span>TACTICAL MAP</span><span>NORTH UP</span></div><canvas id="pMap" width="560" height="340" style="margin-top:8px"></canvas>
               <div class="maplegend"><span><i style="background:#e9e3d3"></i>Frame</span><span><i style="background:#e0913c"></i>Route · objective</span><span><i style="background:#8fd2c6"></i>Checkpoint</span></div></div>` : ''}
             <div class="panel"><div class="kv"><span>COMMS LOG</span><span>${(m.commsLog || []).length} line${(m.commsLog || []).length === 1 ? '' : 's'}</span></div>
               <div class="pause-log" id="pLog" style="margin-top:8px">${log || '<div class="empty">No transmissions yet.</div>'}</div></div>
-          </div></div>`, 'dim', 'resume');
-      bind({ bRes: 'resume', bRetry: 'restart', bSet: 'settings', bQuit: 'quit' });
-      const c = root.querySelector('#pMap');
-      if (c && m.drawMap) { try { m.drawMap(c); } catch (e) { console.warn('[screens] map', e); } }
-      const lg = root.querySelector('#pLog'); if (lg) lg.scrollTop = lg.scrollHeight;
+          </div></div>`;
+      const p = open('pause', menuHTML(), 'dim', 'resume');
+      const mine = seq;
+      const showMenu = (focusNotes) => {
+        if (seq !== mine || !pending) return;
+        subBack = null; api.page = 'menu';
+        root.innerHTML = menuHTML(); root.scrollTop = 0;
+        bind({ bRes: 'resume', bRetry: 'restart', bSet: 'settings', bQuit: 'quit' });
+        root.querySelector('#bNotes')?.addEventListener('click', showNotes);
+        if (focusNotes) root.querySelector('#bNotes')?.focus({ preventScroll: true });
+        const c = root.querySelector('#pMap');
+        if (c && m.drawMap) { try { m.drawMap(c); } catch (e) { console.warn('[screens] map', e); } }
+        const lg = root.querySelector('#pLog'); if (lg) lg.scrollTop = lg.scrollHeight;
+      };
+      const showNotes = () => {
+        if (seq !== mine || !pending) return;
+        ctx.audio?.play?.('uiSelect', null);
+        api.page = 'notes';
+        root.innerHTML = notesHTML(notes, m.title);
+        root.scrollTop = 0;
+        subBack = () => { ctx.audio?.play?.('uiBack', null); showMenu(true); };
+        root.querySelector('#bNotesBack')?.addEventListener('click', () => subBack?.());
+        // a list taller than the page fades out at the bottom until it is scrolled to the end
+        const ls = root.querySelector('#notesList');
+        if (ls) {
+          const more = () => ls.classList.toggle('more', ls.scrollTop + ls.clientHeight < ls.scrollHeight - 4);
+          ls.addEventListener('scroll', more, { passive: true }); more();
+        }
+        focusFirst();
+      };
+      showMenu(false);
+      if (o?.notes) showNotes();
       return p;
     },
+    /** extra: which page of a multi-page screen is up ('menu' | 'notes' on the pause screen) */
+    page: null,
+    /** extra: the Field notes as listed (term, text and key resolved for this device), in the order met */
+    fieldNotes() { return fieldNotes(); },
     showSettings() {
       const s = ctx.settings;
       const fmt = (k, v) => {

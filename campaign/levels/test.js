@@ -23,10 +23,11 @@ export default {
   outro: [{ style: 'black', text: 'Proving run logged.' }],
   unlocks: { levels: [], parts: [] },
   speakers: {
-    OPS: { name: 'OPERATIONS', color: '#e9e3d3', voice: { base: 520, wave: 'square' }, channel: 'OPEN' },
-    SYS: { name: 'SYSTEM', color: '#8fd2c6', style: 'system', font: 'monoCaps', speed: 1.6 },
-    RANGE: { name: 'RANGE', color: '#e0913c', voice: { base: 300, wave: 'triangle' }, style: 'radio', channel: 'WAKE', static: 0.3 },
-    PA: { name: '', color: '#e9d79a', style: 'intercept', italic: true, speed: 0.8, chime: true },
+    // `tag` (clarity pass): who the voice is, shown beside the name the first time it speaks in a playthrough
+    OPS: { name: 'OPERATIONS', tag: 'the range officer', color: '#e9e3d3', voice: { base: 520, wave: 'square' }, channel: 'OPEN' },
+    SYS: { name: 'SYSTEM', tag: 'your frame\'s computer', color: '#8fd2c6', style: 'system', font: 'monoCaps', speed: 1.6 },
+    RANGE: { name: 'RANGE', tag: 'the spotter on the ridge', color: '#e0913c', voice: { base: 300, wave: 'triangle' }, style: 'radio', channel: 'WAKE', static: 0.3 },
+    PA: { name: '', tag: 'range loudspeaker', color: '#e9d79a', style: 'intercept', italic: true, speed: 0.8, chime: true },
   },
   factions: { hostile: { shell: '#bdb6a8', accent: '#8f2a22', eye: '#ff3b1f' }, friendly: { shell: '#8a9aa6', accent: '#3f7f9a', eye: '#7fc6ff' } },
   music: { theme: 'ambient', combat: 'combat' },
@@ -191,6 +192,9 @@ export default {
       { if: { flag: 'p5.persisted', eq: 7 }, then: [{ flag: ['p5.ifThen', true] }], else: [{ flag: ['p5.ifElse', true] }] },
       { if: { flag: 'p5.nope' }, then: [{ flag: ['p5.wrong', true] }], else: [{ flag: ['p5.ifElse', true] }] },
       { call: 'p5.count', args: { flag: 'p5.called' } },
+      { explain: { id: 'test_lock', term: 'Hard lock', key: { desktop: 'E', touch: 'LOCK' },
+                   text: 'Pins your aim to one target until it dies or you press the key again. Missiles and the blade go for it.' } },
+      { explain: { id: 'test_lock', term: 'Hard lock', text: 'A repeat of a seen id does nothing.' } },
       { flag: ['p5.actionsDone', true] },
     ],
     // every blocking action

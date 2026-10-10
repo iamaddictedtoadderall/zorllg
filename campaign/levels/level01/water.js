@@ -192,7 +192,7 @@ export class Water {
     if (!L.dawnArt || !A.ART_DAWN) return null;
     const t = JSON.parse(JSON.stringify(A.ART_DAWN));
     const p = L.ctx.player, s = p?.active ? L.routeS(p.pos) : 0;
-    const extra = s >= 3130 ? A.ART_SHORE : s >= 2460 ? A.ART_FLOES : null;
+    const extra = s >= 3130 ? A.ART_SHORE : s >= 2450 ? A.ART_FLOES : null;   // the zone ranges (level01.js)
     const merge = (a, b) => { for (const [k, v] of Object.entries(b || {})) { if (v && typeof v === 'object' && !Array.isArray(v)) merge(a[k] ??= {}, v); else a[k] = v; } };
     if (extra) merge(t, extra);
     return t;

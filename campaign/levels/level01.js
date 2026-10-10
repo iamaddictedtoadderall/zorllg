@@ -293,9 +293,9 @@ const ZONES = [
       { type: 'block_stack', at: { s: 1405, l: 95 }, yaw: az(40), params: { rows: 3 } },
     ] },
 
-  // Z5/Z6 meet at s 2460, not L1's 2500: the guaranteed Raft fragment where Moth surfaces (cp_floes, s 2470) must count as
-  // the floes, or a restart there would announce THE CUT-LINE (zones enter 10 m inside their range, arch §5.11)
-  { id: 'z_cutline', range: [1700, 2460], name: 'The Cut-line', card: { title: 'THE CUT-LINE', sub: 'Dredge harvest ground' },
+  // Z5/Z6 meet at s 2450, not L1's 2500: the guaranteed Raft fragment where Moth surfaces (cp_floes, s 2469.8) must count
+  // as the floes, or a restart there would announce THE CUT-LINE (zones enter 10 m inside their range, arch §5.11)
+  { id: 'z_cutline', range: [1700, 2450], name: 'The Cut-line', card: { title: 'THE CUT-LINE', sub: 'Dredge harvest ground' },
     // the pre-dawn art is applied by onEnter so that re-entering after the sunrise keeps the dawn (index.js re-asserts it)
     art: ART_PREDAWN, artBlend: 6, music: DREDGE,
     structures: [
@@ -306,7 +306,7 @@ const ZONES = [
 
   // no zone music: the dawn theme comes with the surfacing (events.finale, onCheckpoint.cp_floes), so a player who
   // wanders east across the Raft during the night fight doesn't get it early
-  { id: 'z_floes', range: [2460, 3130], name: 'The Floes', card: { title: 'THE FLOES' },
+  { id: 'z_floes', range: [2450, 3130], name: 'The Floes', card: { title: 'THE FLOES' },
     art: ART_FLOES, artBlend: 4 },
 
   { id: 'z_shore', range: [3130, 3400], name: 'The Shore', card: { title: 'THE SHORE', sub: 'The Wake' },
@@ -500,16 +500,15 @@ const triggers = [
   // Z4 · the Abeyance
   { id: 't_apron', when: { all: [{ pass: 1370 }, { flag: 'p:burn' }] }, do: [
       { checkpoint: 'cp_abeyance' }, ...flags('p:apron'), { call: 'tick', args: { park: { s: 1360, l: 50 } } },
-      { spawn: 'e_apron' }, { music: { stinger: 'dread' } }, { comms: 'c_ghost', wait: true },
-      term('ghost'),
+      { spawn: 'e_apron' }, { music: { stinger: 'dread' } }, term('ghost'), { comms: 'c_ghost', wait: true },
       { music: { theme: DREDGE } }, { call: 'abilities', args: { add: ['missile'] } }, { comms: 'c_missiles' }, hint('msl'), term('chorus'),
       ...done('o_abeyance'), ...add('o_sexton') ] },
-  { id: 't_enemy_flares', when: { custom: 'carrierFlared' }, do: [{ comms: 'c_enemy_flares' }] },
+  { id: 't_enemy_flares', when: { custom: 'carrierFlared' }, do: [{ comms: 'c_enemy_flares' }, term('decoys')] },
   { id: 't_surge', when: { health: { tag: 'sexton', below: 0.5 } }, do: [{ comms: 'c_surge' }] },
   { id: 't_repair', when: { all: [{ flag: 'p:apron' }, { any: [{ health: { below: 0.55 } }, { killed: { tag: 'sexton' } }] }] }, do: [
       { call: 'abilities', args: { add: ['kit'] } }, { comms: 'c_repair' }, hint('kit'), term('repair') ] },
   { id: 't_sexton_dead', when: { killed: { tag: 'sexton' } }, do: [
-      ...flags('p:sexton'), { music: { theme: NIGHT } }, { wait: 3 }, { comms: 'c_drums', wait: true }, term('turnback'),
+      ...flags('p:sexton'), { music: { theme: NIGHT } }, { wait: 3 }, term('turnback'), { comms: 'c_drums', wait: true },
       ...add('o_climb2'), { comms: 'c_climb' },
       { call: 'tick', args: { path: [{ s: 1500, l: 0 }, { s: 1545, l: 3 }, { s: 1625, l: 30 }], speed: 6, parkAtEnd: true } } ] },
   { id: 't_hold_sled', when: { custom: 'tickAt', args: { s: 1540, r: 14 } }, do: [
@@ -526,7 +525,7 @@ const triggers = [
       { parallel: [ [{ cinematic: 'stencil' }], [{ call: 'stencilLight', args: { on: true } }, { call: 'mothStops', args: { seconds: 2 } }] ] },
       { comms: 'c_stencil' } ] },
   { id: 't_crown', when: { all: [{ custom: 'aboveY', args: { y: 119, near: { s: ABEY_S }, r: 50 } }, { flag: 'p:sexton' }] }, do: [
-      ...flags('crown'), ...done('o_climb2'), { music: { stinger: 'boss' } },
+      ...flags('crown'), ...done('o_climb2'), { music: { stinger: 'boss' } }, term('dredge', 'icebreaker'),
       { parallel: [ [{ cinematic: 'cutlineReveal' }], [{ wait: 0.5 }, { comms: 'c_cutline', wait: true }] ] },
       { comms: 'c_detour' }, { call: 'kite', args: { follow: 'player', h: 90 } },
       { call: 'tick', args: { path: [{ s: 1660, l: -120 }, { s: 1700, l: -330 }], speed: 12, hideAtEnd: true } },
@@ -540,7 +539,8 @@ const triggers = [
   { id: 't_hull_hint', when: { custom: 'hullHit' }, do: [hint('hull', 'ARMOURED. Hit the drill heads.')] },
   { id: 't_spotlight', when: { custom: 'inFloodlight' }, do: [{ comms: 'c_spotlight' }, term('floodlight')] },
   { id: 't_head1', when: { killed: { tag: 'drillhead', count: 1 } }, do: [{ comms: 'c_head1' }] },
-  { id: 't_crack', when: { custom: 'sawSweep' }, do: [{ comms: 'c_crack' }] },
+  { id: 't_crack', when: { custom: 'sawSweep' }, do: [
+      { comms: 'c_crack' }, hint('sweep', 'The saw sweeps low along the ice. Jump or hover over it, or boost out of reach.') ] },
   { id: 't_pa2', when: { timer: 20, since: 't_head1' }, do: [{ comms: 'c_pa2' }] },
   { id: 't_head2', when: { killed: { tag: 'drillhead', count: 2 } }, do: [{ comms: 'c_head2' }] },
   { id: 't_harvest', when: { flag: 'ib:phase', eq: 3 }, do: [{ checkpoint: 'cp_harvest' }, { comms: 'c_auger' }, term('collar')] },
@@ -582,8 +582,8 @@ const def = {
           '— O. Desh, the Bench',
     objectives: ['Cut three blocks of ice with the cutter', 'Get back to the convoy before sunrise'],
     // the fine print is the plain-English key to the note (the clarity pass): Wake words, glossed once, nothing more
-    fine: 'Keep up.  ·  You are Juno. The Wake is your convoy. The edge is the line of sunrise; it creeps west, so the Wake ' +
-          "keeps moving. The cutter is your ice-cutting walker. The Bench is Oma Desh's workshop rig.",
+    fine: 'Keep up.  ·  You are Juno, and the boy is your brother Kit. The Wake is your convoy. The edge is the line of ' +
+          "sunrise; it creeps west, so the Wake keeps moving. The cutter is your ice-cutting walker. The Bench is Oma Desh's workshop.",
     showMap: false,
   },
   intro: [{ style: 'black', hold: 9, text:
@@ -604,7 +604,7 @@ const def = {
                  style: 'radio', channel: 'WAKE', speed: 1.4, static: 0.25 },
     OMA:       { name: 'OMA · BENCH', tag: "the convoy's elder and mechanic", color: '#f2e6d0', voice: { base: 180, wave: 'sawtooth' },
                  style: 'radio', channel: 'WAKE', speed: 0.8, static: 0.25, weight: 600 },
-    FOREMAN:   { name: '', tag: 'unknown voice, open channel', color: '#e9d79a', voice: { base: 140, wave: 'sine' }, style: 'intercept',
+    FOREMAN:   { name: '', tag: 'unknown voice', color: '#e9d79a', voice: { base: 140, wave: 'sine' }, style: 'intercept',
                  channel: 'OPEN', speed: 0.7, italic: true, static: 0, chime: true },
     BOOT:      { name: '', tag: 'machine start-up text', color: '#9fb8c4', voice: { base: 900, wave: 'square' }, style: 'system',
                  font: 'monoCaps', speed: 1.8 },
@@ -679,7 +679,7 @@ const def = {
 
   checkpoints: [
     { id: 'cp_cut',      at: { s: 40, l: -20 },  yaw: 'route', label: 'The cut' },
-    { id: 'cp_cavern',   at: { s: 384, l: -18 }, yaw: az(63), label: 'Under the ice' },
+    { id: 'cp_cavern',   at: { s: 390, l: -14 }, yaw: az(66), label: 'Under the ice' },   // just out of the alcove (camera clear)
     { id: 'cp_ridges',   at: { s: 690, l: 0 },   yaw: 'route', label: 'The Teeth' },
     { id: 'cp_abeyance', at: { s: 1375, l: 0 },  yaw: 'route', label: 'The Abeyance' },
     { id: 'cp_cutline',  at: { s: 1735, l: 0 },  yaw: 'route', label: 'The cut-line' },
@@ -691,19 +691,19 @@ const def = {
     // the clarity pass: every objective says plainly what to do and where, and uses only words already met; `label` is the
     // short marker text (mission markers show the first 28 characters)
     { id: 'o_look', text: "Look up and find Kit's kite", kind: 'manual' },
-    { id: 'o_cut', text: 'Cut three ice blocks at the orange flags', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
+    { id: 'o_cut', text: 'Cut the flagged ice blocks', label: 'CUT MARK', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
     { id: 'o_gully', text: 'Run east into the gully', label: 'GULLY', kind: 'reach', at: { s: 320 }, r: 30, marker: true },
     { id: 'o_up', text: 'Find a way up: head for the light', label: 'WAY UP', kind: 'reach', at: { s: 625 }, r: 26, marker: true },
     { id: 'o_climb', text: 'Jump and hover up the shaft', kind: 'flag', flag: 'outOfShaft' },
     { id: 'o_kit', text: 'Reach Kit under the red flare', label: 'KIT', kind: 'reach', at: { s: 860, l: 40 }, r: 80, marker: { s: 900, l: 70, h: 6 } },
-    { id: 'o_skiffs', text: 'Destroy the skiffs attacking Tick', kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
+    { id: 'o_skiffs', text: 'Destroy the skiffs at Tick', kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
     { id: 'o_sled1', text: 'Flag the sledge the skiff dropped', kind: 'flag', flag: 'sled1', optional: true },
     { id: 'o_wrecks', text: 'Destroy the Gleaners at the wrecks', kind: 'kill', target: { encounter: 'e_gleaners' }, marker: 'targets' },
     { id: 'o_abeyance', text: 'Head for the giant frozen ship', label: 'FROZEN SHIP', kind: 'reach', at: { s: 1370 }, r: 80, marker: true },
     { id: 'o_sexton', text: 'Destroy the Sexton, the green-lit frame', kind: 'kill', target: { tag: 'sexton' }, marker: 'targets' },
     { id: 'o_climb2', text: 'Climb up inside the Abeyance to the top', label: 'TOP', kind: 'flag', flag: 'crown', marker: abey(0, 124, 0) },
     { id: 'o_sled2', text: 'Break the winch lock chaining the sledge', kind: 'flag', flag: 'sled2', optional: true },
-    { id: 'o_heads', text: "Break the Icebreaker's three drill heads", kind: 'destroy', target: { tag: 'drillhead', count: 3 },
+    { id: 'o_heads', text: 'Break the drill heads', kind: 'destroy', target: { tag: 'drillhead', count: 3 },
       showCount: true, marker: 'targets' },
     { id: 'o_surface', text: 'Rise to the light above you', kind: 'flag', flag: 'surfaced' },
     { id: 'o_shore', text: "Follow Kit's flares to the shore", label: 'SHORE', kind: 'reach', at: { s: 3130 }, r: 60, marker: { s: 3150, l: 0, h: 4 } },
@@ -736,11 +736,15 @@ const def = {
       { parallel: [
         [{ cinematic: 'mothWakes' }],
         [{ fade: 0, seconds: 1.5 }, { call: 'visor', args: { on: true } }, { music: { stinger: 'discovery' } },
-         { wait: 2.5 }, { structure: { id: 'alcove', state: 'broken' } }, { call: 'kneel', args: { on: false } }, { shake: 0.4 }] ] },
+         { wait: 2.5 }, { structure: { id: 'alcove', state: 'broken' } }, { call: 'kneel', args: { on: false } }, { shake: 0.4 },
+         // its first steps: out of the niche, so the follow camera isn't inside the alcove when control returns
+         { wait: 0.8 }, { call: 'mothWalk', args: { to: { s: 388, l: -15 }, speed: 3.5 } }] ] },
       ...flags('p:awake'),
-      { checkpoint: 'cp_cavern' },
+      // control state first, then the checkpoint: the cp_cavern snapshot must hold the HUD panels as the player sees them
+      // (it restores flag l01:panels), or every restart from here on would keep AP, compass and objectives hidden
       { call: 'abilities', args: { preset: 'walk' } }, { call: 'idleFacing', args: { yaw: 0 } },
       { call: 'hudPanels', args: { all: true, en: false, radar: false, weapons: false, rack: false } },
+      { checkpoint: 'cp_cavern' },
       { music: { theme: NIGHT } }, { comms: 'c_walk' },
       ...add('o_up'), hint('walk'), term('frame'),
     ],
@@ -863,7 +867,7 @@ const def = {
     c_first_tear: [{ who: 'JUNO', text: "Huh. Oma'll want that." }],
     c_sled1: [{ who: 'KIT', text: "That's our SLED. He was towing our sled." }, { who: 'JUNO', text: 'Flag it. The Wake can fetch it later.' }],
     c_sled1_done: [{ who: 'KIT', text: "Flagged! That's a tank. A whole tank. I'm counting it." }],
-    c_pin_wave: [{ who: 'KIT', text: 'More sails, from the east! Two!' }],
+    c_pin_wave: [{ who: 'KIT', text: 'More skiffs, from the east! Two!' }],
     c_pin_clear: [{ who: 'KIT', text: 'Okay so that was AMAZING, and also I nearly died, so.' }, { who: 'JUNO', text: 'Drink something.' }],
     c_whatfor: [{ who: 'MOTH', text: 'Query: what is this frame for?' }, { who: 'JUNO', text: 'Water first. Then we argue about what you are.' }],
     c_gleaners: [{ who: 'KIT', text: 'Green lights. Jun, those are Gleaners.' }, { who: 'JUNO', text: "They're here for the skiff crews." },
@@ -892,14 +896,14 @@ const def = {
     c_stencil: [{ who: 'MOTH', text: 'This frame knows this mark.' }, { who: 'JUNO', text: 'From where?' },
                 { who: 'MOTH', text: 'Unknown. Logged.' }],
     c_cutline: [{ who: 'KIT', text: "That's the ice we came for. They're taking all of it." },
-                { who: 'KIT', text: "And it's cutting right between us and the beach." }, { who: 'JUNO', text: 'Then it stops cutting.' }],
+                { who: 'KIT', text: "And that icebreaker's cutting right between us and the beach." }, { who: 'JUNO', text: 'Then it stops cutting.' }],
     c_detour: [{ who: 'KIT', text: "Tick can't swim. I'm going round the north way, on the shore ice. Meet you on the beach." },
                { who: 'JUNO', text: 'Keep the kite on me.' }, { who: 'KIT', text: "Kite's on you. No strings attached. Okay, one string." }],
     c_pa1: [{ who: 'DREDGE_PA', text: "Cut and haul. Cut and haul. Shift's not over." }],
     c_heads_hint: [{ who: 'KIT', text: "Kite says the saw heads go soft when they're cutting. Hit them low." }],
     c_spotlight: [{ who: 'KIT', text: "Out of the light, Jun! They're aiming with it!" }],
     c_head1: [{ who: 'KIT', text: "Head's off! ONE!" }, { who: 'JUNO', text: "It's turning. Here it comes." }],
-    c_crack: [{ who: 'MOTH', text: 'The ice is splitting toward this frame. Move off the line.' }],
+    c_crack: [{ who: 'MOTH', text: 'The saw will sweep low. Jump over it.' }],
     c_pa2: [{ who: 'DREDGE_PA', text: 'Cut and— cut and haul. Cut and haul.' }],
     c_head2: [{ who: 'KIT', text: "TWO! It's got one head left and it looks ANGRY." }],
     c_auger: [{ who: 'MOTH', text: 'The bow drill is armoured above. Exposed from below.' }, { who: 'JUNO', text: 'Down on the floes, then.' }],

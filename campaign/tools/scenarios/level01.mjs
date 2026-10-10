@@ -52,16 +52,28 @@ export default async function (g) {
   async function start(cp, o = {}) {
     const t = Date.now();
     if (o.resetSave) await ev(() => { const s = window.__game.ctx.save; s.setCheckpoint?.('l01', null); });
-    const s = await g.startLevel('l01', cp);
+    // the run-wide listeners go on before the first start, so a cold checkpoint's own actions are recorded too
     await ev(() => {
       const ctx = window.__game.ctx;
       if (!window.__l01fired) {
         window.__l01fired = new Set();
         window.__l01lines = [];
+        // the clarity pass: everything stamped with ctx.clock.frame (monotonic across checkpoint starts in one run)
+        const C = window.__l01clar = { req: [], dlv: [], cards: [], obj: [], cp: [] };
+        const f = () => ctx.clock.frame;
         ctx.events.on('trigger:fired', (e) => window.__l01fired.add(e.id));
-        ctx.events.on('comms:line', (e) => window.__l01lines.push({ who: e.who, text: e.text, name: e.name ?? null, t: ctx.clock.time }));
+        ctx.events.on('comms:line', (e) => {
+          const s = ctx.comms?.speaker?.(e.who);
+          window.__l01lines.push({ who: e.who, text: e.text, name: e.name ?? s?.name ?? null, tag: e.tag ?? null, t: ctx.clock.time, f: f() });
+        });
+        ctx.events.on('l01:term', (e) => C.req.push({ id: e.id, f: f(), cp: ctx.mission?.checkpoint ?? null }));
+        ctx.events.on('l01:termDelivered', (e) => C.dlv.push({ id: e.id, shown: e.shown, f: f() }));
+        ctx.events.on('hud:explain', (e) => C.cards.push({ id: e.id, term: e.term, f: f() }));
+        ctx.events.on('objective:changed', (e) => { if (e.state === 'active' && e.text) C.obj.push({ id: e.id, text: e.text, f: f() }); });
+        ctx.events.on('level:start', (e) => C.cp.push({ cp: e.checkpoint, f: f() }));
       }
     });
+    const s = await g.startLevel('l01', cp);
     g.log(`[${since()}] start ${cp}`, { ms: Date.now() - t, state: s.state, cp: s.checkpoint, pos: s.player?.pos?.map(v => +v.toFixed(1)), s: +(s.player?.s ?? 0).toFixed(1) });
     return s;
   }
@@ -209,6 +221,61 @@ export default async function (g) {
     g.assert(c.v === 1 && c.water === 4 && c.locker === 4 && c.roll === 40 && c.souls === 300 && c.frags === 12 && !c.anyTitle,
              'levels/campaign.js: version 1, water 4, locker 4, 40 rigs / 300 souls, 12 glosses without titles');
     g.assert(c.leg?.day === 1 && c.leg.draw === 3 && c.leg.title === 'WALK DAY 1 · THE RIME SHELF', 'campaign leg l01: day 1, draw 3, debrief title');
+
+    // ── the clarity pass (docs/todo.md), static: speaker tags, the explainer cards, plain objectives, no spoilers ──
+    const cl = await ev(async () => {
+      const ctx = window.__game.ctx, def = ctx.mission.def;
+      const T = await import('/levels/level01/terms.js');
+      const json = JSON.stringify([def.triggers, def.events, def.start, def.onCheckpoint]);
+      const requested = new Set();
+      for (const m of json.matchAll(/"call":"term","args":\{"ids":\[([^\]]*)\]/g)) for (const q of m[1].matchAll(/"([a-z_0-9]+)"/g)) requested.add(q[1]);
+      // the rack parts and the runtime's own requests (index.js: ap on the first hit, cache on a pickup, latch)
+      for (const id of ['harpoon_gaff', 'shotgun_s8', 'flare_pod', 'ap', 'cache', 'latch']) requested.add(id);
+      const hints = (json.match(/"hint":(\{[^}]*\}|"[^"]*")/g) || []).map(h => h.replace(/^"hint":/, ''));
+      return {
+        speakers: Object.entries(def.speakers).map(([id, s]) => ({ id, name: s.name, tag: s.tag ?? null })),
+        cards: Object.entries(T.TERMS).map(([id, t]) => ({ id, term: t.term, text: JSON.stringify(t.text), key: t.key ?? null })),
+        requested: [...requested], ids: Object.keys(T.TERMS),
+        objectives: def.objectives.map(o => ({ id: o.id, text: o.text, kind: o.kind, marker: !!o.marker, flag: o.flag ?? null })),
+        hints, fine: def.briefing.fine || '', bobj: def.briefing.objectives,
+        hasExplain: typeof ctx.hud?.explain === 'function',
+      };
+    });
+    g.log('clarity (static)', { speakers: cl.speakers.map(s => `${s.id}: ${s.tag}`), cards: cl.cards.length, hudExplain: cl.hasExplain });
+    const untagged = cl.speakers.filter(s => !s.tag || typeof s.tag !== 'string' || s.tag.length > 40);
+    g.assert(untagged.length === 0, `every level 1 speaker has a short spoiler-free tag (${untagged.map(s => s.id).join(', ') || 'all ' + cl.speakers.length})`);
+    // story rules on the new text: never the frame's name, nothing about the lattice, kernel, Cantors, the Founders or the
+    // Foreman, and never the words the bible keeps away from the pilot (§5.5)
+    const LORE = /\b(lattice|kernel|cantors?|passengers?|carried|carry|pressed|pressing|foreman|founders?|handshake|stillwater|corran|pell|ballast)\b/i;
+    const newText = [...cl.speakers.map(s => ['tag ' + s.id, s.tag]), ...cl.cards.map(c => ['card ' + c.id, c.term + ' ' + c.text]),
+                     ...cl.objectives.map(o => ['objective ' + o.id, o.text]), ...cl.hints.map((h, i) => ['hint ' + i, h]),
+                     ['briefing fine', cl.fine], ...cl.bobj.map((t, i) => ['briefing objective ' + i, t])];
+    const leaks = newText.filter(([, t]) => /moth/i.test(t || '') || LORE.test(t || ''));
+    g.assert(leaks.length === 0, `clarity text keeps the story rules: no "Moth", no lore words (${newText.length} strings${leaks.length ? '; ' + leaks.map(l => l[0] + ': ' + l[1]).slice(0, 3).join(' | ') : ''})`);
+    const badCards = cl.cards.filter(c => {
+      const t = JSON.parse(c.text);
+      const text = typeof t === 'object' ? t.desktop : t;
+      const sentences = (text.match(/[.!?](\s|$)/g) || []).length;
+      return !c.term || !text || sentences < 1 || sentences > 2 || text.length > 220;
+    });
+    g.assert(badCards.length === 0, `every card is a term plus one or two plain sentences (${cl.cards.length} cards${badCards.length ? '; ' + badCards.map(c => c.id).join(', ') : ''})`);
+    const CONTROL_CARDS = ['cutter', 'frame', 'en', 'carbine', 'qb', 'tear', 'sledge', 'psalter', 'chorus', 'repair', 'icing', 'latch'];
+    const keyless = CONTROL_CARDS.filter(id => !cl.cards.find(c => c.id === id)?.key);
+    g.assert(keyless.length === 0, `every control card names its key (${keyless.join(', ') || CONTROL_CARDS.length + ' cards'})`);
+    const MUST = ['tear', 'rack', 'bench', 'sledge', 'water', 'wake', 'carbine', 'psalter', 'chorus', 'repair', 'harpoon_gaff', 'shotgun_s8', 'flare_pod',
+                  'skiffs', 'gleaners', 'icebreaker', 'dredge', 'remembered', 'en', 'ap', 'stagger', 'rot', 'icing'];
+    const missingCards = MUST.filter(id => !cl.ids.includes(id));
+    const unasked = cl.ids.filter(id => !cl.requested.includes(id));
+    const unknownAsk = cl.requested.filter(id => !cl.ids.includes(id));
+    g.assert(missingCards.length === 0 && unasked.length === 0 && unknownAsk.length === 0,
+             `cards for TEAR, the rack, the Bench, sledges, water, the convoy, every named weapon and the other terms, each asked for by the level ` +
+             `(${cl.ids.length} cards${missingCards.length ? '; missing ' + missingCards : ''}${unasked.length ? '; never asked ' + unasked : ''}${unknownAsk.length ? '; unknown ' + unknownAsk : ''})`);
+    // objectives say plainly what to do and where: an imperative verb, short, and a marker or a place in the words
+    // (the sledge flags carry the interact prompt's own marker)
+    const PLACE = /\b(at|to|on|in|into|up|above|under|inside|the shaft|the wrecks|the floe|the hold)\b/i;
+    const vague = cl.objectives.filter(o => !/^[A-Z][a-z]+\b/.test(o.text) || o.text.length > 60 ||
+                                            !(o.marker || PLACE.test(o.text) || /^sled\d$/.test(o.flag || '')));
+    g.assert(vague.length === 0, `objectives say what to do and where (${cl.objectives.length}${vague.length ? '; ' + vague.map(o => o.id + ': ' + o.text).join(' | ') : ''})`);
     await noErrors('static');
   }
 
@@ -230,6 +297,13 @@ export default async function (g) {
     await skipCine();
     r = await until((ctx) => ctx.mission.objective('o_look')?.state === 'active', null, 8);
     g.assert(r.ok, 'o_look active after the vista');
+    // the clarity pass on screen: Kit's first line with his tag, and the first explainer card (the cutter)
+    r = await until((ctx) => window.__l01lines.some(l => l.who === 'KIT') && (ctx.hud?.explainState?.visible || typeof ctx.hud?.explain !== 'function'), null, 10, 5);
+    const z1c = await ev(() => ({ tag: document.querySelector('#comms .who .tg')?.textContent || null, card: window.__game.ctx.hud?.explainState?.id ?? null,
+                                  cardText: document.querySelector('#explain .tx')?.textContent || null }));
+    g.log('z1 clarity', z1c);
+    if (z1c.card) g.assert(['cutter', 'kite'].includes(z1c.card), `the first explainer card is the cutter or the kite (${z1c.card})`);
+    if (SHOTS) await shot('clarity-z1-tag-and-card');
     // T1: look at the kite (aim the player's view at it; the camera follows)
     r = await until((ctx, L) => {
       const p = ctx.player, k = L.kite.pos;
@@ -295,10 +369,13 @@ export default async function (g) {
                bridge: ctx.structures.get('snowBridge').state, vit: ctx.hud.vitalsState, frame: document.getElementById('frameName')?.textContent };
     });
     g.log('after the fall', c1);
-    g.assert(Math.abs(c1.s - 377) < 12 && Math.abs(c1.l + 26) < 12 && c1.y < -10, `Moth wakes in the alcove (s ${c1.s.toFixed(0)}, l ${c1.l.toFixed(0)}, y ${c1.y.toFixed(1)})`);
+    g.assert(Math.hypot(c1.s - 377, c1.l + 26) < 20 && c1.y < -10, `Moth wakes in the alcove and steps out (s ${c1.s.toFixed(0)}, l ${c1.l.toFixed(0)}, y ${c1.y.toFixed(1)})`);
     g.assert(c1.ab?.move === 0.33 && !c1.ab.jump && !c1.ab.fire && !c1.hidden && !c1.cutter, 'walk preset, Moth visible, cutter off');
     g.assert(c1.alcove === 'broken' && c1.bridge === 'collapsed', 'alcove broken, snow bridge collapsed');
     g.assert(c1.vit?.mode === 'live', 'vitals live (Juno) after the boot');
+    const pan1 = await ev(() => ({ now: { ...window.__game.ctx.l01.panels }, snap: window.__game.ctx.save.getCheckpoint?.('l01')?.flags?.['l01:panels'] ?? null }));
+    g.assert(pan1.now.ap && pan1.now.compass && pan1.now.objectives && (!pan1.snap || (pan1.snap.ap && pan1.snap.objectives)),
+             `HUD panels on after the waking, and in the cp_cavern snapshot (${JSON.stringify(pan1)})`);
     await noErrors('cut');
   }
 
@@ -307,6 +384,8 @@ export default async function (g) {
     await start('cp_cavern');
     const a0 = await ev(() => ({ ab: window.__game.ctx.player.abilities, obj: window.__game.ctx.mission.objective('o_up')?.state }));
     g.assert(a0.ab?.move === 0.33 && !a0.ab.jump && a0.obj === 'active', 'cp_cavern: walk-only, o_up active');
+    const pan0 = await ev(() => ({ ...window.__game.ctx.l01.panels }));
+    g.assert(pan0.ap && pan0.compass && pan0.objectives && !pan0.weapons, `cp_cavern restart: AP, compass and objectives shown, weapons not yet (${JSON.stringify(pan0)})`);
     if (SHOTS) {
       await step(1);
       await shot('z2-cavern-gameplay');
@@ -398,6 +477,14 @@ export default async function (g) {
     g.assert(r.ok, `TEAR: rack 1 (${await ev(() => JSON.stringify(window.__game.ctx.haul?.rack))})`);
     r = await until((ctx) => window.__l01fired.has('t_first_tear'), null, 3);
     g.assert(r.ok && await ev(() => window.__game.ctx.hud?.panels?.rack ?? window.__game.ctx.l01.panels.rack), 't_first_tear: rack panel on, HAUL hint');
+    const tq = await ev(() => ({ q: [...(window.__game.ctx.l01.terms.q || [])], log: window.__game.ctx.l01.terms.log.map(e => e.id) }));
+    g.log('cards after the first TEAR', tq);
+    g.assert([...tq.q, ...tq.log].includes('tear') && [...tq.q, ...tq.log].includes('rack') && [...tq.q, ...tq.log].includes('bench'),
+             'the TEAR, rack and Bench cards are asked for at the first TEAR');
+    if (SHOTS) {
+      r = await until((ctx) => ctx.hud?.explainState?.visible, null, 12, 5);
+      if (r.ok) { g.log('card on screen', await ev(() => window.__game.ctx.hud.explainState.id)); await shot('clarity-z3-card'); }
+    }
     r = await until((ctx) => window.__l01fired.has('t_sled1'), null, 5);
     g.assert(r.ok, 't_sled1: the tow skiff dead, sled 1 free (FLAG SLEDGE)');
     r = await until((ctx) => window.__l01fired.has('t_stagger_hint'), null, 2);
@@ -1049,6 +1136,60 @@ export default async function (g) {
       const pron = pre.filter(([, t]) => /\b(I|me|my|mine|myself)\b/.test(t) || /[A-Za-z]['’][A-Za-z]/.test(t));
       g.assert(pre.length > 10 && pron.length === 0, `Moth never says I, me or my (or a contraction) before "Hold on to me." (${pre.length} lines${pron.length ? ': ' + pron[0][1] : ''})`);
     }
+    // ── the clarity pass, over the whole run ──
+    const cr = await ev(() => {
+      const ctx = window.__game.ctx, C = window.__l01clar || { req: [], cards: [], obj: [], cp: [] };
+      const def = ctx.mission.def;
+      return { C, tags: def ? Object.fromEntries(Object.entries(def.speakers).map(([k, s]) => [k, s.tag ?? null])) : {},
+               glossary: (ctx.hud?.glossary || []).map(e => ({ id: e.id, term: e.term, text: JSON.stringify(e.text) })),
+               hasExplain: typeof ctx.hud?.explain === 'function' };
+    });
+    const C = cr.C;
+    g.log('clarity (run)', { requested: C.req.length, hudCards: C.cards.length, objectives: C.obj.length, lines: lines.length,
+                             firstLines: Object.keys(cr.tags).map(w => { const l = lines.find(x => x.who === w); return l ? `${w}: ${l.tag ?? '—'}` : `${w}: (not heard)`; }) });
+    // (b) speaker tags: the first line each speaker says in the run carries its tag (P5 shows it beside the name)
+    if (lines.some(l => l.tag)) {
+      const wrong = Object.entries(cr.tags).filter(([w, tag]) => { const l = lines.find(x => x.who === w); return l && l.tag !== tag; });
+      const again = lines.filter((l, i) => l.tag && lines.findIndex(x => x.who === l.who && x.tag) !== i);
+      g.assert(wrong.length === 0 && again.length === 0, `each speaker's first line shows its tag once (${Object.keys(cr.tags).length} speakers${wrong.length ? '; ' + wrong.map(([w]) => w).join(', ') : ''}${again.length ? '; repeated for ' + again[0].who : ''})`);
+    } else g.log('clarity: no comms line carried a tag (P5 speaker tags not landed?)');
+    // (c) every term the script uses is introduced at its first appearance: a card asked for no later than 10 s after the
+    // first comms line or objective that uses it (or, for a name, the line that says it first)
+    const WORDS = [
+      { w: 'TEAR', re: /\bTEAR\b/, terms: ['tear'] }, { w: 'Wake', re: /\bWake\b/, terms: ['wake'] },
+      { w: 'Bench', re: /\bBench\b/, terms: ['bench'] }, { w: 'Oma', re: /\bOma\b/, terms: ['bench'] },
+      { w: 'sledge', re: /\bsledges?\b/i, terms: ['sledge'] }, { w: 'skiff', re: /\bskiffs?\b/i, terms: ['skiffs'] },
+      { w: 'Gleaner', re: /\bGleaners?\b/, terms: ['gleaners'] }, { w: 'icebreaker', re: /\bicebreaker\b/i, terms: ['icebreaker'] },
+      { w: 'Dredge', re: /\bDredge\b/, terms: ['dredge'] }, { w: 'Turnback', re: /\bTurnback\b/, terms: ['turnback'] },
+      { w: 'tank', re: /\btanks?\b/i, terms: ['water'] }, { w: 'remembered', re: /remembered/, terms: ['remembered'] },
+      { w: 'Chorus', re: /\bChorus\b/, terms: ['chorus'] }, { w: 'ghost', re: /\bghosts?\b/i, terms: ['ghost'] },
+      { w: 'rig names', re: /\b(Hardtack|Lark's Rest)\b/, terms: ['rigs'] }, { w: 'collar', re: /\bcollar\b/i, terms: ['collar'] },
+      { w: 'Tick', re: /\bTick\b/, terms: ['kite'] }, { w: 'kite', re: /\bkite\b/i, terms: ['kite'] },
+      { w: 'Abeyance', re: /\bAbeyance\b/, terms: [], namedBy: /There's the Abeyance/ },
+    ];
+    const SLACK = 600;   // frames (10 s)
+    const uses = [...lines.map(l => ({ f: l.f, text: l.text, src: l.who })), ...C.obj.map(o => ({ f: o.f, text: o.text, src: 'objective ' + o.id }))]
+      .filter(u => u.f != null).sort((a, b) => a.f - b.f);
+    const late = [];
+    for (const W of WORDS) {
+      const first = uses.find(u => W.re.test(u.text));
+      if (!first) continue;
+      if (W.namedBy) { if (!W.namedBy.test(first.text)) late.push(`${W.w} used before it is named (${first.src}: "${first.text}")`); continue; }
+      const intro = C.req.filter(r => W.terms.includes(r.id)).map(r => r.f).sort((a, b) => a - b)[0];
+      if (intro == null || intro > first.f + SLACK) late.push(`${W.w}: first used by ${first.src} ("${first.text}") ${intro == null ? 'with no card' : ((intro - first.f) / 60).toFixed(1) + ' s before its card'}`);
+    }
+    if (only.size === ALL.length) g.assert(late.length === 0, `every term is introduced where it is first used (${WORDS.length} words${late.length ? '; ' + late.slice(0, 3).join(' | ') : ''})`);
+    else g.log('clarity: introduced-before-use', late.length ? late : 'ok');
+    // (d) the cards reach the HUD: every card handed over is in the Field notes (save.flags.glossary)
+    if (cr.hasExplain) {
+      const delivered = [...new Set(C.dlv.map(e => e.id))];
+      const gl = new Set(cr.glossary.map(e => e.id));
+      const lost = delivered.filter(id => !gl.has(id));
+      const need = only.size === ALL.length ? 25 : 1;
+      g.assert(delivered.length >= need && lost.length === 0, `explainer cards reach hud.explain and the Field notes (${delivered.length} cards handed over, ${gl.size} notes${lost.length ? '; missing ' + lost.join(', ') : ''})`);
+      // (e) spoilers: no note or tag says "Moth" before the naming
+      g.assert(!cr.glossary.some(e => /moth/i.test(e.term + ' ' + e.text)) && !before.some(l => /moth/i.test(l.tag || '')), 'no "Moth" in the Field notes or in speaker tags before the naming');
+    } else g.log('clarity: hud.explain missing (P5 not landed?): cards queued only');
     const all = await fired();
     const ids = await ev(() => window.__game.ctx.mission.def?.triggers.map(t => t.id) || []);
     const missing = ids.filter(id => !all.includes(id));

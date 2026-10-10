@@ -60,8 +60,10 @@ varying float vFog;
 varying vec3 vFogCol;
 varying float vCell;
 varying float vLife;
+varying float vFwd;      // how directly the camera looks toward the sun through this particle (forward scatter)
 varying vec3 vSoft;      // world y of this vertex (linear across the quad), ground height, fade height
 void main() {
+  vFwd = 0.0;
   float size = iMisc.x;
   vSoft = vec3(1.0, -1e5, 1.0);
   vCol = iCol; vCell = iMisc.y; vLife = iMisc.w;
@@ -95,7 +97,9 @@ void main() {
   vSun = vec2(sv.x * cs + sv.y * sn, -sv.x * sn + sv.y * cs);
   float l = length(vSun); vSun = l > 1e-4 ? vSun / max(l, 0.35) : vec2(0.0, 1.0);
   vFog = cFogAmount(iPos);
-  vFogCol = cFogColor(normalize(iPos - cameraPosition));
+  vec3 vdir = normalize(iPos - cameraPosition);
+  vFogCol = cFogColor(vdir);
+  vFwd = pow(max(dot(vdir, uLightDir), 0.0), 5.0) * smoothstep(-0.05, 0.15, uLightDir.y);
 }`;
 
 const PARTICLE_FS_ADD = /* glsl */`
@@ -123,6 +127,7 @@ uniform sampler2D uAtlas;
 uniform vec3 uSunCol, uHemiSky, uHemiGround;
 uniform float uLitCells[8];
 varying vec4 vCol; varying vec2 vUv; varying vec2 vSun; varying float vFog; varying vec3 vFogCol; varying float vCell; varying float vLife;
+varying float vFwd;
 varying vec3 vSoft;
 void main() {
   float soft = smoothstep(vSoft.y - 0.15, vSoft.y + vSoft.z, vSoft.x);
@@ -137,6 +142,9 @@ void main() {
   vec3 amb = mix(uHemiGround, uHemiSky, 0.5 + 0.5 * n.y * 0.6 + 0.2);
   vec3 lightC = amb + uSunCol * mix(0.75, lit, litOn);
   vec3 c = vCol.rgb * lightC * (0.86 + 0.28 * t.b);
+  // backlit smoke: looking toward the sun, the thin outer parts of a billow glow (forward scattering), so a smoke
+  // column against the light gets a bright rim instead of reading as a flat dark cut-out
+  c += uSunCol * vFwd * (1.0 - smoothstep(0.15, 0.85, t.a)) * 0.22 * litOn * (0.4 + 0.6 * clamp(dot(vCol.rgb, vec3(0.33)) / 0.08, 0.0, 1.0));
   if (ci == 7) {
     // fire billow: temperature falls with age and toward the puff's ragged rim, so every billow shows a bright
     // yellow core, orange body and deep red edge, then burns down to lit soot (the hand-over to smoke)
@@ -262,6 +270,11 @@ export class ParticleSystem {
         // fire billows: snap on, hold while they burn down to soot, then thin out
         const f = t < 0.55 ? 0 : (t - 0.55) / 0.45;
         C[i * 4 + 3] = this.a0[i] * (t < 0.03 ? t / 0.03 : 1 - f * f * (3 - 2 * f));
+      } else if (!this._add && (M[i * 4 + 1] === 1 || M[i * 4 + 1] === 2)) {
+        // smoke billows hold their body while they rise and spread, then thin out over the last half of their life
+        // (a linear fade made a column vanish while it was still climbing)
+        const f = t < 0.4 ? 0 : (t - 0.4) / 0.6;
+        C[i * 4 + 3] = this.a0[i] * (t < 0.08 ? t / 0.08 : 1 - f * f * (3 - 2 * f));
       } else C[i * 4 + 3] = this.a0[i] * (t < 0.1 ? t / 0.1 : 1 - (t - 0.1) / 0.9);
     }
     this._alive = alive;
@@ -714,7 +727,7 @@ export function install(ctx) {
       ctx.renderer.getDrawingBufferSize(size);
       LIGHT.uPx.value.set(2 / Math.max(1, size.x), 2 / Math.max(1, size.y));
       LIGHT.uSizeMul.value = ctx.tier.name === 'low' ? 1.3 : 1;
-      LIGHT.uMinMul.value = ctx.tier.name === 'low' ? 1.8 : 1;   // AD §4.5: 4 px beacons hold 5+ px on Low (no bloom to spread them)
+      LIGHT.uMinMul.value = ctx.tier.name === 'low' ? 2.1 : 1;   // AD §4.5: 4 px beacons hold 5+ px on Low (no bloom to spread them)
       glows.prepare(scene || ctx.scene);
     },
     /** extra: live counts for tests and budgets */

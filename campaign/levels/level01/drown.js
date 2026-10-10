@@ -105,7 +105,16 @@ export class Drown {
     L.wall = this.wall;
     // the art blend's midpoint falls when the wall reaches the player
     const eta = this.wall.etaPlayer();
-    if (this.a.art?.dawn) ctx.atmosphere?.set?.(this.a.art.dawn, Math.max(4, 2 * eta));
+    const dawn = this.a.art?.dawn;
+    if (dawn) {
+      // "the sun clears the Thornback": the key light jumps (under the boiler shock's shake) from the night's high
+      // starlight key to the dawn azimuth just below the ridge crest (about 3.5° from the shelf edge), disc and glow off,
+      // then the blend raises it to 5.5° and grows the disc. Blending straight from the night key would slide a sun disc
+      // down the northern sky.
+      const sun = dawn.sky?.sun || {};
+      ctx.atmosphere?.set?.({ sky: { sun: { azimuth: sun.azimuth ?? 95, elevation: 1, size: 0, glow: 0 } } }, 0);
+      ctx.atmosphere?.set?.(dawn, Math.max(4, 2 * eta));
+    }
     L.dawnArt = true;
     ctx.audio?.play?.('iceGroan', null);
   }

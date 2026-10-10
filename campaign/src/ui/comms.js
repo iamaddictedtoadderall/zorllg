@@ -27,13 +27,14 @@ const CSS = `
 #comms{z-index:3;pointer-events:none;overflow:hidden}
 #comms:not([hidden]){animation:commsIn .16s ease-out}
 @keyframes commsIn{from{opacity:0}to{opacity:1}}
-#comms .who{min-height:16px;min-width:0}
-#comms .who .tg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:10px;border-left:1px solid var(--hud-faint);
+#comms .who{min-height:16px;min-width:0;flex-wrap:wrap;row-gap:3px}
+#comms .who .tg{flex:0 0 auto;max-width:100%;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:10px;border-left:1px solid var(--hud-faint);
   font:italic 500 13px/1.1 var(--f-display);letter-spacing:.06em;text-transform:none;color:var(--hud-dim);animation:commsTag .6s ease-out}
 #comms .who .tg:empty{display:none}
-#comms.noname .who .tg{padding-left:0;border-left:0}
+#comms.noname .who .tg,#comms.tagwrap .who .tg{padding-left:0;border-left:0}
 @keyframes commsTag{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
 #game.touch #comms .who .tg{font-size:11px;padding-left:7px}
+#game.touch #comms.hastag .who canvas{display:none}
 #comms .who .chan{font:500 10px/1 var(--f-mono);letter-spacing:.14em;padding:2px 5px 1px;border:1px solid currentColor;opacity:.75}
 #comms .who .chan:empty{display:none}
 #comms.noname .who span.nm{display:none}
@@ -93,6 +94,7 @@ export function install(ctx) {
   const speakers = {};
   const queue = [];
   let cur = null, typed = 0, holdT = 0, blipT = 0, sp = null, phase = 'type', waveT = 0, lastShown = '';
+  let tagCheck = false;   // a tag went up: once the box is visible, see whether it wrapped under the name (one layout read)
 
   function finish() {
     const c = cur; cur = null; phase = 'type';
@@ -150,6 +152,9 @@ export function install(ctx) {
     if (chanEl) chanEl.textContent = sp.channel && sp.channel !== 'LOCAL' ? sp.channel : '';
     const tag = firstTag(cur.who, sp);
     if (tagEl) tagEl.textContent = tag;
+    box?.classList.remove('tagwrap');
+    box?.classList.toggle('hastag', !!tag);   // touch drops the waveform to keep the tag beside the name
+    tagCheck = !!tag;
     if (lineEl) lineEl.textContent = '';
     lastShown = '';
     const entry = { who: cur.who, name, text: cur.text, t: ctx.mission?.elapsed ?? ctx.clock.time };
@@ -237,7 +242,7 @@ export function install(ctx) {
       // over a full fade to black the box moves to the centre of the screen, without its panel (L1's boot text and the
       // drowning's black are comms typography over black)
       const black = (ctx.hud?.fadeLevel ?? 0) >= 0.95;
-      if (box && box.classList.contains('overblack') !== black) box.classList.toggle('overblack', black);
+      if (box && box.classList.contains('overblack') !== black) { box.classList.toggle('overblack', black); tagCheck = !!tagEl?.textContent; }
       if (!cur) {
         if (!queue.length) { setVisible(false); drawWave(dt); return; }
         startLine();
@@ -245,6 +250,11 @@ export function install(ctx) {
       const c = cur;
       if (c.wait !== undefined) { holdT += dt; if (holdT >= c.wait) finish(); return; }
       if (allowed() && box?.hidden) setVisible(true);
+      if (tagCheck && box && !box.hidden && tagEl && nameEl) {
+        tagCheck = false;   // a tag that didn't fit beside the name wrapped to its own line: drop the separator there
+        const wrapped = !box.classList.contains('noname') && tagEl.offsetTop > nameEl.offsetTop + 4;
+        box.classList.toggle('tagwrap', wrapped);
+      }
       if (phase === 'chime') {
         holdT += dt;
         if (holdT >= CHIME_WAIT) { phase = 'type'; holdT = 0; box?.classList.remove('chiming'); }

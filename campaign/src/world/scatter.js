@@ -245,13 +245,15 @@ function iceShardGeo(seed) {
 /**
  * A wind drift: a low mound on a polar grid whose height falls smoothly to zero at a wobbling elliptical rim (and a
  * little below it, so the edge sinks into the ground instead of standing on it). The crest sits toward the lee end
- * (+x): a long gentle windward back and a short steeper lee face, with a shallow tail scooped behind it. About 1:9
- * height to length at its steepest, so it reads as snow piled on the ground rather than an object lying on it.
+ * (+x): a long gentle windward back and a short steeper lee face, with a shallow tail scooped behind it. Low and
+ * feathered at the rim, so it reads as snow piled on the ground rather than an object lying on it.
  */
 function driftGeo(seed) {
   const rng = mulberry32(seed), n2 = createNoise2D(seed);
   const RS = 9, AS = 24;                                    // rings, segments (≈ 400 triangles)
-  const len = 2.8 + 1.4 * rng(), wid = 1.1 + 0.5 * rng(), hgt = 0.34 + 0.16 * rng(), crest = 0.35 + 0.2 * rng();
+  // low and broad (≈ 1:8 height to width, 1:20 to length): at the large scales levels use (×2 to ×6) a narrower, taller
+  // mound read as a white sausage lying on the ice
+  const len = 3.0 + 1.4 * rng(), wid = 1.7 + 0.6 * rng(), hgt = 0.24 + 0.1 * rng(), crest = 0.35 + 0.2 * rng();
   const pos = [], idx = [];
   const rim = (a) => 1 + 0.16 * n2(Math.cos(a) * 1.3 + 4.1, Math.sin(a) * 1.3) + 0.06 * n2(Math.cos(a) * 3.7, Math.sin(a) * 3.7 - 2.2);
   pos.push(crest * len * 0.5, hgt, 0);                     // centre vertex (the crest region)
@@ -263,9 +265,10 @@ function driftGeo(seed) {
       const cx = Math.cos(ang), cz = Math.sin(ang);
       const reach = cx < 0 ? len * (1 + crest * 0.5) : len * (1 - crest * 0.5);
       const x = crest * len * 0.5 + cx * reach * k, z = cz * wid * k;
-      // profile: a smooth cap that reaches 0 at q = 1; the lee face is steeper (a lower power near the crest)
+      // profile: a smooth cap that reaches 0 at q = 1 with a flat tangent (the edge feathers into the ground instead of
+      // meeting it at an angle that outlines the mound); the lee face is steeper (a lower power near the crest)
       const p = cx > 0 ? 1.6 : 2.6;
-      let y = hgt * Math.pow(Math.max(0, 1 - Math.pow(q, p)), 1.6);
+      let y = hgt * Math.pow(Math.max(0, 1 - Math.pow(q, p)), 2.2);
       y *= 1 + 0.12 * n2(x * 0.9 + 7.3, z * 0.9);           // lumpy surface
       if (r === RS) y = -0.06;                             // the rim sinks below the ground
       pos.push(x, y, z);
@@ -543,7 +546,10 @@ export class Scatter {
     else if (!Array.isArray(arr)) { arr = Array.from(arr); B.cells.set(ck, arr); }
     const e = _m.elements;
     for (let q = 0; q < 16; q++) arr.push(e[q]);
-    arr.push(0.86 + 0.28 * r4, x, z);
+    // the tint carries the terrain's baked light (arch §5.4: sky AO × (0.55 + 0.45 × sun)), so a rock in a canyon wall's
+    // shadow is as dark as the ground it stands on, beyond the shadow map too (unlit props on shaded ground read as cut-outs)
+    const lit = (0.55 + 0.45 * _bk.sun) * (0.6 + 0.4 * _bk.sky);
+    arr.push((0.86 + 0.28 * r4) * lit, x, z);
     B.count++;
     if (collides && this.ctx.collision) {
       const col = this.ctx.collision, top = gy + spec.height * sz * 0.7;

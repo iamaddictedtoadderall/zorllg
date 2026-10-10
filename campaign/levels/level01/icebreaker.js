@@ -149,7 +149,7 @@ export class Icebreaker extends Unit {
   ensureHeads() {
     if (this.heads) return;
     const ctx = this.ctx, H = this.cfg.heads || { port: 8000, stbd: 8000, bow: 14000 };
-    this.heads = { P: makeHead(this, 'port', 'PORT SAW', H.port, 2600, 3), S: makeHead(this, 'stbd', 'STARBOARD SAW', H.stbd, 2600, 3), B: makeHead(this, 'bow', 'BOW AUGER', H.bow, 3600, 4) };
+    this.heads = { P: makeHead(this, 'port', 'PORT SAW', H.port, 2600, 3), S: makeHead(this, 'stbd', 'STARBOARD SAW', H.stbd, 2600, 3), B: makeHead(this, 'bow', 'BOW DRILL', H.bow, 3600, 4) };
     this.heads.P.part = this.parts.sawP; this.heads.S.part = this.parts.sawS; this.heads.B.part = this.parts.auger;
     for (const t of this.tags) if (typeof t === 'string' && t.startsWith('enc:')) for (const h of Object.values(this.heads)) h.tags.add(t);
     for (const h of Object.values(this.heads)) ctx.combat?.register?.(h);

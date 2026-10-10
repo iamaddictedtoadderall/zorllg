@@ -161,17 +161,17 @@ const HUD_CSS = `
 #game.touch #rack{left:calc(14px + var(--safe-l));right:auto;top:auto;bottom:184px;width:min(176px,24vw)}
 #game.touch #rack .rs{grid-template-columns:1fr;gap:3px;margin-top:4px}
 #game.touch #mname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#game.touch #objpanel{max-width:33vw}
+@media (orientation:landscape){#game.touch #objpanel{max-width:calc(53vw - min(210px,18vw) - 34px)}}
 #game.touch #objs li{flex-wrap:wrap;column-gap:6px;row-gap:0;line-height:1.25}
-#game.touch #bossbar{top:64px}
+#game.touch #bossbar{top:var(--boss-top,64px)}
 #game.touch #bossbar .nm{font-size:12px}
 #game.touch #bossbar .stag{margin-top:2px;font-size:10px}
 #game.touch #zonecard{top:22%}
-#game.touch #hud.boss-on #zonecard{top:114px}
+#game.touch #hud.boss-on #zonecard{top:calc(var(--boss-top,64px) + 50px)}
 #game.touch #zonecard .t{font-size:24px;letter-spacing:.24em}
 #game.touch #zonecard .s{font-size:11px}
 #game.touch #warn{top:37%}
-#game.touch #hud.zone-on.boss-on #warn{top:166px}
+#game.touch #hud.zone-on.boss-on #warn{top:calc(var(--boss-top,64px) + 102px)}
 #game.touch #checkpointToast{font-size:11px;letter-spacing:.16em;padding:5px 10px}
 #hud.zone-on.boss-on #warn{top:max(31%,calc(15.5% + 76px))}
 #markers .mk.nolabel span{visibility:hidden}
@@ -189,6 +189,9 @@ const HUD_CSS = `
 #weapons .wpn.off .wn{text-decoration:none}
 #weapons .wpn.off .wt{text-decoration:line-through;text-decoration-thickness:1px}
 @media (max-width:760px){#weapons .wpn .fl{display:none}}
+@media (min-width:1200px){#weapons,#rack{width:380px}}
+@media (min-width:761px) and (max-width:1199px){#status{width:330px;margin-left:-165px}#weapons,#rack{width:300px}#weapons .wpn{grid-template-columns:66px 1fr auto}#weapons .wpn .fl{display:none}}
+#hint{white-space:normal;max-width:min(880px,calc(100vw - 80px));box-sizing:border-box;text-align:center;line-height:1.35;text-wrap:balance}
 #wtags{position:absolute;inset:0;pointer-events:none;display:none}
 #game.touch #wtags{display:block}
 #wtags .wtag{position:absolute;left:0;top:0;padding:2px 5px 1px;font:600 9px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;
@@ -326,6 +329,13 @@ export function install(ctx) {
   let explicitBoss = null, bossTitle = '', bossDeadT = 0;
   let callsignFrame = null;          // a frame tag set through setCallsign (the level's), else automatic
   let cine = false;
+  let bossTop = 64, bossTopAcc = 0;   // touch: the boss bar slides under a tall comms box (both share the top centre)
+  // the comms box's bottom edge, kept by a ResizeObserver (read after layout, so the HUD never forces one); without
+  // ResizeObserver it is measured at 5 Hz while it matters
+  let commsBottom = -1;
+  if (commsEl && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => { commsBottom = commsEl.hidden ? 0 : commsEl.offsetTop + commsEl.offsetHeight; }).observe(commsEl);
+  }
   const panels = { ap: true, en: true, weapons: true, radar: true, compass: true, objectives: true, lock: true, rack: false };
   const slots = { R: { state: 'auto', label: null }, L: { state: 'auto', label: null }, S: { state: 'auto', label: null }, U: { state: 'auto', label: null } };
   const slotGated = { R: false, L: false, S: false, U: false };
@@ -648,7 +658,8 @@ export function install(ctx) {
     setText(ex.term, String(e.term || ''));
     setText(ex.key, exKey(e.key));
     setText(ex.tx, text);
-    setText(ex.ft, n === 0 ? (ctx.input?.isTouch ? 'Notes are kept under II › Field notes.' : 'Notes are kept under Pause (Esc) › Field notes.') : '');
+    // the first card says where the notes live (non-breaking spaces keep each menu path on one line)
+    setText(ex.ft, n === 0 ? (ctx.input?.isTouch ? 'Notes are kept under\u00a0II\u00a0›\u00a0Field\u00a0notes.' : 'Notes are kept under Pause\u00a0(Esc)\u00a0›\u00a0Field\u00a0notes.') : '');
     if (ctx.input?.isTouch) {   // under the objectives list, whatever its length
       const op = document.getElementById('objpanel'), hr = el.hud.getBoundingClientRect();
       const r = op && op.offsetParent !== null ? op.getBoundingClientRect() : null;
@@ -1108,16 +1119,25 @@ export function install(ctx) {
     explain(o) {
       try {
         if (!o || typeof o !== 'object') return false;
-        const term = o.term == null ? '' : String(o.term).trim();
-        const str = (v) => (v == null ? '' : String(v).trim());
-        const pair = (v) => (v && typeof v === 'object') ? { ...(v.desktop != null ? { desktop: str(v.desktop) } : {}), ...(v.touch != null ? { touch: str(v.touch) } : {}) } : str(v);
+        // only strings (and numbers) count as text: an object or a function in a text field is dropped, not shown
+        const str = (v) => (typeof v === 'string' || typeof v === 'number') ? String(v).trim() : '';
+        const pair = (v) => {
+          if (!v || typeof v !== 'object') return str(v);
+          const d = str(v.desktop), t = str(v.touch);
+          return d && t ? { desktop: d, touch: t } : (d || t);
+        };
+        const term = str(o.term);
         const text = pair(o.text);
-        const id = o.id != null && String(o.id).trim() ? String(o.id).trim() : term ? 'term:' + term.toLowerCase() : '';
-        if (!id || (!term && !forDevice(text))) return false;
+        const id = str(o.id) || (term ? 'term:' + term.toLowerCase() : '');
+        if (!id || !text) return false;   // a card needs an id (or a term to name it) and something to say
         const list = glossaryList();
         if (list.some(x => x && x.id === id) || EX.cur?.id === id || EX.queue.some(x => x.id === id)) return false;
         const entry = { id, term, text };
-        if (o.key != null && o.key !== '') entry.key = pair(o.key);
+        // `keys: { desktop, touch }` (an optional extra) keeps both variants, so the card and the Field notes follow a
+        // later switch of input mode; otherwise `key` as given
+        const both = o.keys && typeof o.keys === 'object' ? pair(o.keys) : '';
+        const key = typeof both === 'object' ? both : pair(o.key);
+        if (key) entry.key = key;
         const lv = ctx.mission?.def?.id; if (lv) entry.level = String(lv);
         try { ctx.save?.setFlag?.('glossary', [...list.filter(Boolean).map(x => ({ ...x })), entry]); }
         catch (e) { console.warn('[hud] explain: could not save the glossary', e); }
@@ -1131,6 +1151,8 @@ export function install(ctx) {
       return EX.cur ? { id: EX.cur.id, term: EX.cur.term, visible: !exEl.hidden && !exEl.classList.contains('out'), left: Math.max(0, EX.dur - EX.t), queued: EX.queue.map(x => x.id) }
                     : (EX.queue.length ? { id: null, queued: EX.queue.map(x => x.id) } : null);
     },
+    /** extra: a card's key as shown on this device (a { desktop, touch } pair resolved; a keyboard key → the touch button) */
+    explainKey(k) { try { return exKey(k); } catch (e) { return ''; } },
     /** extra: the recorded glossary (save.flags.glossary), in the order met */
     get glossary() { return glossaryList().map(x => ({ ...x })); },
     /** extra: the skip indicator for skippable shots (frac = hold progress 0..1, or null to hide) */
@@ -1218,7 +1240,20 @@ export function install(ctx) {
       if (zoneT <= 0) el.zonecard?.classList.remove('on');
       if (toastT <= 0) el.toast?.classList.remove('on');
       // stacking: the zone card moves under a visible boss bar, the warnings under both (touch layouts are tight)
-      toggle(el.hud, 'boss-on', !!el.bossbar && !el.bossbar.hidden);
+      const bossOn = !!el.bossbar && !el.bossbar.hidden;
+      toggle(el.hud, 'boss-on', bossOn);
+      // touch: comms and the boss bar share the top centre; a comms box taller than the gap pushes the bar (and the
+      // zone card and warnings stacked under it) down. Measured at 5 Hz, only while both are up.
+      let bt = 64;
+      if (bossOn && ctx.input?.isTouch && commsEl && !commsEl.hidden && !commsEl.classList.contains('overblack') && !cine) {
+        if (commsBottom >= 0) bt = Math.max(64, Math.round(commsBottom + 8));
+        else {
+          bossTopAcc -= dt;
+          if (bossTopAcc > 0) bt = bossTop;
+          else { bossTopAcc = 0.2; const r = commsEl.getBoundingClientRect(); bt = Math.max(64, Math.round(r.bottom + 8)); }
+        }
+      }
+      if (bt !== bossTop) { bossTop = bt; el.hud.style.setProperty('--boss-top', bt + 'px'); }
       toggle(el.hud, 'zone-on', zoneT > 0);
     },
   };

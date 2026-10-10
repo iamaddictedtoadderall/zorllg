@@ -3,6 +3,8 @@
 //   node tools/playtest.mjs --scenario p2-world --port 8420 --out /tmp/campaign-playtest/P2-p2-world --timeout 5400
 //   options (--param k=v): p2=look  only the look shots (load, 10 route points, close-ups, props, snow preset)
 //                          p2=fast  everything except the screenshots
+//                          only=fly,collision,...  just these sections (points, lod, acc, corridor, fly, collision,
+//                                   scatter, map, gallery, snow); the load and its timing always run
 //   In the shared sandbox (load averages of 30 to 45 on 4 cores) a full run takes 45 to 90 minutes, so pass a
 //   --timeout well above the default 600 s; the two modes can run as separate processes on different ports.
 //   Screenshots go through robustShot(): a warm render inside an evaluate, then a page screenshot with a 240 s timeout,
@@ -96,7 +98,8 @@ export const SNOW_ART = {
   fog: { color: '#a9bad0', density: 0.0009, heightFalloff: 0.01, inscatter: 0.8, sunColor: '#ffc89a' },
   light: { sun: 5.5, sunColor: '#ffd8b0', hemiSky: '#9fb6d8', hemiGround: '#3a4658', hemi: 1.8, rim: 2.0, exposure: 1.0 },
   weather: { type: 'snow', intensity: 0.2, wind: [3, -1] },
-  surface: { style: 'snow', snow: 0.85, snowSlope: [0.72, 0.9], rockSlope: [0.3, 0.55], strataHeight: 14, strataStrength: 0.6,
+  // snow holds below ≈ 37°: the steeper wall faces show banded rock, as AD §3.1 asks (slopes read at a glance)
+  surface: { style: 'snow', snow: 0.85, snowSlope: [0.78, 0.94], rockSlope: [0.3, 0.55], strataHeight: 14, strataStrength: 0.6,
              wetness: 0.2, gloss: 0.15, sparkle: 1, iceCracks: 0.8 },
   scatter: [
     { prop: 'snow_drift', density: 6, scale: [0.8, 1.6], slope: [0, 0.25] },
@@ -176,9 +179,17 @@ export default async function (g) {
   g.shot = (name, o = {}) => robustShot(g, name, o);
   const mode = (g.args.params || []).map(p => p.split('=')).find(([k]) => k === 'p2')?.[1] || 'all';
   const shots = mode !== 'fast', checks = mode !== 'look';
+  // --param only=points,lod,acc,corridor,fly,collision,scatter,map,gallery,snow runs just those sections (the load always
+  // runs): quick re-checks of one area in the slow sandbox
+  const ONLY = (g.args.params || []).map(p => p.split('=')).find(([k]) => k === 'only')?.[1]?.split(',') || null;
+  const runs = (k) => !ONLY || ONLY.includes(k);
   const DEF = levelDef('p2world', DESERT_ART);
+  // section timestamps (the sandbox is shared and slow: the log shows where a long run spends its time)
+  const T0 = Date.now();
+  const section = (name) => g.log(`[t+${((Date.now() - T0) / 1000).toFixed(0)} s] ${name}`);
 
   // ------------------------------------------------------------------ 1. load
+  section('1. load');
   await g.eval(async () => {
     const H = await import(new URL('src/world/heightfield.js', location.href).href);
     H.clearHeightfieldCache?.();
@@ -204,67 +215,75 @@ export default async function (g) {
   else g.assert(cpu <= 8, `world.load ≤ 8 s in the sandbox: renderer CPU ${cpu.toFixed(2)} s (wall ${(cold.wall / 1000).toFixed(2)} s while the sandbox ran at load ${la.toFixed(1)} on ${ncpu} cores)`);
   await g.startLevel(DEF, 'cp0');          // back to a flow-started level (the reload is served from the build cache)
   const length = await g.eval(() => window.__game.ctx.world.route.length);
+  // memory (arch §5.12): the JS heap after the level load, and the GPU-side object counts
+  const mem = await g.eval(() => ({ heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+                                     gpu: { ...window.__game.ctx.renderer.info.memory } }));
+  g.log('memory after load:', mem);
 
-  // ------------------------------------------------------------------ 2 + 8. ten route points
-  const pts = [];
-  for (let i = 0; i < 10; i++) pts.push(40 + i * (length - 80) / 9);
-  let maxTris = 0, maxCalls = 0, maxGap = 0, anyHoles = 0, anyPending = 0;
-  const budget = [];
-  for (let i = 0; i < pts.length; i++) {
-    const s = pts[i];
-    await g.eval(() => window.__game.freeCam(false));
-    await g.teleport({ s, l: 0 }, { yaw: undefined });
-    await g.eval((s) => { const c = window.__game.ctx; c.player.yaw = c.world.route.yawAt(s); c.player.bodyYaw = c.player.yaw; }, s);
-    await g.step(3);
-    await g.eval(() => window.__game.settle());
-    const m = await g.eval(() => {
-      const c = window.__game.ctx, w = c.world, r = c.renderer;
-      c.camera.updateMatrixWorld();
-      const t = w.terrain.measure(c.camera), st = w.terrain.stats(), sc = w.scatter.stats(), gap = w.terrain.edgeGap();
-      // main-pass cross-check: draw only terrain + scatter (no shadow pass, no post)
-      const hidden = [];
-      for (const o of c.scene.children) if (o !== c.levelRoot && o.visible && !o.isLight && !o.isCamera) { o.visible = false; hidden.push(o); }
-      for (const o of c.levelRoot.children) if (o !== w.terrain.root && o !== w.scatter.root && o.visible) { o.visible = false; hidden.push(o); }
-      const bg = c.scene.background; c.scene.background = null;
-      const au = r.shadowMap.autoUpdate; r.shadowMap.autoUpdate = false; r.shadowMap.needsUpdate = false;
-      r.info.reset(); r.setRenderTarget(null); r.render(c.scene, c.camera);
-      const real = { calls: r.info.render.calls, triangles: r.info.render.triangles };
-      r.shadowMap.autoUpdate = au; c.scene.background = bg;
-      for (const o of hidden) o.visible = true;
-      return { t, st, sc, gap, real };
-    });
-    budget.push({ s: Math.round(s), terrainCalls: m.t.calls, terrainTris: m.t.triangles, scatterCalls: m.sc.calls, mainPass: m.real,
-                  nodes: m.st.nodes, holes: m.st.holes, pending: m.st.pending, gap: +m.gap.max.toFixed(3) });
-    maxTris = Math.max(maxTris, m.real.triangles - 0, m.t.triangles);
-    maxCalls = Math.max(maxCalls, m.real.calls);
-    maxGap = Math.max(maxGap, m.gap.max); anyHoles += m.st.holes; anyPending += m.st.pending;
-    if (shots) {
-      await g.shot(`route-${i}-gameplay`);
-      const cam = await g.eval((s) => {
-        const w = window.__game.ctx.world, r = w.route, p = r.toWorld(s, 0), t = r.tangentAt(s);
-        const side = (s / 400) % 2 < 1 ? 1 : -1;
-        const pos = r.toWorld(Math.max(0, s - 140), side * 160); pos.y = w.groundHeight(pos.x, pos.z) + 70;
-        const look = r.toWorld(Math.min(r.length, s + 260), -side * 60); look.y = w.groundHeight(look.x, look.z) + 10;
-        return { pos: [pos.x, pos.y, pos.z], look: [look.x, look.y, look.z] };
-      }, s);
-      await g.camera(cam.pos, cam.look, 60);
-      await g.shot(`route-${i}-vista`, { hud: false });
-      const gap2 = await g.eval(() => window.__game.ctx.world.terrain.edgeGap().max);
-      maxGap = Math.max(maxGap, gap2);
+  if (runs('points')) {
+    // ------------------------------------------------------------------ 2 + 8. ten route points
+    section('2 + 8. ten route points');
+    const pts = [];
+    for (let i = 0; i < 10; i++) pts.push(40 + i * (length - 80) / 9);
+    let maxTris = 0, maxCalls = 0, maxGap = 0, anyHoles = 0, anyPending = 0;
+    const budget = [];
+    for (let i = 0; i < pts.length; i++) {
+      const s = pts[i];
+      await g.eval(() => window.__game.freeCam(false));
+      await g.teleport({ s, l: 0 }, { yaw: undefined });
+      await g.eval((s) => { const c = window.__game.ctx; c.player.yaw = c.world.route.yawAt(s); c.player.bodyYaw = c.player.yaw; }, s);
+      await g.step(3);
+      await g.eval(() => window.__game.settle());
+      const m = await g.eval(() => {
+        const c = window.__game.ctx, w = c.world, r = c.renderer;
+        c.camera.updateMatrixWorld();
+        const t = w.terrain.measure(c.camera), st = w.terrain.stats(), sc = w.scatter.stats(), gap = w.terrain.edgeGap();
+        // main-pass cross-check: draw only terrain + scatter (no shadow pass, no post)
+        const hidden = [];
+        for (const o of c.scene.children) if (o !== c.levelRoot && o.visible && !o.isLight && !o.isCamera) { o.visible = false; hidden.push(o); }
+        for (const o of c.levelRoot.children) if (o !== w.terrain.root && o !== w.scatter.root && o.visible) { o.visible = false; hidden.push(o); }
+        const bg = c.scene.background; c.scene.background = null;
+        const au = r.shadowMap.autoUpdate; r.shadowMap.autoUpdate = false; r.shadowMap.needsUpdate = false;
+        r.info.reset(); r.setRenderTarget(null); r.render(c.scene, c.camera);
+        const real = { calls: r.info.render.calls, triangles: r.info.render.triangles };
+        r.shadowMap.autoUpdate = au; c.scene.background = bg;
+        for (const o of hidden) o.visible = true;
+        return { t, st, sc, gap, real };
+      });
+      budget.push({ s: Math.round(s), terrainCalls: m.t.calls, terrainTris: m.t.triangles, scatterCalls: m.sc.calls, mainPass: m.real,
+                    nodes: m.st.nodes, holes: m.st.holes, pending: m.st.pending, gap: +m.gap.max.toFixed(3) });
+      maxTris = Math.max(maxTris, m.real.triangles - 0, m.t.triangles);
+      maxCalls = Math.max(maxCalls, m.real.calls);
+      maxGap = Math.max(maxGap, m.gap.max); anyHoles += m.st.holes; anyPending += m.st.pending;
+      if (shots) {
+        await g.shot(`route-${i}-gameplay`);
+        const cam = await g.eval((s) => {
+          const w = window.__game.ctx.world, r = w.route, p = r.toWorld(s, 0), t = r.tangentAt(s);
+          const side = (s / 400) % 2 < 1 ? 1 : -1;
+          const pos = r.toWorld(Math.max(0, s - 140), side * 160); pos.y = w.groundHeight(pos.x, pos.z) + 70;
+          const look = r.toWorld(Math.min(r.length, s + 260), -side * 60); look.y = w.groundHeight(look.x, look.z) + 10;
+          return { pos: [pos.x, pos.y, pos.z], look: [look.x, look.y, look.z] };
+        }, s);
+        await g.camera(cam.pos, cam.look, 60);
+        await g.shot(`route-${i}-vista`, { hud: false });
+        const gap2 = await g.eval(() => window.__game.ctx.world.terrain.edgeGap().max);
+        maxGap = Math.max(maxGap, gap2);
+      }
     }
-  }
-  g.log('budgets at the 10 points (High main pass, terrain + scatter only):', budget);
-  g.assert(anyHoles === 0 && anyPending === 0, `10 points settled: no holes, nothing pending (holes ${anyHoles}, pending ${anyPending})`);
-  g.assert(maxGap < 0.1, `no cracks: rendered node edges meet their neighbours (max gap ${maxGap.toFixed(3)} m)`);
-  if (g.args.tier === 'high') {
-    const terrMax = Math.max(...budget.map(b => b.terrainTris));
-    g.assert(terrMax <= 700000, `High: terrain triangles ≤ 0.7 M at the 10 points (max ${terrMax})`);
-    const callMax = Math.max(...budget.map(b => b.mainPass.calls));
-    g.assert(callMax <= 120, `High: terrain + scatter draw calls ≤ 120 at the 10 points (max ${callMax}, main pass)`);
+    g.log('budgets at the 10 points (High main pass, terrain + scatter only):', budget);
+    g.assert(anyHoles === 0 && anyPending === 0, `10 points settled: no holes, nothing pending (holes ${anyHoles}, pending ${anyPending})`);
+    g.assert(maxGap < 0.1, `no cracks: rendered node edges meet their neighbours (max gap ${maxGap.toFixed(3)} m)`);
+    if (g.args.tier === 'high') {
+      const terrMax = Math.max(...budget.map(b => b.terrainTris));
+      g.assert(terrMax <= 700000, `High: terrain triangles ≤ 0.7 M at the 10 points (max ${terrMax})`);
+      const callMax = Math.max(...budget.map(b => b.mainPass.calls));
+      g.assert(callMax <= 120, `High: terrain + scatter draw calls ≤ 120 at the 10 points (max ${callMax}, main pass)`);
+    }
   }
 
   // ------------------------------------------------------------------ 2b. no LOD popping (rendered surface continuity)
-  if (checks) {
+  section('2b. no LOD popping (rendered surface continuity)');
+  if (checks && runs('lod')) {
     const pop = await g.eval(() => {
       const c = window.__game.ctx, w = c.world, r = w.route, T = c.THREE;
       const probes = [];
@@ -286,8 +305,9 @@ export default async function (g) {
     g.assert(pop.max < 0.5, `no LOD popping: the rendered surface at 400 probes changes ≤ ${pop.max.toFixed(3)} m per frame at 80 m/s (limit 0.5 m)`);
   }
 
-  if (checks) {
+  if (checks && runs('acc')) {
     // ------------------------------------------------------------------ 3. ground accuracy
+    section('3. ground accuracy');
     const acc = await g.eval(async () => {
       const c = window.__game.ctx, w = c.world, hf = w.heightfield, r = w.route, T = c.THREE;
       let a = 1;
@@ -319,8 +339,11 @@ export default async function (g) {
     });
     g.assert(acc.maxD <= 0.6, `|groundHeight − heightAt| ≤ 0.6 m on 2,000 corridor points (max ${acc.maxD.toFixed(3)} m)`);
     g.assert(acc.n === 200 && acc.maxR <= 0.02, `groundHeight matches a Raycaster hit on the settled 2 m mesh (${acc.n} points, max ${acc.maxR.toExponential(2)} m)`);
+  }
 
+  if (checks && runs('corridor')) {
     // ------------------------------------------------------------------ 4. corridor shape
+    section('4. corridor shape');
     const cor = await g.eval(() => {
       const w = window.__game.ctx.world, r = w.route, hf = w.heightfield;
       let ok = 0, n = 0, maxGrade = 0, prev = null, worst = 0;
@@ -337,42 +360,64 @@ export default async function (g) {
     });
     g.assert(cor.frac >= 0.9, `corridor walls: ≥ 100 m above the bed at 1.1 × halfWidth for ${(cor.frac * 100).toFixed(1)} % of ${cor.n} samples (≥ 90 %)`);
     g.assert(cor.maxGrade <= 0.1, `route bed grade ≤ 10 % everywhere (max ${(cor.maxGrade * 100).toFixed(1)} % at s ${cor.worst})`);
+  }
 
+  if (checks && runs('fly')) {
     // ------------------------------------------------------------------ 5. streaming round trip at 80 m/s
-    const fly = await g.eval(() => {
+    section('5. streaming round trip at 80 m/s');
+    // the flight runs in chunks of 900 frames (one evaluate each) so the log shows its progress
+    await g.eval(() => {
       const G = window.__game, c = G.ctx, w = c.world, r = w.route, T = c.THREE;
-      const pos = new T.Vector3(), look = new T.Vector3();
-      const at = (s) => { r.toWorld(s, 0, pos); pos.y = w.groundHeight(pos.x, pos.z) + 80; r.toWorld(Math.min(r.length, s + 200), 0, look); look.y = pos.y - 40; };
+      const F = window.__p2fly = { pos: new T.Vector3(), look: new T.Vector3(), maxPend: 0, frames: 0, s: 0, dir: 1, legs: 0 };
+      F.at = (s) => { r.toWorld(s, 0, F.pos); F.pos.y = w.groundHeight(F.pos.x, F.pos.z) + 80; r.toWorld(Math.min(r.length, s + 200), 0, F.look); F.look.y = F.pos.y - 40; };
       // render at a small viewport during the flight (uploads and disposals are what count, not pixels)
-      const rr = c.renderer, size = rr.getSize(new T.Vector2()), pr = rr.getPixelRatio();
+      const rr = c.renderer;
+      F.size = rr.getSize(new T.Vector2()); F.pr = rr.getPixelRatio();
       rr.setPixelRatio(1); rr.setSize(320, 180, false);
       // steady state at the start: settle, then idle long enough for the terrain cache to drop what this view doesn't use
-      at(0); c.cameraRig.setFree(true, { pos, look });
-      G.step(1); w.terrain.settle(c.camera.position); G.step(300); G.render();
-      const geo0 = c.renderer.info.memory.geometries, built0 = w.terrain.stats().built;
-      let maxPend = 0, frames = 0;
-      const leg = (from, to) => {
-        const dir = Math.sign(to - from);
-        for (let s = from; dir > 0 ? s <= to : s >= to; s += dir * 80 / 60) {
-          at(s); c.cameraRig.setFree(true, { pos, look });
-          G.step(1); frames++;
-          maxPend = Math.max(maxPend, w.terrain.stats().pending);
-          if (frames % 120 === 0) G.render();
+      F.at(0); c.cameraRig.setFree(true, { pos: F.pos, look: F.look });
+      // three uploads a geometry the first time it is drawn inside the frustum, so a node built behind the camera isn't
+      // counted yet: both snapshots draw every built node once with culling off, so they count the same kind of set
+      F.uploadAll = () => { const ms = w.terrain.drawnMeshes(); for (const m of ms) m.frustumCulled = false; G.render(); for (const m of ms) m.frustumCulled = true; };
+      G.step(1); w.terrain.settle(c.camera.position); G.step(300); F.uploadAll();
+      F.geo0 = c.renderer.info.memory.geometries; F.built0 = w.terrain.stats().built;
+    });
+    for (let chunk = 0; chunk < 40; chunk++) {
+      const pr = await g.eval(() => {
+        const G = window.__game, c = G.ctx, w = c.world, r = w.route, F = window.__p2fly, t0 = performance.now();
+        for (let k = 0; k < 900 && F.legs < 2; k++) {
+          F.at(F.s); c.cameraRig.setFree(true, { pos: F.pos, look: F.look });
+          G.step(1); F.frames++;
+          F.maxPend = Math.max(F.maxPend, w.terrain.stats().pending);
+          if (F.frames % 120 === 0) G.render();
+          F.s += F.dir * 80 / 60;
+          if (F.s > r.length) { F.s = r.length; F.dir = -1; F.legs++; } else if (F.s < 0) { F.s = 0; F.legs++; }
         }
-      };
-      leg(0, r.length); leg(r.length, 0);
+        return { frames: F.frames, s: Math.round(F.s), legs: F.legs, maxPend: F.maxPend, ms: Math.round(performance.now() - t0), st: w.terrain.stats() };
+      });
+      g.log(`flight: ${pr.frames} frames, s ${pr.s}, leg ${pr.legs}, max pending ${pr.maxPend}, chunk ${pr.ms} ms, built ${pr.st.built}, `
+            + `node build ${pr.st.avgBuildMs.toFixed(1)} ms avg, terrain update ${(pr.st.updateMs ?? 0).toFixed(1)} ms last / ${(pr.st.updateMaxMs ?? 0).toFixed(1)} ms max`);
+      if (pr.legs >= 2) break;
+    }
+    const fly = await g.eval(() => {
+      const G = window.__game, c = G.ctx, w = c.world, F = window.__p2fly;
       // the same steady state at the same spot after the round trip
-      at(0); c.cameraRig.setFree(true, { pos, look }); G.step(2); w.terrain.settle(c.camera.position); G.step(300); G.render();
+      F.at(0); c.cameraRig.setFree(true, { pos: F.pos, look: F.look }); G.step(2); w.terrain.settle(c.camera.position); G.step(300); F.uploadAll();
       const geo1 = c.renderer.info.memory.geometries;
-      rr.setPixelRatio(pr); rr.setSize(size.x, size.y, false);
-      return { maxPend, frames, geo0, geo1, built0, built1: w.terrain.stats().built, st: w.terrain.stats() };
+      c.renderer.setPixelRatio(F.pr); c.renderer.setSize(F.size.x, F.size.y, false);
+      delete window.__p2fly;
+      return { maxPend: F.maxPend, frames: F.frames, geo0: F.geo0, geo1, built0: F.built0, built1: w.terrain.stats().built, st: w.terrain.stats() };
     });
     g.log('streaming round trip:', fly);
     g.assert(fly.maxPend <= 64, `80 m/s flight s 0 → ${Math.round(length)} → 0: terrain pending ≤ 64 (max ${fly.maxPend} over ${fly.frames} frames)`);
-    g.assert(Math.abs(fly.geo1 - fly.geo0) <= Math.max(1, fly.geo0 * 0.1), `geometries after the round trip within 10 % (${fly.geo0} → ${fly.geo1})`);
+    g.assert(Math.abs(fly.geo1 - fly.geo0) <= Math.max(1, fly.geo0 * 0.1),
+             `geometries after the round trip within 10 % (${fly.geo0} → ${fly.geo1}; built terrain nodes ${fly.built0} → ${fly.built1})`);
     await g.eval(() => window.__game.freeCam(false));
+  }
 
+  if (checks && runs('collision')) {
     // ------------------------------------------------------------------ 6. collision unit tests
+    section('6. collision unit tests');
     const col = await g.eval(async () => {
       const C = await import(new URL('src/world/collision.js', location.href).href);
       const T = window.__game.ctx.THREE, V = (x, y, z) => new T.Vector3(x, y, z);
@@ -426,8 +471,11 @@ export default async function (g) {
       return { fails, n: oks.length };
     });
     g.assert(col.fails.length === 0, `collision unit tests: ${col.n} passed${col.fails.length ? '; failed: ' + col.fails.join('; ') : ''}`);
+  }
 
+  if (checks && runs('scatter')) {
     // ------------------------------------------------------------------ 7. scatter determinism
+    section('7. scatter determinism');
     const sc1 = await g.eval(() => ({ hash: window.__game.ctx.world.scatter.colliderHash(), st: window.__game.ctx.world.scatter.stats(),
                                       names: (window.__game.ctx.world.scatter.meshes ? [...window.__game.ctx.world.scatter.meshes.keys()] : []) }));
     await g.startLevel(DEF, 'cp0');
@@ -450,7 +498,8 @@ export default async function (g) {
   }
 
   // ------------------------------------------------------------------ map
-  if (shots) {
+  section('map');
+  if (shots && runs('map')) {
     await g.eval(() => {
       const c = document.createElement('canvas'); c.width = 520; c.height = 520; c.id = 'p2map';
       Object.assign(c.style, { position: 'fixed', left: '20px', top: '20px', zIndex: 99, border: '1px solid #444' });
@@ -472,7 +521,8 @@ export default async function (g) {
   }
 
   // ------------------------------------------------------------------ natural prop gallery (Appendix D review)
-  if (shots) {
+  section('natural prop gallery (Appendix D review)');
+  if (shots && runs('gallery')) {
     const cam = await g.eval(async () => {
       const c = window.__game.ctx, T = c.THREE, w = c.world, r = w.route;
       const S = await import(new URL('src/world/scatter.js', location.href).href);
@@ -502,7 +552,8 @@ export default async function (g) {
   }
 
   // ------------------------------------------------------------------ addendum: snowy-ice preset on High and Low
-  if (shots || checks) {
+  section('addendum: snowy-ice preset on High and Low');
+  if ((shots || checks) && runs('snow')) {
     const SNOW = levelDef('p2snow', SNOW_ART, 6262);
     await g.startLevel(SNOW, 'cp0');
     const sn = await g.eval(() => {
@@ -544,6 +595,7 @@ export default async function (g) {
     await g.eval(() => window.__game.freeCam(false));
   }
 
+  section('done');
   const errs = await g.eval(() => window.__game.errors());
   g.assert(errs.length === 0, `no game errors (${errs.map(e => e.system + ': ' + e.message).slice(0, 5).join('; ')})`);
 }

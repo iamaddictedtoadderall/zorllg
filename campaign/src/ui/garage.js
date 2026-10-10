@@ -59,13 +59,25 @@ function keyStats(p) {
 
 // ------------------------------------------------------------------ glow sprites (lamp assemblies in this scene)
 let glowTex = null;
+/** A soft radial glow (white, alpha falloff 1 → 0.55 → 0.12 → 0 at radii 0, 0.2, 0.55, 1), written straight into a
+ *  DataTexture. Not a 2D canvas: creating the first accelerated canvas context is a round trip to the GPU process,
+ *  and at boot that waited behind every queued compile (P3 measurement: 18 s of the garage install under load). */
 function glowTexture() {
   if (glowTex) return glowTex;
-  const c = document.createElement('canvas'); c.width = c.height = 64;
-  const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.2, 'rgba(255,255,255,0.55)'); gr.addColorStop(0.55, 'rgba(255,255,255,0.12)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
-  glowTex = new THREE.CanvasTexture(c); glowTex.colorSpace = THREE.SRGBColorSpace; glowTex.userData.shared = true;
+  const N = 64, data = new Uint8Array(N * N * 4), stops = [[0, 1], [0.2, 0.55], [0.55, 0.12], [1, 0]];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const r = Math.min(1, Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2));
+    let a = 0;
+    for (let k = 0; k < stops.length - 1; k++) {
+      const [r0, a0] = stops[k], [r1, a1] = stops[k + 1];
+      if (r >= r0 && r <= r1) { a = a0 + (a1 - a0) * (r - r0) / (r1 - r0); break; }
+    }
+    const i = (y * N + x) * 4;
+    data[i] = data[i + 1] = data[i + 2] = 255; data[i + 3] = Math.round(a * 255);
+  }
+  glowTex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  glowTex.colorSpace = THREE.SRGBColorSpace; glowTex.magFilter = THREE.LinearFilter; glowTex.minFilter = THREE.LinearMipmapLinearFilter;
+  glowTex.generateMipmaps = true; glowTex.needsUpdate = true; glowTex.userData.shared = true;
   return glowTex;
 }
 const glowMats = new Map();
@@ -82,6 +94,7 @@ function glowSprite(color, size, intensity = 2.5) {
 }
 
 export function install(ctx) {
+  const tInstall = performance.now(), tMark = {}, mark = (k) => { tMark[k] = Math.round(performance.now() - tInstall); };
   const M = (name, fb) => {
     const m = ctx.materials?.get?.(name);
     if (m && (m.name === name || !fb)) return m;
@@ -114,17 +127,34 @@ export function install(ctx) {
   } catch (e) { console.warn('[garage] environment', e); }
   scene.environment = roomEnv; scene.environmentIntensity = 0.6;
 
-  const hangarSet = buildHangar(ctx, M);
-  const benchSet = buildBench(ctx, M);
-  benchSet.root.visible = false;
-  // the welding arc light lives in the Bench dressing: hidden with it, so the hangar's programs carry one light fewer
-  benchSet.root.add(weld);
-  scene.add(hangarSet.root, benchSet.root);
+  mark('env');
+  const hangarSet = buildHangar(ctx, M, (k) => mark('h.' + k));
+  mark('hangar');
+  // The Bench dressing is built on its first visit, not at boot: its painted canvas sign reads pixels back, which is a
+  // GPU sync point, and at boot it waited for every queued compile and the PMREM (P3 measurement: 16–19 s of the
+  // install under load, which pushed the page load past the harness's 60 s goto timeout). It is only ever needed after
+  // a level's debrief, behind a screen change.
+  let benchSet = null;
+  function ensureBench() {
+    if (benchSet) return benchSet;
+    benchSet = buildBench(ctx, M);
+    benchSet.root.visible = false;
+    // the welding arc light lives in the Bench dressing: hidden with it, so the hangar's programs carry one light fewer
+    benchSet.root.add(weld);
+    scene.add(benchSet.root);
+    return benchSet;
+  }
+  scene.add(hangarSet.root);
+  // the live layer while the bay is cached: the turntable and the mech (rig.root is swapped on rebuilds)
+  const liveLayer = [hangarSet.spin, null];
+  const backdrop = backdropCache(ctx, scene, { back: hangarSet.back, get live() { return liveLayer; } });
   let dressing = 'hangar';
   function setDressing(d) {
     dressing = d;
+    if (d === 'bench') ensureBench();
     hangarSet.root.visible = d === 'hangar';
-    benchSet.root.visible = d === 'bench';
+    if (benchSet) benchSet.root.visible = d === 'bench';
+    backdrop.setActive(d === 'hangar');
     if (d === 'hangar') {
       scene.background = new THREE.Color(0x14131a); scene.fog.color.set(0x14131a); scene.fog.near = 50; scene.fog.far = 170;
       hemi.color.set(0xd8cfc0); hemi.groundColor.set(0x1a1612); hemi.intensity = 1.1;
@@ -154,6 +184,7 @@ export function install(ctx) {
 
   // ---------------------------------------------------------------- the mech on display
   let rig = null, rigKey = '', t = 0, showcasing = false, resolveOpen = null, context = null;
+  let spin = 0;   // hangar turntable angle (rad): the platform and the mech turn together
   let working = null;   // free garage: loadout being edited
   function schemeOf(lo) {
     const f = FRAMES[lo.frame] || FRAMES.vanguard, pt = lo.paint || DEFAULT_LOADOUT.paint;
@@ -164,11 +195,12 @@ export function install(ctx) {
   function setMech(lo, o = {}) {
     const sc = schemeOf(lo), k = JSON.stringify(sc);
     const parts = { R: lo.R, L: lo.L, S: lo.S, U: lo.U };
-    const place = () => { rig.root.rotation.y = dressing === 'bench' ? 0 : Math.PI * 0.85; rig.root.position.set(0, dressing === 'bench' ? benchSet.cradleTop : 0, 0); };
+    const place = () => { rig.root.rotation.y = dressing === 'bench' ? 0 : Math.PI * 0.85 + spin; rig.root.position.set(0, dressing === 'bench' ? ensureBench().cradleTop : 0, 0); };
     if (rig && rigKey === k && !o.rebuild) { rig.setParts(parts); place(); return rig; }
     const prev = rig;
     rig = buildMech(ctx, sc, { parts });
     rigKey = k;
+    liveLayer[1] = rig.root;
     place();
     if (prev) { const kn = prev._kneel; prev.dispose(); if (dressing === 'bench') rig._kneel = kn; }
     scene.add(rig.root);
@@ -179,6 +211,7 @@ export function install(ctx) {
   }
   const idleState = () => ({ fwd: 0, lat: 0, onGround: true, pitch: dressing === 'bench' ? -0.25 : -0.15, thrust: 0, hover: 0, landT: 0, crouch: dressing === 'bench' ? 1 : 0 });
   setMech(ctx.save.getLoadout());
+  mark('mech');
 
   // ---------------------------------------------------------------- camera: slow orbit + drag
   const orbit = { yaw: 0, pitch: 0, dragYaw: 0, dragPitch: 0, dragging: false, lastX: 0, lastY: 0, idle: 0 };
@@ -198,12 +231,16 @@ export function install(ctx) {
   function placeCamera(dt) {
     const bench = dressing === 'bench';
     orbit.idle += dt;
-    if (!orbit.dragging && orbit.idle > 2.5) orbit.dragPitch = damp(orbit.dragPitch, 0, 0.6, dt);
-    if (!orbit.dragging) orbit.yaw += dt * (bench ? 0.05 : 0.12);
-    // the hangar circles the turntable; the Bench sways slowly in front of the kneeling frame (its open rear behind it)
-    const yaw = bench ? Math.PI + 0.5 * Math.sin(orbit.yaw * 0.8 - 0.6) + orbit.dragYaw : 0.6 + orbit.yaw + orbit.dragYaw;
+    if (!orbit.dragging && orbit.idle > 2.5) {
+      orbit.dragPitch = damp(orbit.dragPitch, 0, 0.6, dt);
+      if (Math.abs(orbit.dragPitch) < 0.002) orbit.dragPitch = 0;   // settle exactly, so the cached bay stops redrawing
+    }
+    // the hangar camera rests while the turntable turns (the bay behind it is a cached image, see backdropCache); the
+    // Bench sways slowly in front of the kneeling frame, its open rear behind it (rendered live)
+    if (!orbit.dragging) { if (bench) orbit.yaw += dt * 0.05; else spin -= dt * 0.12; }
+    const yaw = bench ? Math.PI + 0.5 * Math.sin(orbit.yaw * 0.8 - 0.6) + orbit.dragYaw : 0.6 + orbit.dragYaw;
     const r = bench ? 22 : 26, look = bench ? 3.9 : 5.6;
-    const pitch = clamp((bench ? 0.16 : 0.09) + orbit.dragPitch + Math.sin(t * 0.3) * 0.02, -0.05, 0.75);
+    const pitch = clamp((bench ? 0.16 : 0.09) + orbit.dragPitch + (bench ? Math.sin(t * 0.3) * 0.02 : 0), -0.05, 0.75);
     camera.position.set(Math.sin(yaw) * r * Math.cos(pitch), look + Math.sin(pitch) * r + (bench ? 0.6 : 1.6), Math.cos(yaw) * r * Math.cos(pitch));
     camera.lookAt(0, look, 0);
   }
@@ -509,8 +546,10 @@ export function install(ctx) {
   function closingKeys() {
     const w = bench.w;
     const remaining = Object.values(w.parts).some(s => s === 'fitted' || s === 'locker') || w.spares.length > 0;
+    // A3.6: gaveAll when every hauled part was given this visit, keptAll when none was; with nothing hauled this
+    // visit and nothing given there is nothing to comment on (P3 decision: only walkOn)
     if (bench.givenThisVisit > 0 && !remaining) return ['gaveAll', 'walkOn'];
-    if (bench.givenThisVisit === 0) return ['keptAll', 'walkOn'];
+    if (bench.givenThisVisit === 0 && bench.hauled > 0) return ['keptAll', 'walkOn'];
     return ['walkOn'];
   }
   function commitBench() {
@@ -541,7 +580,7 @@ export function install(ctx) {
     const levelId = o.levelId || w.pending?.levelId || Object.keys(data.legs || {})[0] || null;
     applyArrival(w);
     bench = { data, levelId, leg: data.legs?.[levelId] || null, w, undo: [], fired: new Set(), queue: [], line: null, timers: [], tab: 'FIT',
-              givenThisVisit: 0, closing: false, confirming: false, onScriptDone: () => {} };
+              givenThisVisit: 0, hauled: (raw?.pending?.haul || []).length, closing: false, confirming: false, onScriptDone: () => {} };
     const B = bench;
     B.onScriptDone = (k) => {
       if (k === 'arrive') B.timers.push({ t: 3, fn: () => trigger('hatch') });
@@ -565,6 +604,8 @@ export function install(ctx) {
     /** extra (tests): the displayed mech rig and the current dressing */
     get rig() { return rig; },
     get dressing() { return dressing; },
+    /** extra (tests): the cached hangar bay: whether it is in use and how many times it has been redrawn */
+    get backdrop() { return { active: backdrop.active, renders: backdrop.renders }; },
     get bench() {
       if (!bench || !resolveOpen) return null;
       return {
@@ -657,8 +698,9 @@ export function install(ctx) {
       if (!showcasing && !resolveOpen) return;
       t += dt;
       placeCamera(dt);
+      if (dressing === 'hangar') { hangarSet.spin.rotation.y = spin; if (rig) rig.root.rotation.y = Math.PI * 0.85 + spin; }
       if (rig) animateMech(rig, idleState(), dt);
-      if (dressing === 'bench') weld.intensity = benchSet.flicker(t, dt);
+      if (dressing === 'bench' && benchSet) weld.intensity = benchSet.flicker(t, dt);
       if (bench) commsUpdate(dt);
     },
   };
@@ -674,13 +716,23 @@ export function install(ctx) {
   // Asynchronous (the GPU process links in the background); a failure here only costs the head start.
   // With post-processing the scene renders into the composer's target (no tone mapping, linear output), which is a
   // different program than a direct render, so compile against a stand-in target in that case.
+  // The cached bay always renders into the backdrop's linear target, so its programs compile against a stand-in target
+  // on every tier; the live layer (turntable, mech, the backdrop quad) compiles against what the frame renders into.
   try {
     const R = ctx.renderer, post = !!ctx.tier?.post && !ctx.params?.has?.('nopost');
-    const rt = post ? new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType }) : null, prev = R.getRenderTarget();
-    if (rt) R.setRenderTarget(rt);
+    const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType }), prev = R.getRenderTarget();
+    const live = [hangarSet.spin, rig?.root, backdrop.quad].filter(Boolean), vis = live.map(o => o.visible);
+    R.setRenderTarget(rt);
+    live.forEach(o => { o.visible = false; }); hangarSet.back.visible = true;
     R.compileAsync?.(scene, camera)?.catch?.(() => {});
-    if (rt) { R.setRenderTarget(prev); rt.dispose(); }
+    live.forEach((o, i) => { o.visible = vis[i]; }); hangarSet.back.visible = false;
+    R.setRenderTarget(post ? rt : prev);
+    R.compileAsync?.(scene, camera)?.catch?.(() => {});
+    R.setRenderTarget(prev); rt.dispose();
+    backdrop.setActive(dressing === 'hangar');
   } catch (e) { /* the first render compiles instead */ }
+  mark('compile');
+  api.installMs = Math.round(performance.now() - tInstall); api.installMarks = tMark;   // extra (tests): what the garage adds to boot
   return api;
 }
 
@@ -709,10 +761,118 @@ function plainMat(color, roughness, metalness, env = 0.6) {
   m.userData.shared = true;
   return m;
 }
+let _canvasMat = null;
+function canvasMat() {
+  if (_canvasMat) return _canvasMat;
+  _canvasMat = plainMat('#d9cba8', 0.95, 0, 0.25);
+  _canvasMat.emissive.set('#3a2614'); _canvasMat.emissiveIntensity = 0.35; _canvasMat.name = 'benchCanvas';
+  return _canvasMat;
+}
 /** Marks every mesh of a group as excluded from the GTAO pass (pipeline's GameGTAOPass honours userData.noAO). */
 function noAO(g) { g.traverse(o => { if (o.isMesh) o.userData.noAO = true; }); return g; }
-function buildHangar(ctx, M) {
+
+/** The hangar's static bay rendered once into a colour + depth target and replayed as a full-screen quad that writes
+ *  both, so the live layer (the turntable and the mech) depth-tests against it exactly as against the real geometry.
+ *  The bay is redrawn only when the camera, the projection or the drawing-buffer size changes (a drag, a resize, the
+ *  editor's view shift), from inside scene.onBeforeRender, so it also works for a bare ctx.renderFrame() with no tick
+ *  before it (the debug API's render()). Why: the bay fills most of the title frame, and under software GL its shading
+ *  was over half the frame; the harness screenshots the title twice per shot (settle's warmup, then render), and the
+ *  title shot was timing out for every package on a loaded machine (P3 measurement: 7–18 s per frame at load 40,
+ *  ~3–4 s without the bay). Lighting, fog, lamp glows and MSAA are baked exactly as the live render would draw them.
+ *  P3 decision: the title's "slow orbit" (arch §4.3) is a turntable (arch §10.6 asks for one): the camera rests and the
+ *  platform turns, which is the same relative motion; a drag still orbits the camera. */
+function backdropCache(ctx, scene, layers) {
+  const R = ctx.renderer;
+  const mat = new THREE.ShaderMaterial({
+    name: 'garageBackdrop',
+    uniforms: { tColor: { value: null }, tDepth: { value: null } },
+    vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform sampler2D tColor; uniform sampler2D tDepth;
+      void main() {
+        ivec2 p = ivec2(gl_FragCoord.xy);
+        gl_FragColor = texelFetch(tColor, p, 0);
+        gl_FragDepth = texelFetch(tDepth, p, 0).r;
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    depthTest: true, depthWrite: true, depthFunc: THREE.AlwaysDepth, fog: false,
+  });
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+  quad.name = 'garageBackdrop'; quad.frustumCulled = false; quad.renderOrder = -1e6;
+  quad.castShadow = quad.receiveShadow = false; quad.userData.noAO = true; quad.visible = false;
+  scene.add(quad);
+  const key = new Float64Array(34), size = new THREE.Vector2();
+  let rt = null, active = false, busy = false, dirty = true, renders = 0;
+  function target(w, h, samples) {
+    if (rt && rt.width === w && rt.height === h && rt.samples === samples) return rt;
+    rt?.dispose(); rt?.depthTexture?.dispose();
+    rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+      generateMipmaps: false, depthBuffer: true, depthTexture: new THREE.DepthTexture(w, h) });
+    rt.texture.name = 'garageBackdrop';
+    mat.uniforms.tColor.value = rt.texture; mat.uniforms.tDepth.value = rt.depthTexture;
+    return rt;
+  }
+  // Boot hold: the scene's first two main renders draw only the background. The first render that shows the hangar
+  // links every one of its programs, and each link is a synchronous round trip to the GPU process; at boot that
+  // render ran before the page's load event and blocked it (P3 trace under load: one 58 s task right after
+  // DOMContentLoaded, load at 69 s, past the harness's 60 s goto timeout). Two empty renders let the load event fire
+  // first; on a real GPU the hold is two frames of the title's dark background.
+  let hold = 2;
+  const prevHook = scene.onBeforeRender;
+  scene.onBeforeRender = function (renderer, sc, cam, outer) {
+    prevHook?.call(this, renderer, sc, cam, outer);
+    if (busy || sc.overrideMaterial) return;   // the GTAO normal pass renders with an override: skip it
+    if (hold > 0) { hold--; sc.visible = false; return; }
+    if (!sc.visible) sc.visible = true;
+    if (!active) return;
+    R.getDrawingBufferSize(size);
+    const samples = outer?.samples || 0;
+    const me = cam.matrixWorld.elements, pe = cam.projectionMatrix.elements;
+    let changed = dirty || !rt || rt.width !== size.x || rt.height !== size.y || rt.samples !== samples || key[32] !== size.x || key[33] !== size.y;
+    for (let i = 0; i < 16; i++) {
+      if (key[i] !== me[i]) { key[i] = me[i]; changed = true; }
+      if (key[16 + i] !== pe[i]) { key[16 + i] = pe[i]; changed = true; }
+    }
+    key[32] = size.x; key[33] = size.y;
+    if (!changed) return;
+    busy = true;
+    const live = layers.live.filter(Boolean), vis = live.map(o => o.visible), ac = R.autoClear;
+    try {
+      target(size.x, size.y, samples);
+      for (const o of live) o.visible = false;
+      quad.visible = false; layers.back.visible = true;
+      R.setRenderTarget(rt); R.autoClear = true; R.clear();
+      R.render(sc, cam);
+      renders++;
+      dirty = false;
+    } finally {
+      R.autoClear = ac;
+      R.setRenderTarget(outer ?? null);
+      live.forEach((o, i) => { o.visible = vis[i]; });
+      layers.back.visible = false; quad.visible = true;
+      busy = false;
+    }
+  };
+  return {
+    quad,
+    get active() { return active; },
+    get renders() { return renders; },
+    /** on: the bay is drawn from the cache (hangar dressing); off: the bay renders live like everything else */
+    setActive(on) {
+      active = !!on;
+      quad.visible = active; layers.back.visible = !active;
+      if (active) dirty = true;
+    },
+    invalidate() { dirty = true; },
+    dispose() { rt?.dispose(); rt?.depthTexture?.dispose(); rt = null; },
+  };
+}
+function buildHangar(ctx, M, mark = () => {}) {
   const root = new THREE.Group(); root.name = 'hangar';
+  // two layers: the static bay (deck, walls, set, lamps), cached as a backdrop image while the camera rests (see
+  // backdropCache), and the turntable, which spins with the mech and renders live every frame
+  const back = new THREE.Group(); back.name = 'hangarBackdrop'; root.add(back);
+  const spin = new THREE.Group(); spin.name = 'turntable'; root.add(spin);
   const mats = {
     plate: M('concreteDark', { color: '#4d463e', roughness: 0.94, metalness: 0.02 }),
     steel: M('steel', { color: '#5b5e62', roughness: 0.38, metalness: 0.9 }),
@@ -722,6 +882,7 @@ function buildHangar(ctx, M) {
     deck: plainMat('#34373c', 0.52, 0.82, 0.9), wall: plainMat('#5f5850', 0.9, 0.02, 0.35), wallDark: plainMat('#423c35', 0.92, 0.02, 0.3),
   };
   const lights = [];
+  mark('mats');
   // turntable (the only shadow caster of the set besides the mech): drum, chamfered rim, hazard ring, lamp strip
   const Bt = new KIT.GeoBuilder(77);
   Bt.add(KIT.cylinder(9.3, 9.8, 0.7, 64, 0.12), mats.plate, { pos: [0, -0.35, 0] });
@@ -736,6 +897,7 @@ function buildHangar(ctx, M) {
     F.add(r < 30 ? KIT.ribbedPlate(9.8, 9.8, 0.25, { pitch: rng() < 0.5 ? 2.2 : 2.9, axis: rng() < 0.5 ? 'x' : 'y' }) : KIT.plateBox(9.8, 9.8, 0.25, 0.05),
           mats.deck, { pos: [x + 5, -0.12, z + 5], rot: [-Math.PI / 2, 0, 0], tint: 0.09 });
   }
+  mark('deck');
   // the set (no shadows, no AO): stripes, crane, towers, containers, drums, lamps
   const Bs = new KIT.GeoBuilder(80);
   for (const s of [-1, 1]) Bs.add(KIT.plateBox(0.6, 0.06, 70, 0.02), mats.stripe, { pos: [s * 14, 0.02, 2] });
@@ -746,8 +908,9 @@ function buildHangar(ctx, M) {
     const x = -40 + i * 10;
     Wb.add(KIT.panelBox(9.6, 22, 1.2, { cols: 1, rows: 3, deps: 1 }), mats.wall, { pos: [x + 5, 11, WALL], tint: 0.08 });
     Wb.add(KIT.slab(1.6, 24, 2.4, { taper: 0.82 }), mats.wallDark, { pos: [x, 12, WALL - 0.6] });
-    if (i % 2 === 1 && (i < 3 || i > 5)) lights.push(lampAssembly(Bs, root, mats, [x, 14, WALL - 1.6], [0, -0.35, -1], 0.4, '#ffb36b', 2.6));
+    if (i % 2 === 1 && (i < 3 || i > 5)) lights.push(lampAssembly(Bs, back, mats, [x, 14, WALL - 1.6], [0, -0.35, -1], 0.4, '#ffb36b', 2.6));
   }
+  mark('walls');
   Wb.add(KIT.slab(82, 1.4, 3.2), mats.wallDark, { pos: [0, 23.2, WALL - 0.8] });
   Bs.add(KIT.slab(26, 2.2, 1.8), mats.stripe, { pos: [0, 17.8, WALL - 1.2] });
   for (let i = 0; i < 7; i++) Bs.add(KIT.plateBox(3.2, 0.5, 0.4, 0.06), mats.dark, { pos: [-9.6 + i * 3.2, 17.8, WALL - 2.2] });
@@ -762,20 +925,23 @@ function buildHangar(ctx, M) {
     Bs.add(KIT.ribbedPlate(12, 5.4, 4.8, { pitch: 1.1 }), s < 0 ? mats.rust : mats.plate, { pos: [s * 30, 2.7, 16 - s * 4], rot: [0, Math.PI / 2 + s * 0.08, 0] });
     for (let k = 0; k < 4; k++) Bs.add(KIT.drum(0.65, 1.7, 2), k % 2 ? mats.rust : mats.dark, { pos: [s * 24 + (k % 2) * 1.5, 0, 20 - Math.floor(k / 2) * 1.5] });
   }
-  for (const x of [-12, 0, 12]) lights.push(lampAssembly(Bs, root, mats, [x, 18.2, 8], [0, -1, 0], 0.7, '#ffb36b', 5));
-  for (const s of [-1, 1]) lights.push(lampAssembly(Bs, root, mats, [s * 19, 12.8, 13.8], [-s * 0.3, -0.4, -1], 0.45, '#ffb36b', 3));
+  for (const x of [-12, 0, 12]) lights.push(lampAssembly(Bs, back, mats, [x, 18.2, 8], [0, -1, 0], 0.7, '#ffb36b', 5));
+  for (const s of [-1, 1]) lights.push(lampAssembly(Bs, back, mats, [s * 19, 12.8, 13.8], [-s * 0.3, -0.4, -1], 0.45, '#ffb36b', 3));
+  mark('set');
   const table = Bt.build({ name: 'hangarTable' });
   const set = noAO(Bs.build({ name: 'hangarMerged', castShadow: false, receiveShadow: true }));
   const deck = noAO(F.build({ name: 'hangarDeck', castShadow: false, receiveShadow: true }));
   const walls = noAO(Wb.build({ name: 'hangarWalls', castShadow: false, receiveShadow: false }));
-  for (const g of [table, set, deck, walls]) { g.traverse(m => { if (m.isMesh) { m.matrixAutoUpdate = false; m.updateMatrix(); } }); root.add(g); }
-  return { root };
+  for (const g of [table, set, deck, walls]) { g.traverse(m => { if (m.isMesh) { m.matrixAutoUpdate = false; m.updateMatrix(); } }); (g === table ? spin : back).add(g); }
+  return { root, back, spin };
 }
 function buildBench(ctx, M) {
   const root = new THREE.Group(); root.name = 'bench';
   const mats = {
     deck: plainMat('#2c2b2b', 0.55, 0.8, 0.8), rust: M('rust', { color: '#7a4128', roughness: 0.88, metalness: 0.35 }),
-    teal: M('paintWake', { color: '#4f8a86', roughness: 0.62, metalness: 0.28 }), canvas: M('canvas', { color: '#d9cba8', roughness: 0.95, metalness: 0 }),
+    // the canvas skin fills most of the Bench frame: a plain lit material (see plainMat), with AD §5.7's faint warm
+    // emissive for canvas lit from outside (P3 measurement: the kit shader here made the Bench frame 2.3× the title's)
+    teal: M('paintWake', { color: '#4f8a86', roughness: 0.62, metalness: 0.28 }), canvas: canvasMat(),
     dark: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }), stripe: M('stripe', { color: '#d9a521', roughness: 0.55, metalness: 0.25 }),
     housing: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }), lens: M('lightAmber', null) || ctx.materials?.emissive?.('#ffb36b', 3),
     rubber: M('rubber', { color: '#1a1918', roughness: 0.9, metalness: 0 }),
@@ -1086,3 +1252,6 @@ const BENCH_CSS = `
   .gx-big b{font-size:24px}
 }
 `;
+
+/** extra (tests and profiling): the two dressings' builders */
+export const __dressings = { buildHangar, buildBench };

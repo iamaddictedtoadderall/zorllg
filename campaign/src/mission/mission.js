@@ -41,7 +41,7 @@ import * as LO from '../combat/loadout.js';
 export const ACTION_KEYS = ['say', 'comms', 'wait', 'waitFor', 'waitComms', 'objective', 'spawn', 'despawn', 'kill', 'checkpoint',
   'trigger', 'enable', 'disable', 'event', 'cinematic', 'flyby', 'barrage', 'structure', 'fx', 'shake', 'music', 'art', 'weather',
   'hint', 'warn', 'card', 'marker', 'flag', 'player', 'choice', 'interstitial', 'fade', 'letterbox', 'codex', 'unlock', 'complete',
-  'fail', 'parallel', 'if', 'call'];
+  'fail', 'parallel', 'if', 'call', 'explain'];
 /** secondary keys allowed next to each primary key */
 const ACTION_MODS = { comms: ['wait'], waitFor: ['timeout'], flyby: ['wait'], art: ['blend'], weather: ['blend'], flag: ['persist'],
   fade: ['seconds'], letterbox: ['seconds'], if: ['then', 'else'], call: ['args'], hint: ['seconds'], warn: ['seconds', 'soft'],
@@ -289,6 +289,12 @@ export function validateLevel(def, ctx) {
       case 'parallel': if (!Array.isArray(v)) err(path, 'parallel needs a list of action lists'); else v.forEach((l, i) => list(l, `${path}.parallel[${i}]`)); break;
       case 'if': cond(v, `${path}.if`); list(a.then || [], `${path}.then`); list(a.else, `${path}.else`); if (!Array.isArray(a.then)) err(path, 'if needs then: []'); break;
       case 'call': if (typeof v !== 'string') err(path, 'call needs a name'); break;
+      case 'explain': {   // clarity pass: a first-time explainer card (ctx.hud.explain)
+        const txt = (x) => typeof x === 'string' || (isObj(x) && (typeof x.desktop === 'string' || typeof x.touch === 'string'));
+        if (!isObj(v) || !(typeof v.id === 'string' || typeof v.term === 'string') || typeof v.term !== 'string' || !txt(v.text)) err(path, 'explain needs { id, term, text, key? }');
+        else if (v.key !== undefined && !txt(v.key)) err(path, 'explain key must be text or { desktop, touch }');
+        break;
+      }
     }
   }
 
@@ -947,6 +953,7 @@ export function install(ctx) {
         if (!fn) { warnOnce('call:' + v, '[mission] unknown custom action', v); return; }
         return fn(a.args, m, ctx);
       }
+      case 'explain': ctx.hud?.explain?.(v); return;   // clarity pass (non-blocking; a seen id does nothing)
       default: warnOnce('act:' + key, '[mission] action not implemented:', key);
     }
   }

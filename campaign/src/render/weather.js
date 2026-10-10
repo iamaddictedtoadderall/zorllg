@@ -12,8 +12,9 @@ const TYPES = {
   ash:       { size: [0.05, 0.13], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8', tumble: 1 },
   snow:      { size: [0.06, 0.15], fall: 1.4, sway: 0.6, streak: 0, box: [56, 34], alpha: 0.85, add: 0, color: '#f4f8ff', tumble: 0.5 },
   rain:      { size: [0.014, 0.022], fall: 12, sway: 0, streak: 0.07, box: [26, 20], alpha: 0.55, add: 0, color: '#dfe8f2' },
-  dust:      { size: [0.03, 0.08], fall: -0.05, sway: 0.4, streak: 0, box: [40, 24], alpha: 0.9, add: 1, color: '#fff0d8' },
-  embers:    { size: [0.04, 0.07], fall: -1.8, sway: 0.8, streak: 0, box: [50, 30], alpha: 1, add: 1, color: '#ff8a3a' },
+  // dust motes only show where the sun catches them (strong forward scatter, faint otherwise); embers glow by themselves
+  dust:      { size: [0.03, 0.08], fall: -0.05, sway: 0.4, streak: 0, box: [40, 24], alpha: 0.9, add: 1, color: '#fff0d8', lit: [0.1, 2.4, 0.3] },
+  embers:    { size: [0.04, 0.07], fall: -1.8, sway: 0.8, streak: 0, box: [50, 30], alpha: 1, add: 1, color: '#ff8a3a', emit: 2.6 },
   sandstorm: { size: [0.02, 0.06], fall: 0.6, sway: 0.3, streak: 0.016, box: [30, 18], alpha: 0.4, add: 0, color: '#d8c7a8' },
 };
 
@@ -23,7 +24,8 @@ attribute vec4 aSeed;
 uniform vec3 uBox, uOffset, uCam, uVel;
 uniform float uTime, uSway, uIntensity, uStreak, uSizeA, uSizeB, uMinPx, uAlpha, uTumble;
 uniform vec2 uPx;
-uniform vec3 uColor, uSunC, uHemiC, uLightDir;
+uniform vec3 uColor, uSunC, uHemiC, uLightDir, uLit;   // uLit: sun base, forward-scatter gain, sky fill
+uniform float uEmit;
 varying vec4 vCol;
 varying vec2 vUv;
 varying float vStreak;
@@ -67,8 +69,9 @@ void main() {
   // light: sky fill plus sun, brighter looking toward the sun (forward scatter)
   vec3 vd = normalize(wp - cameraPosition);
   float fwd = pow(max(dot(vd, uLightDir), 0.0), 6.0);
-  vec3 light = uHemiC * 0.6 + uSunC * (0.35 + 1.2 * fwd);
+  vec3 light = uHemiC * uLit.z + uSunC * (uLit.x + uLit.y * fwd);
   light *= 1.0 / max(1.0, dot(light, vec3(0.3, 0.59, 0.11)) / 1.3);   // forward scatter glows, but a flake is never a lamp
+  if (uEmit > 0.0) light = vec3(uEmit * (0.8 + 0.3 * sin(uTime * (5.0 + aSeed.y * 7.0) + aSeed.z * 40.0)));   // embers: self-lit, flickering
   float edge = 1.0 - smoothstep(0.35, 0.5, max(abs(rel.x) / uBox.x, max(abs(rel.y) / uBox.y, abs(rel.z) / uBox.z)));
   float near = smoothstep(2.0, 7.0, -mv.z);   // flakes right at the lens would read as out-of-focus blobs
   float f = cFogAmount(wp);
@@ -102,6 +105,7 @@ export function install(ctx) {
     uSizeA: { value: 0.1 }, uSizeB: { value: 0.2 }, uMinPx: { value: 1.6 }, uAlpha: { value: 0 }, uPx: { value: new THREE.Vector2(1 / 640, 1 / 360) },
     uColor: { value: new THREE.Color() }, uSunC: { value: new THREE.Color() }, uHemiC: { value: new THREE.Color() },
     uLightDir: { value: new THREE.Vector3(0, 1, 0) }, uAdd: { value: 0 }, uTumble: { value: 0 },
+    uLit: { value: new THREE.Vector3(0.35, 1.2, 0.6) }, uEmit: { value: 0 },
   };
   const mat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false });
   mat.userData.shared = true;
@@ -151,6 +155,7 @@ export function install(ctx) {
       if (dur <= 0) {
         Object.assign(api.current, { ...to, wind: to.wind.slice() });
         shownType = to.type; shownK = 1; blend = null;
+        api.update(0);   // the uniforms and visibility take the new state now, not at the next tick (a paused frame shows it)
       } else {
         blend = { from: { intensity: api.current.intensity, lightning: api.current.lightning, fogBoost: api.current.fogBoost, wind: api.current.wind.slice() },
                   t: 0, dur, typeChange: to.type !== shownType };
@@ -205,6 +210,8 @@ export function install(ctx) {
       U.uIntensity.value = shownType === 'clear' ? 0 : Math.max(0, Math.min(1, c.intensity)) * shownK;
       if (colorType !== shownType) { colorType = shownType; U.uColor.value.set(T.color); }   // no per-frame string parse
       U.uAdd.value = T.add;
+      if (T.lit) U.uLit.value.fromArray(T.lit); else U.uLit.value.set(0.35, 1.2, 0.6);
+      U.uEmit.value = T.emit || 0;
       mat.blending = T.add ? THREE.AdditiveBlending : THREE.NormalBlending;
       const atm = ctx.atmosphere;
       if (atm?.sun) {

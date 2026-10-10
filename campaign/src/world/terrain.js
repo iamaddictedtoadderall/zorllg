@@ -288,7 +288,7 @@ uniform vec3 uSunCol, uSunDirT;
 varying vec4 vSurf;
 varying vec3 vTW, vTN;
 float tH, tR, tSnowW, tRockW, tHr, tLedge, tSteep, tRill, tPx;
-vec2 tGrad;
+vec2 tGrad, tRillG;
 mat2 tRot2( float a ) { float c = cos( a ), s = sin( a ); return mat2( c, -s, s, c ); }
 vec3 tPerturbH( vec3 p, vec3 n, float h, float k ) {
   vec3 sx = dFdx( p ), sy = dFdy( p ), r1 = cross( sy, n ), r2 = cross( n, sx );
@@ -367,28 +367,34 @@ const F_ALBEDO = /* glsl */`
   vec3 soilCol = mix( diffuseColor.rgb * ( 0.82 + 0.36 * soil.r ) * ( 0.86 + 0.28 * tPatch ), uPath * ( 0.9 + 0.2 * soil.r ), vSurf.a * 0.5 );
   vec3 col = mix( soilCol, rockCol, rockW ) * ( 0.86 + 0.28 * macro );
   col *= mix( 1.0, mix( soil.b, rk.b, rockW ), 0.55 ) * mix( 0.5, 1.0, vSurf.b );
-  tRill = 0.0;
+  // snow cover first: it mutes the rills below
+  tSnowW = uSnow.x * smoothstep( uSnow.y, uSnow.z, wn.y + ( soil.g - 0.5 ) * 0.15 );
+  tRill = 0.0; tRillG = vec2( 0.0 );
 #ifndef TERRAIN_LITE
   {
     // slope rills: fine gullies a few metres apart running straight downhill on soil and scree slopes (the vertex
     // lattice carries erosion only down to ≈ 16 m). The across-slope coordinate is warped by the patch and macro noise,
-    // so the rills wander, fan out round spurs and merge
+    // so the rills wander, fan out round spurs and merge. They are filtered by their own footprint (they fade once a
+    // period covers fewer than about eight pixels; derivatives taken outside any branch), and their normal comes from
+    // the analytic gradient of the rill profile, not from screen derivatives: a derivative bump of a signal this fine
+    // breaks into 2 × 2 pixel speckle on distant slopes
     float tSl = 1.0 - wn.y;
-    // rills fade once a line (≈ 1.2 m wide) gets narrower than about three pixels
+    vec2 tSd = wn.xz / max( length( wn.xz ), 1e-3 ), tPd = vec2( -tSd.y, tSd.x );
+    float tPh = dot( vTW.xz, tPd ) / 6.5 + tPatch * 1.1 + macro * 4.0;
+    float tAA = 1.0 - smoothstep( 0.06, 0.14, fwidth( tPh ) );
     float tRw = smoothstep( 0.05, 0.16, tSl ) * ( 1.0 - smoothstep( 0.4, 0.62, tSl ) ) * ( 1.0 - vSurf.a )
-              * ( 1.0 - smoothstep( 0.16, 0.42, tPx ) );
-    if ( tRw > 0.001 ) {
-      vec2 tSd = wn.xz / max( length( wn.xz ), 1e-3 );
-      float tPh = dot( vTW.xz, vec2( -tSd.y, tSd.x ) ) / 6.5 + tPatch * 2.6 + macro * 5.0 + soil.r * 0.25 * ( 1.0 - smoothstep( 0.02, 0.06, tPx ) );
-      float tTri = 1.0 - abs( fract( tPh ) - 0.5 ) * 2.0;
-      tRill = smoothstep( 0.62, 1.0, tTri ) * tRw * ( 0.55 + 0.45 * tPatch );
-      col *= 1.0 - 0.14 * tRill;
-    }
+              * tAA * ( 1.0 - 0.85 * tSnowW );
+    float tF = fract( tPh ) - 0.5, tT = clamp( ( 0.38 - abs( tF ) * 2.0 ) / 0.38, 0.0, 1.0 );
+    float tAmp = tRw * ( 0.55 + 0.45 * tPatch );
+    tRill = tT * tT * ( 3.0 - 2.0 * tT ) * tAmp;
+    // h = −0.55 m × tRill: dh/dxz = −0.55 · dRill/dphase · tPd / 6.5
+    float tDr = 6.0 * tT * ( 1.0 - tT ) / 0.38 * ( -2.0 * sign( tF ) );
+    tRillG = tPd * ( -0.55 * tDr * tAmp / 6.5 );
+    col *= 1.0 - 0.14 * tRill;
   }
 #endif
   float wet = vSurf.r * uWet * ( 1.0 - rockW * 0.5 );
   col *= 1.0 - wet * 0.35;
-  tSnowW = uSnow.x * smoothstep( uSnow.y, uSnow.z, wn.y + ( soil.g - 0.5 ) * 0.15 );
 #ifndef TERRAIN_LITE
   if ( uIce > 0.0 ) {
     // sea ice (AD §3.11): bare ice darkens toward deep blue, with two layers of pale cracks under the surface in parallax
@@ -396,7 +402,9 @@ const F_ALBEDO = /* glsl */`
     vec2 tPar = tV.xz / max( tV.y, 0.25 );
     float c1 = texture2D( tCracks, vTW.xz / 14.0 - tPar * ( 0.6 / 14.0 ) ).r;
     float c2 = texture2D( tCracks, vTW.xz / 23.0 + 0.37 - tPar * ( 2.2 / 23.0 ) ).g;
-    float tIceW = uIce * ( 1.0 - rockW ) * ( 1.0 - smoothstep( 120.0, 400.0, length( vViewPosition ) ) * 0.6 );
+    // sea ice is flat: the crack layers belong to level ice only (on a slope the network reads as a pattern drawn on it)
+    float tIceW = uIce * ( 1.0 - rockW ) * ( 1.0 - smoothstep( 0.03, 0.1, 1.0 - wn.y ) )
+                * ( 1.0 - smoothstep( 120.0, 400.0, length( vViewPosition ) ) * 0.6 );
     col = mix( col, uIceDeep, 0.35 * tIceW ) + uIceCrack * ( c1 * 0.5 + c2 * 0.22 ) * tIceW;
   }
 #endif
@@ -423,7 +431,7 @@ const F_NORMAL = /* glsl */`
 #endif
   normal = tPerturbH( - vViewPosition, normal, tMh * 4.0, uBump * ( 0.3 + 0.3 * tRockW ) * ( 1.0 - 0.6 * tSnowW ) );
 #ifndef TERRAIN_LITE
-  normal = tPerturbH( - vViewPosition, normal, -tRill, uBump * 0.9 * ( 1.0 - 0.7 * tSnowW ) );
+  normal = normalize( normal - mat3( viewMatrix ) * vec3( tRillG.x, 0.0, tRillG.y ) * uBump );
 #endif
 #ifdef TERRAIN_LITE
   normal = tPerturbH( - vViewPosition, normal, tH, uBump * 0.5 * ( 1.0 - smoothstep( 25.0, 40.0, tDist ) ) );
@@ -463,7 +471,8 @@ export class TerrainRenderer {
     this._lastCam = new THREE.Vector3(hf.bounds.x0, 50, hf.bounds.z0);
     this._lastFocus = new THREE.Vector3();
     this._moving = false; this._moveF = -1e9;
-    this._stats = { nodes: 0, pending: 0, triangles: 0, built: 0, pooled: 0, buildMs: 0, builds: 0 };
+    this._stats = { nodes: 0, pending: 0, triangles: 0, built: 0, pooled: 0, buildMs: 0, builds: 0, updateMs: 0, updateMaxMs: 0 };
+    this._buildEst = 2;           // ms, running estimate of one node build (budgeting in update())
     this._vn = createValueNoise2D(hf.seed ^ 0x51ab);
     this._setupPalette();
     this._makeMaterial();
@@ -880,6 +889,7 @@ export class TerrainRenderer {
     this._moving = this._frame - (this._moveF ?? -1e9) < MOVE_HOLD;
   }
   update(focus, cameraPos, budgetMs = 5) {
+    const tU = performance.now();
     const cam = cameraPos || focus;
     this._track(cam);
     this._lastCam.copy(cam); if (focus) this._lastFocus.copy(focus);
@@ -891,7 +901,12 @@ export class TerrainRenderer {
       let built = 0;
       for (const n of this._queue) {
         if (n.mesh) continue;
+        // a build starts only if its expected cost still fits the budget (the first one always runs, so a hole is
+        // never starved): the streaming cost per frame stays near tier.terrainBuildMs instead of overshooting by a build
+        if (built && performance.now() - t0 + this._buildEst > budgetMs) break;
+        const tb = performance.now();
         this._build(n);
+        this._buildEst = this._buildEst * 0.8 + (performance.now() - tb) * 0.2;
         built++;
         if (performance.now() - t0 >= budgetMs) break;
       }
@@ -901,6 +916,8 @@ export class TerrainRenderer {
     if (this._built > this.cacheMax || (++this._updates % 15) === 0) this._evict(cam.x, cam.z);
     this._shadows(focus || cam);
     this._count();
+    const du = performance.now() - tU;
+    this._stats.updateMs = du; this._stats.updateMaxMs = Math.max(this._stats.updateMaxMs || 0, du);
   }
   _count() {
     this._stats.nodes = this._drawn.length;
@@ -963,7 +980,8 @@ export class TerrainRenderer {
   stats() {
     return { nodes: this._stats.nodes, pending: this._stats.pending, prefetch: this._stats.prefetch || 0, triangles: this._stats.triangles, built: this._stats.built,
              pooled: this._stats.pooled, holes: this._stats.holes || 0, builds: this._stats.builds,
-             avgBuildMs: this._stats.builds ? this._stats.buildMs / this._stats.builds : 0 };
+             avgBuildMs: this._stats.builds ? this._stats.buildMs / this._stats.builds : 0,
+             updateMs: this._stats.updateMs, updateMaxMs: this._stats.updateMaxMs };
   }
   /** extra: draw calls and triangles of the drawn nodes inside a camera frustum (main-pass terrain budget) */
   measure(camera) {
