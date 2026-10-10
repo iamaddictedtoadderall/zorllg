@@ -681,11 +681,14 @@ export class Scatter {
         }
         // insertion sort of the cell indices by distance (a few dozen cells, nearly sorted by the scan order)
         for (let a = 1; a < nc; a++) { const v = _ordI[a], d = _ordD[v]; let b = a - 1; while (b >= 0 && _ordD[_ordI[b]] > d) { _ordI[b + 1] = _ordI[b]; b--; } _ordI[b + 1] = v; }
+        // instances shrink into the ground over the last 15 % of the range instead of popping (refills run every 8 m)
+        const fade2 = B.maxDist2 * 0.7225, fadeK = 1 / Math.max(1e-6, B.maxDist2 - fade2);
         for (let q = 0; q < nc; q++) {
           const arr = _ordA[_ordI[q]];
           for (let o = 0; o < arr.length; o += 19) {
             const x = arr[o + 17], z = arr[o + 18], d2 = (x - fx) * (x - fx) + (z - fz) * (z - fz);
             if (d2 > B.maxDist2) continue;
+            const sf = d2 > fade2 ? 1 - (d2 - fade2) * fadeK : 1;
             if (M.near && d2 < shadowR2 && nn < M.nearCap) {
               for (let e = 0; e < 16; e++) NI[nn * 16 + e] = arr[o + e];
               if (NC) { const t = arr[o + 16]; NC[nn * 3] = t; NC[nn * 3 + 1] = t; NC[nn * 3 + 2] = t; }
@@ -693,7 +696,8 @@ export class Scatter {
               continue;
             }
             if (n >= M.cap) continue;
-            for (let e = 0; e < 16; e++) I[n * 16 + e] = arr[o + e];
+            if (sf < 1) { for (let e = 0; e < 16; e++) I[n * 16 + e] = (e < 11 && (e & 3) !== 3) ? arr[o + e] * sf : arr[o + e]; }
+            else for (let e = 0; e < 16; e++) I[n * 16 + e] = arr[o + e];
             if (CA) { const t = arr[o + 16]; CA[n * 3] = t; CA[n * 3 + 1] = t; CA[n * 3 + 2] = t; }
             n++;
           }

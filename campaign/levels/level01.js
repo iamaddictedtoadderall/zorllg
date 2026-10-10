@@ -75,8 +75,8 @@ const ART_NIGHT = {
 };
 const ART_UNDER = {                              // Z2: blue ice-glow, no sky; the roof's underside catches the glow
   fog: { color: '#0b2a3c', density: 0.006, heightFalloff: 0, heightBase: -10, inscatter: 0.2, sunColor: '#4a7f8a' },
-  light: { sun: 0.2, sunColor: '#8fd8c8', hemiSky: '#2a6f9a', hemiGround: '#17435c', hemi: 0.75, rim: 0.8,
-           rimColor: '#6a7fb0', exposure: 1.2, env: 0.5 },
+  light: { sun: 0.2, sunColor: '#8fd8c8', hemiSky: '#2a6f9a', hemiGround: '#0d2433', hemi: 0.62, rim: 0.8,
+           rimColor: '#6a7fb0', exposure: 1.3, env: 0.5 },
   grade: { contrast: 1.12, saturation: 0.8, lift: [0, 0.008, 0.02], gain: [0.96, 1.0, 1.04],
            shadowsTint: [0.9, 0.97, 1.1], highlightsTint: [1, 1, 1], vignette: 0.42, grain: 0.04 },
   bloom: { strength: 1.2, radius: 0.65, threshold: 0.8 },
