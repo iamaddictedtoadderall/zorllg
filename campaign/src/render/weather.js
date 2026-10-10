@@ -196,7 +196,7 @@ export function install(ctx) {
       U.uSizeA.value = T.size[0] * (ctx.tier.name === 'low' ? 1.3 : 1); U.uSizeB.value = T.size[1] * (ctx.tier.name === 'low' ? 1.3 : 1);
       U.uAlpha.value = T.alpha * shownK;
       U.uIntensity.value = shownType === 'clear' ? 0 : Math.max(0, Math.min(1, c.intensity)) * shownK;
-      U.uColor.value.set(T.color);
+      if (colorType !== shownType) { colorType = shownType; U.uColor.value.set(T.color); }   // no per-frame string parse
       U.uAdd.value = T.add;
       mat.blending = T.add ? THREE.AdditiveBlending : THREE.NormalBlending;
       const atm = ctx.atmosphere;
@@ -226,7 +226,7 @@ export function install(ctx) {
   }
   let sheetAcc = 0;
   let target = { ...api.current, wind: [0, 0] };
-  let blend = null, shownType = 'clear', shownK = 1, weatherTime = 0, strikeT = 4, thunderT = 0, thunderK = 1;
+  let blend = null, shownType = 'clear', shownK = 1, weatherTime = 0, strikeT = 4, thunderT = 0, thunderK = 1, colorType = null;
 
   ctx.events.on('tier:changed', ({ tier }) => build(tier.weatherParticles || 2000));
   ctx.addSystem({ name: 'weather', phase: 'fx', when: 'always', update: (dt) => api.update(dt) });
