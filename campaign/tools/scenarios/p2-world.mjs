@@ -461,7 +461,7 @@ export default async function (g) {
     await g.eval(() => document.getElementById('p2map')?.remove());
     // close-up ground detail 50–300 m (tiling check) and a low sun-facing canyon view
     for (const [name, s, l, h, ls, ll, lh] of [['ground-detail', 1200, 0, 6, 1450, 30, -20], ['canyon-wall', 2000, -250, 25, 2150, -700, 60],
-                                                ['sun-facing', 3300, 0, 40, 3700, 100, 30]]) {
+                                                ['wall-face', 2000, 250, 40, 2050, -650, 90], ['sun-facing', 3300, 0, 40, 3700, 100, 30]]) {
       const cam = await g.eval(([s, l, h, ls, ll, lh]) => {
         const w = window.__game.ctx.world, r = w.route, p = r.toWorld(s, l), q = r.toWorld(ls, ll);
         return { pos: [p.x, w.groundHeight(p.x, p.z) + h, p.z], look: [q.x, w.groundHeight(q.x, q.z) + lh, q.z] };

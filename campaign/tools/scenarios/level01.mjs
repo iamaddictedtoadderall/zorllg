@@ -879,9 +879,13 @@ export default async function (g) {
     g.log('walk to the Bench', r);
     r = await until((ctx) => window.__l01fired.has('t_bench'), null, 4);
     g.assert(r.ok, 't_bench: the cradle reached, the naming');
+    if (SHOTS) {   // mid-cinematic: the frame at the cradle turning north, Kit's line on the comms
+      await until((ctx) => window.__l01lines.some(l => /I'm calling it Moth/.test(l.text)), null, 12, 5);
+      await step(1.2, 4);
+      await shot('z7-naming', { hud: false, settle: false });
+    }
     r = await until((ctx) => window.__l01lines.some(l => l.text === 'Designation accepted. Logged.'), null, 40);
     g.assert(r.ok, '"Designation accepted. Logged."');
-    if (SHOTS) await shot('z7-naming', { hud: false, settle: false });
     r = await until((ctx) => ctx.flow.state === 'debrief' && ctx.screens.current === 'debrief', null, 20);
     g.assert(r.ok, 'the level completes: debrief');
     const db = await ev(() => document.getElementById('screen').innerText);

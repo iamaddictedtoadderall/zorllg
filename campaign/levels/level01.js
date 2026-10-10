@@ -187,6 +187,8 @@ const STAMPS = [
   { at: { s: 3258, l: 10 }, r: 26, falloff: 14, mode: 'flatten', h: -9 },
   { at: { s: 3284, l: 15 }, r: 30, falloff: 15, mode: 'flatten', h: -3 },
   { at: { s: 3316, l: 10 }, r: 42, falloff: 25, mode: 'flatten', h: 3 },
+  // past the camp the pack-ice belt (corridor walls) is cut down, so the Thornback fills the eastern sky over the Wake
+  { at: [1840, -40], r: 280, falloff: 140, mode: 'flatten', h: 2 },
   // scatter keep-outs around set pieces (raise by 0 = no height change)
   { at: { s: 3290, l: 20 }, r: 40, falloff: 0, mode: 'raise', h: 0, noScatter: true },
   { at: { s: 1470, l: -60 }, r: 30, falloff: 0, mode: 'raise', h: 0, noScatter: true },
@@ -315,6 +317,11 @@ const ZONES = [
       { type: 'wake_rig', at: { s: 3268, l: 85 }, yaw: az(250), params: { kind: 'walker', name: 'SECOND PATIENCE', seed: 2 } },
       { type: 'wake_rig', at: { s: 3325, l: -75 }, yaw: az(200), params: { kind: 'train', name: 'BIG MERCY', seed: 3 } },
       { type: 'wake_rig', at: { s: 3312, l: 150 }, yaw: az(260), params: { kind: 'crawler', name: 'COMPASS ROSE', seed: 4 } },
+      // the camp's edge: a lamp-lit path up the beach to the Bench, a cairn of empty tanks, crates by the rigs
+      ...[[3212, -10], [3230, 32], [3248, -4], [3264, 40], [3300, -8], [3318, 44]].map(([s, l]) => ({ type: 'wake_lamp', at: { s, l }, params: { h: 7 } })),
+      { type: 'tank_cairn', at: { s: 3305, l: -28 }, params: { n: 9 } },
+      { type: 'block_stack', at: { s: 3300, l: 52 }, yaw: az(240), params: { rows: 2, crates: true } },
+      { type: 'block_stack', at: { s: 3330, l: -40 }, yaw: az(200), params: { rows: 2, crates: true } },
     ] },
 ];
 const L1_TYPES = new Set(ZONES.flatMap(z => (z.structures || []).map(e => e.type)));
