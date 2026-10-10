@@ -24,7 +24,14 @@ const RADAR_RANGE = 320;                                              // metres 
 const OBJ_LINGER = 6;                                                 // seconds a done/failed objective stays listed
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 const _scr = { x: 0, y: 0, behind: false };
-const placed = new Float32Array(128);                                 // marker label positions this frame (declutter)
+const OCC_MAX = 64;
+const occ = new Float32Array(OCC_MAX * 4);                            // screen rects taken this frame (marker declutter)
+let nOcc = 0;
+function occupy(x0, y0, x1, y1) { if (nOcc < OCC_MAX) { const k = 4 * nOcc++; occ[k] = x0; occ[k + 1] = y0; occ[k + 2] = x1; occ[k + 3] = y1; } }
+function occupied(x0, y0, x1, y1) {
+  for (let i = 0; i < nOcc; i++) { const k = 4 * i; if (x0 < occ[k + 2] && x1 > occ[k] && y0 < occ[k + 3] && y1 > occ[k + 1]) return true; }
+  return false;
+}
 
 const HUD_CSS = `
 #hud.hide-ap #status .row,#hud.hide-ap #status .apb,#hud.hide-ap #status .stb{visibility:hidden}
@@ -33,7 +40,7 @@ const HUD_CSS = `
 #hud.hide-lock #lockbox{display:none!important}
 #hud.cine>*:not(#vignette):not(#glitch):not(#scan){opacity:0!important;transition:opacity .35s}
 #hud>*{transition:opacity .35s}
-#game.cine #touch .tb:not(#tSkip):not(#tPause){opacity:0;pointer-events:none}
+#game.cine #touch .tb:not(#tSkip):not(#tPause),#game.cine #stickHome{opacity:0;pointer-events:none}
 #touch #tSkip,#touch #tPause{z-index:3}
 #game.touch #prompt kbd:not([hidden]):not(:empty){display:inline-block;font-size:10px;letter-spacing:.12em;color:var(--en);border-color:var(--en)}
 #objpanel .mrow{display:flex;gap:10px;align-items:baseline}
@@ -84,7 +91,7 @@ const HUD_CSS = `
 #choice .opts{flex-wrap:nowrap}
 #choice .opt{white-space:nowrap}
 #game.touch #choice .opts{flex-wrap:wrap}
-#choice .opt{display:flex;align-items:center;gap:0;font-family:var(--f-display);color:var(--hud);transition:border-color .15s,background .15s}
+#choice .opt{display:flex;align-items:center;gap:0;font-family:var(--f-display);color:var(--hud);text-transform:uppercase;font-size:16px;letter-spacing:.18em;transition:border-color .15s,background .15s}
 #choice .opt:hover,#choice .opt.pick{border-color:var(--accent);background:rgba(224,145,60,.18)}
 #choice .opt.pick{color:var(--accent)}
 #choice{padding:16px 26px 20px;box-sizing:border-box;background:radial-gradient(closest-side,rgba(8,8,10,.76),rgba(8,8,10,.5) 58%,rgba(8,8,10,0))}
@@ -131,24 +138,27 @@ const HUD_CSS = `
 #game.touch #vitals canvas{width:84px;height:22px}
 #game.touch #vitals .bpm{font-size:16px}
 #zonecard{top:15.5%}
-#game.touch #rack{left:calc(14px + var(--safe-l));right:auto;top:auto;bottom:170px;width:min(300px,36vw)}
+#game.touch #rack{left:calc(14px + var(--safe-l));right:auto;top:auto;bottom:184px;width:min(176px,24vw)}
+#game.touch #rack .rs{grid-template-columns:1fr;gap:3px;margin-top:4px}
 #game.touch #mname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #game.touch #objpanel{max-width:33vw}
 #game.touch #objs li{flex-wrap:wrap;column-gap:6px;row-gap:0;line-height:1.25}
 #game.touch #bossbar{top:64px}
-#game.touch #bossbar .stag{margin-top:2px}
+#game.touch #bossbar .nm{font-size:12px}
+#game.touch #bossbar .stag{margin-top:2px;font-size:10px}
 #game.touch #zonecard{top:22%}
-#game.touch #hud.boss-on #zonecard{top:106px}
-#game.touch #zonecard .t{font-size:28px}
+#game.touch #hud.boss-on #zonecard{top:114px}
+#game.touch #zonecard .t{font-size:24px;letter-spacing:.24em}
 #game.touch #zonecard .s{font-size:11px}
 #game.touch #warn{top:37%}
-#game.touch #hud.zone-on.boss-on #warn{top:calc(106px + 54px)}
+#game.touch #hud.zone-on.boss-on #warn{top:166px}
+#game.touch #checkpointToast{font-size:11px;letter-spacing:.16em;padding:5px 10px}
 #hud.zone-on.boss-on #warn{top:max(31%,calc(15.5% + 76px))}
 #markers .mk.nolabel span{visibility:hidden}
 #game.touch #prompt{top:calc(50% + 40px)}
-#game.touch #hint{bottom:84px}
+#game.touch #hint{bottom:70px}
 #game.touch #progress{top:calc(50% + 84px)}
-#game.touch #tInteract{right:calc(262px + var(--r));bottom:150px}
+#game.touch #tInteract{right:auto;bottom:auto;left:calc(50% - 212px + var(--safe-l));top:calc(50% + 24px)}
 #game.touch #rack .rc{font-size:11px;padding:0 5px;height:20px}
 #game.touch #cineSkip{display:none}
 @media (max-width:760px){#rack{width:260px;bottom:150px}#vitals{right:calc(100% + 8px);width:72px}#vitals canvas{width:72px;height:20px}#vitals .bpm{font-size:15px}#vitals .vl span.vm{display:none}}
@@ -168,6 +178,7 @@ export function install(ctx) {
     callsign: $('#callsign'), frameName: $('#frameName'), frameSub: $('#frameSub'), weapons: $('#weapons'),
     w: { R: $('#wR'), L: $('#wL'), S: $('#wS'), U: $('#wK') },
   };
+  const commsEl = $('#comms');
   const mk = (tag, cls, parent, html = '') => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; parent?.appendChild(e); return e; };
   const setText = (e, t) => { if (e && e.textContent !== t) e.textContent = t; };
   const setW = (e, f) => { if (!e) return; const s = (Math.max(0, Math.min(1, f || 0)) * 100).toFixed(1) + '%'; if (e.style.width !== s) e.style.width = s; };
@@ -413,6 +424,13 @@ export function install(ctx) {
       const tl = tear ? '' : s === 'L' ? (r.cooling ? r.label : '') : s === 'S' ? (r.cooling ? r.label : String(w.ammo)) : String(w.ammo);
       ctx.input?.setTouchLabel?.(act, tl, tear ? false : r.cooling || r.empty);
     }
+    // A1.2: the other gated touch buttons stay on screen, dimmed (OFF where the button has a sub-label)
+    if (ctx.input?.isTouch) {
+      const g = (k) => !!ab && ab[k] === false;
+      ctx.input.setTouchLabel?.('boost', g('boost') ? 'OFF' : '', g('boost'));
+      ctx.input.setTouchLabel?.('jump', g('jump') && g('hover') ? 'OFF' : '', g('jump') && g('hover'));
+      ctx.input.setTouchLabel?.('lock', g('lock') ? 'OFF' : '', g('lock'));
+    }
   }
   function partName(id) {
     const n = LO.PARTS?.[id]?.name || String(id || '');
@@ -504,6 +522,9 @@ export function install(ctx) {
     const dist = _v.distanceTo(ctx.camera.position);
     const size = clamp((t.hitR || 3) * 2.6 * pxScale() / Math.max(1, dist), 44, 170);
     lb.style.display = 'block';
+    // the lock box and its info block (name, bars, STAGGERED, distance) keep marker labels off them
+    const lx = _scr.x - size / 2, ly = _scr.y - size / 2;
+    occupy(lx, ly, lx + size + (ctx.input?.isTouch ? 130 : 160), ly + Math.max(size, 74));
     lb.style.width = lb.style.height = size.toFixed(0) + 'px';
     lb.style.transform = `translate(${(_scr.x - size / 2).toFixed(1)}px,${(_scr.y - size / 2).toFixed(1)}px)`;
     toggle(lb, 'hard', !!p.hardLock);
@@ -555,7 +576,20 @@ export function install(ctx) {
     const W = view.w, H = view.h;
     const touch = ctx.input?.isTouch;
     const mx = touch ? 70 : 56, top = touch ? 128 : 168, bot = touch ? 120 : 190;   // clear of objectives/comms/radar/boss bar and weapons
-    let n = 0, nPlaced = 0;
+    const cx = W / 2, cy = H / 2;
+    // the interaction prompt under the reticle keeps marker labels off it too
+    if (shownPrompt && el.prompt && !el.prompt.hidden) {
+      const pw = 70 + (pr.text?.textContent?.length || 0) * (touch ? 9 : 11), py = cy + (touch ? 40 : 84);
+      occupy(cx - pw / 2, py - 4, cx + pw / 2, py + 40);
+    }
+    // on touch, the right-hand button cluster and the stick's home
+    if (touch) { occupy(W - 300, H - 236, W, H); occupy(0, H - 176, 210, H); }
+    // the comms box while a line is up (its layout is fixed: left middle on desktop, top centre on touch)
+    if (commsEl && !commsEl.hidden && !commsEl.classList.contains('overblack')) {
+      if (touch) { const cw = Math.min(420, W * 0.36); occupy(W * 0.53 - cw / 2, 0, W * 0.53 + cw / 2, 76); }
+      else occupy(0, H * 0.44 - 6, 28 + Math.min(430, W * 0.4) + 36, H * 0.44 + 110);
+    }
+    let n = 0;
     for (const m of markers) {
       if (!rig || !markerPos(m, _v)) continue;
       const e = markerEl(n++);
@@ -563,11 +597,20 @@ export function install(ctx) {
       const kind = m.kind || 'objective';
       if (e.dataset.kind !== kind) { e.className = 'mk ' + kind; e.dataset.kind = kind; }
       let x = _scr.x, y = _scr.y, edge = false;
-      const cx = W / 2, cy = H / 2;
       if (_scr.behind || x < mx || x > W - mx || y < top || y > H - bot) {
         edge = true;
         let dx = x - cx, dy = y - cy;
-        if (_scr.behind) { dx = -dx; dy = -dy; if (Math.abs(dy) < 1 && Math.abs(dx) < 1) dy = 1; }
+        if (_scr.behind) {
+          // behind the camera the projection is mirrored and its vertical half is meaningless: point the way to turn.
+          // In camera space (x right, z back) a target to the side sits on that side edge; one straight behind sits at
+          // the bottom edge.
+          // A target straight behind goes to the side it is nearer (the bottom edge holds the bars, prompts and
+          // buttons), a little below the centre line.
+          _w.copy(_v).applyMatrix4(ctx.camera.matrixWorldInverse);
+          const back = Math.max(1e-3, Math.abs(_w.z));
+          dx = Math.abs(_w.x) < back * 0.6 ? (_w.x < 0 ? -1 : 1) * back * 0.6 : _w.x;
+          dy = back * (touch ? 0.05 : 0.15);   // desktop: below the comms box on the left
+        }
         const sx = (W / 2 - mx) / Math.max(1e-3, Math.abs(dx)), sy = ((dy < 0 ? cy - top : H - bot - cy)) / Math.max(1e-3, Math.abs(dy));
         const k = Math.min(sx, sy);
         x = cx + dx * k; y = cy + dy * k;
@@ -575,15 +618,13 @@ export function install(ctx) {
         const arw = e.firstChild; if (arw) arw.style.transform = `rotate(${a.toFixed(3)}rad)`;
       }
       toggle(e, 'edge', edge);
-      // declutter: a label that would sit on an earlier marker's label is dropped (the diamond stays), and so is the
-      // label of the locked target's marker (the lock box names it already)
-      // (labels are 11 px mono, about 6.6 px a character, two lines: the label and the distance)
+      // declutter: a label that would sit on an earlier marker's label, the lock box and its info, or the prompt is
+      // dropped (the diamond stays); so is the label of the locked target's own marker (the lock box names it)
+      // (labels are 11 px mono, about 6.6 px a character, two lines below the diamond: the label and the distance)
       const hw = edge ? 22 : Math.max(String(m.label ?? '').length, 6) * 3.3 + 3;
-      let clash = !!(m.target && m.target === p?.lock && !edge);
-      for (let k = 0; k < nPlaced && !clash; k++) {
-        if (Math.abs(placed[3 * k] - x) < placed[3 * k + 2] + hw && Math.abs(placed[3 * k + 1] - y) < 26) clash = true;
-      }
-      if (!clash && nPlaced < 42) { placed[3 * nPlaced] = x; placed[3 * nPlaced + 1] = y; placed[3 * nPlaced + 2] = hw; nPlaced++; }
+      const lx0 = x - hw, lx1 = x + hw, ly0 = y - 4, ly1 = y + 24;
+      const clash = !!(m.target && m.target === p?.lock && !edge) || occupied(lx0, ly0, lx1, ly1);
+      if (!clash) occupy(lx0, ly0, lx1, ly1);
       toggle(e, 'nolabel', clash);
       e.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-50%)`;
       setText(e.children[2], String(m.label ?? ''));
@@ -901,6 +942,9 @@ export function install(ctx) {
       warnings.clear(); hintT = 0; zoneT = 0; toastT = 0; glitchT = 0;
       if (CH.def) endChoice(null);
       api.progress(null); api.setCinematic(false); api.skipHint(null);
+      // a fade or the bars left by the stopped run don't carry into the new one (the level script sets its own)
+      if (api.fadeLevel !== 0 || fadeDone) api.fade(0, 0);
+      if (api.letterboxOn) api.letterbox(false, 0);
       markers = []; objSeen.clear(); objList = []; if (el.objs) el.objs.innerHTML = '';
       levelStartAt = ctx.clock.realTime;
       for (const s of SLOT4) slotGated[s] = false;
@@ -912,6 +956,7 @@ export function install(ctx) {
       glitchT = Math.max(0, glitchT - dt * 1.6);
       if (ctx.pipeline?.grade) ctx.pipeline.grade.hurt = hurtLevel;
       if (!el.hud || el.hud.hidden) return;
+      nOcc = 0;
       const p = ctx.player;
       if (p && p.active) {
         setText(el.apNum, String(Math.ceil(p.ap)));

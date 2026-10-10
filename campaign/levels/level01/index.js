@@ -21,7 +21,7 @@ import { registerIcebreaker, CutLine } from './icebreaker.js';
 import { FloeField, Sea, elevationAt } from './floes.js';
 import { Water, bubbles } from './water.js';
 import { Drown } from './drown.js';
-import { WakeLights, SteamPlume } from './skyline.js';
+import { WakeLights, SteamPlume, AbeyanceImpostor } from './skyline.js';
 import { mats, ball, shared } from './kit.js';
 
 export { ensureL1Structures };
@@ -124,6 +124,7 @@ function createRuntime(ctx, m, DATA, opts) {
   L.water = new Water(L, { underArt: L.art.ART_WATER });
   try { L.wakeLights = new WakeLights(L); } catch (e) { ctx.recordError?.('level01', e); }
   try { L.plume = new SteamPlume(L); } catch (e) { ctx.recordError?.('level01', e); }
+  try { L.abeyImp = new AbeyanceImpostor(L); } catch (e) { ctx.recordError?.('level01', e); }
   // the tow cable (harpoon on the player, the raid's harpoon on the cutter): one stretched cylinder
   const cg = new THREE.CylinderGeometry(0.07, 0.07, 1, 5); cg.translate(0, 0.5, 0); cg.rotateX(PI / 2);
   L.cable = new THREE.Mesh(cg, mats(ctx).cable); L.cable.visible = false; L.cable.castShadow = false; L.cable.frustumCulled = false;
@@ -314,7 +315,7 @@ function createRuntime(ctx, m, DATA, opts) {
     L.amb?.wind?.stop?.(0.5); L.amb = null;
     for (const hs of L.glow.values()) for (const h of hs) h?.remove?.();
     L.glow.clear();
-    L.floes?.dispose?.(); L.sea?.dispose?.(); L.wakeLights?.dispose?.(); L.plume?.dispose?.(); L.kite?.dispose?.(); L.towedSled?.dispose?.(); L.cutLine?.dispose?.();
+    L.floes?.dispose?.(); L.sea?.dispose?.(); L.wakeLights?.dispose?.(); L.plume?.dispose?.(); L.abeyImp?.dispose?.(); L.kite?.dispose?.(); L.towedSled?.dispose?.(); L.cutLine?.dispose?.();
     L.cable?.geometry?.dispose?.();
     if (ctx.l01 === L) ctx.l01 = null;
   };

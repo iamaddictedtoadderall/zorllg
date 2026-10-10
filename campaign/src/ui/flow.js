@@ -479,7 +479,9 @@ export function install(ctx) {
     ctx.simRunning = false;
     ctx.input.exitPointerLock();
     const camp = def?.campaign || null;
-    const unl = [...(def?.unlocks?.levels || []), ...(def?.unlocks?.parts || [])];
+    // what this level unlocks, by public name (level titles from the registry, part names from the catalogue)
+    const unl = [...(def?.unlocks?.levels || []).map(id => LEVELS.find(l => l.id === id)?.title || id),
+                 ...(def?.unlocks?.parts || []).map(id => LO.PARTS?.[id]?.name || id)];
     if (camp && campaignP == null) campaignData();
     const token = ++menuToken;
     (async () => {

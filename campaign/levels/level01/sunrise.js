@@ -72,6 +72,14 @@ export class LightWall {
     this.curtain.position.y = this.height / 2;
     this.curtain.renderOrder = 4; this.curtain.frustumCulled = false;
     this.root.add(this.curtain);
+    // a taller, softer glow just behind the front: the haze the new sun lights up (reads as a wall from far away)
+    this.hazeMat = new THREE.MeshBasicMaterial({ map: curtainTexture(), color: '#ff9a5c', transparent: true, opacity: 0.45 * k,
+                                                 blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+    const hg = new THREE.PlaneGeometry(this.width * 1.1, this.height * 2.4);
+    this.haze = new THREE.Mesh(hg, this.hazeMat);
+    this.haze.position.set(0, this.height * 1.2, 40);
+    this.haze.renderOrder = 3; this.haze.frustumCulled = false;
+    this.root.add(this.haze);
     this.sheetMat = new THREE.MeshBasicMaterial({ map: sheetTexture(), color: '#ffc080', transparent: true, opacity: 0.32 * k,
                                                   blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
     this.sheetLen = 3000;
@@ -125,7 +133,8 @@ export class LightWall {
     // fade out 12 s after the sweep starts
     const fade = this.t < 12 ? 1 : Math.max(0, 1 - (this.t - 12) / 2.5);
     const low = this.L.ctx.tier?.name === 'low' ? 1.3 : 1;
-    this.curtainMat.opacity = 0.85 * low * fade;
+    this.curtainMat.opacity = 0.95 * low * fade;
+    this.hazeMat.opacity = 0.45 * low * fade;
     this.sheetMat.opacity = 0.32 * low * fade;
     if (fade <= 0) this.dispose();
   }
@@ -133,7 +142,7 @@ export class LightWall {
     if (this.done) return;
     this.done = true;
     this.root.parent?.remove(this.root);
-    this.curtain.geometry.dispose(); this.sheet.geometry.dispose();
-    this.curtainMat.dispose(); this.sheetMat.dispose();
+    this.curtain.geometry.dispose(); this.sheet.geometry.dispose(); this.haze.geometry.dispose();
+    this.curtainMat.dispose(); this.sheetMat.dispose(); this.hazeMat.dispose();
   }
 }

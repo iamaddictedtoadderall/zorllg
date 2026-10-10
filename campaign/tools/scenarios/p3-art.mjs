@@ -801,6 +801,45 @@ async function garageTests(g) {
   await g.step(60 * 8);
   const ui = await g.eval(() => ({ closed: window.__benchClosed, flag: window.__game.ctx.save.getFlag('campaign') }));
   g.assert(ui.closed && ui.flag.pending === null, 'WALK ON through the UI plays the closing lines, commits and closes');
+  // A3.5 edge rules on a later visit: a duplicate arrives as a SPARE (give-only), a spare whose part was given can't be
+  // fitted, the Locker-full rule blocks a stock refit until a part is given; then the free garage hides campaignOnly frames
+  const edge = await g.eval(async () => {
+    const c = window.__game.ctx, LO = await import(new URL('src/combat/loadout.js', location.href).href);
+    const flag0 = c.save.getFlag('campaign');
+    c.save.setFlag('campaign', { v: 1, day: 1, water: 3, arms: 1, parts: { harpoon_gaff: 'fitted', shotgun_s8: 'locker', mg_r12: 'locker', msl_sw8: 'locker', blade_hx: 'locker', flare_pod: 'given' },
+      spares: ['flare_pod'], fitted: { R: 'rifle_r30', L: 'harpoon_gaff', S: 'msl_vm4' }, lost: [], fragments: {}, kernel: 4, benchVisits: 1, tearCount: 3,
+      pending: { levelId: 'l01', haul: ['shotgun_s8'], tears: 1, sledges: 0 }, ledger: { levelId: 'l01', before: 3, sledges: 0, gives: 0 } });
+    c.garage.open({ context: 'bench', levelId: 'l01' });
+    for (let i = 0; i < 1200 && !c.garage.bench; i++) await new Promise(r => setTimeout(r, 50));
+    const B = c.garage.bench, out = {};
+    out.spares = B.state().spares.slice();
+    out.full = B.fitBlock('L', 'blade_pb2');
+    out.spareOnly = B.fitBlock('S', 'flare_pod');
+    out.fitSpare = B.fit('S', 'flare_pod');
+    const w0 = B.state().water;
+    out.giveSpare = B.give('shotgun_s8');
+    const s1 = B.state(); out.afterSpare = { water: s1.water - w0, spares: s1.spares.slice(), shotgun: s1.parts.shotgun_s8 };
+    out.giveLocker = B.give('mg_r12');
+    out.unblocked = B.fitBlock('L', 'blade_pb2');
+    c.garage.close();                       // leave without WALK ON: nothing is committed
+    c.save.setFlag('campaign', flag0);
+    out.flagKept = c.save.getFlag('campaign')?.benchVisits;
+    // free garage: campaignOnly frames are not offered
+    c.garage.open({ context: 'title' });
+    out.frames = [...document.querySelectorAll('#screen [data-frame]')].map(b => b.dataset.frame);
+    out.campaignOnly = Object.values(LO.FRAMES).filter(f => f.campaignOnly).map(f => f.id);
+    c.garage.cancel();
+    return out;
+  });
+  g.log('bench edge rules:', JSON.stringify(edge));
+  g.assert(edge.spares.join() === 'flare_pod,shotgun_s8' && edge.spareOnly === 'Spares can only be given.' && !edge.fitSpare,
+    `Bench: a duplicate arrives as a SPARE and spares can't be fitted (${edge.spares}; "${edge.spareOnly}")`);
+  g.assert(edge.giveSpare && edge.afterSpare.water === 1 && edge.afterSpare.spares.join() === 'flare_pod' && edge.afterSpare.shotgun === 'locker',
+    `Bench: giving a spare removes the spare, +1 water, the owned copy stays (${JSON.stringify(edge.afterSpare)})`);
+  g.assert(edge.full === 'Locker full. Give a part first.' && edge.giveLocker && edge.unblocked === null,
+    `Bench: Locker full blocks a stock refit until a part is given ("${edge.full}" → ${edge.unblocked})`);
+  g.assert(edge.frames.length > 0 && edge.campaignOnly.every(id => !edge.frames.includes(id)),
+    `free garage hides campaignOnly frames (offered ${edge.frames.join(', ')}; hidden ${edge.campaignOnly.join(', ') || 'none defined'})`);
   // reload: the free-garage loadout is restored from the save
   await g.page.reload({ waitUntil: 'load', timeout: 240000 });   // patient: the machine may be shared and loaded
   await g.page.waitForFunction(() => window.__game && window.__game.ready, null, { timeout: 240000 });

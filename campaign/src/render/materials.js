@@ -76,6 +76,7 @@ uniform float uBareMetal;
 uniform float uFrost;        // level-wide (art.surface.frost), shared
 uniform vec3 uFrostColor;
 uniform float uFrostK;       // per material (0 for lenses and glass)
+uniform vec3 uSSS;           // per material: fake subsurface rim glow (ice, AD §4.2); black for everything else
 varying float vEdge;
 varying vec3 vObjP;
 varying vec3 vObjN;
@@ -123,6 +124,20 @@ const WEAR_FRAG = /* glsl */`
   diffuseColor.rgb = c;
 }`;
 
+// Low tier (direct render: the renderer tone-maps in the material, so TONE_MAPPING is defined only there): there is
+// no bloom, so an HDR lens would tone-map to plain white and lose its meaning. Compress the emissive radiance
+// hue-preservingly so lenses clip toward their saturated reserved colour instead (AD §7.2 rule 1): ghost lights stay
+// pale green, sodium orange, cyan cyan. High and Medium render linear HDR into the composer and keep full values.
+const EMISSIVE_LOW = /* glsl */`
+#ifdef TONE_MAPPING
+{ float em_ = max(totalEmissiveRadiance.r, max(totalEmissiveRadiance.g, totalEmissiveRadiance.b));
+  if (em_ > 1.0) totalEmissiveRadiance *= (1.0 + 0.1 * log2(em_)) / em_; }
+#endif`;
+
+// Ice's fake subsurface (AD §4.2): thin, grazing edges glow blue-white, so ice reads as translucent, not as white paint
+const SSS_FRAG = /* glsl */`
+totalEmissiveRadiance += uSSS * pow(1.0 - clamp(abs(dot(normal, normalize(vViewPosition))), 0.0, 1.0), 2.0);`;
+
 const SHARED_U = {
   tGrime: { value: null },
   uFrost: { value: 0 },
@@ -140,7 +155,8 @@ function wearPatch(shader) {
     .replace('#include <common>', '#include <common>\n' + WEAR_FRAG_PARS)
     .replace('#include <color_fragment>', '#include <color_fragment>\n' + WEAR_FRAG)
     .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + wRough, 0.04, 1.0);')
-    .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, uBareMetal, wChip) * (1.0 - 0.8 * wFrost);');
+    .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, uBareMetal, wChip) * (1.0 - 0.8 * wFrost);')
+    .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + SSS_FRAG + EMISSIVE_LOW);
   if (cu.tDetail) {
     fs = fs.replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' +
       'normal = cPerturb(-vViewPosition, normal, cDetH, uDetailBump * (1.0 - smoothstep(30.0, 90.0, length(vViewPosition))));');
@@ -237,6 +253,7 @@ export function install(ctx) {
       uBare: { value: new THREE.Color(o.bare ?? BARE[o.style ?? 0]) },
       uBareMetal: { value: o.bareMetal ?? (o.style === 3 ? 0.05 : 0.85) },
       uFrostK: { value: o.frostK ?? 1 },
+      uSSS: { value: new THREE.Color(o.sss ?? 0x000000) },
     };
     if (o.detail && textures[o.detail]) {
       cu.tDetail = { value: textures[o.detail] };
@@ -269,7 +286,7 @@ export function install(ctx) {
         if (name === 'concrete' || name === 'concreteDark') { o.detail = 'concrete'; o.bump = 0.6; }
         if (name === 'rock') { o.detail = 'rock'; o.bump = 0.8; o.flatShading = true; }
         if (name === 'steel' || name === 'steelDark' || name === 'mirror') { o.detail = 'metal'; o.bump = 0.05; }
-        if (name === 'ice') { o.emissive = '#0a3a5a'; o.emissiveIntensity = 0.12; }
+        if (name === 'ice') { o.emissive = '#0a3a5a'; o.emissiveIntensity = 0.12; o.sss = new THREE.Color('#9cc4dc').multiplyScalar(0.3); }
         m = kitMaterial(o);
       }
     } else if (E) {

@@ -63,6 +63,7 @@ const ART_NIGHT = {
          sun: { azimuth: 350, elevation: 58, color: '#7fd0c8', size: 0, glow: 0 },   // starlight key; no visible disc
          stars: 1.0, clouds: { cover: 0.12, color: '#1a2440', speed: 0.3 },
          ridges: { height: 1.2, color: '#0b1222', layers: 2 },
+         moon: { azimuth: 214, elevation: -30, size: 0, color: '#8e7f78' },   // no moon: starlight and aurora only
          aurora: AURORA, dawnRim: RIM(1) },
   fog: { color: '#141d33', density: 0.0011, heightFalloff: 0.02, heightBase: -10, inscatter: 0.3, sunColor: '#4a7f8a' },
   light: { sun: 0.9, sunColor: '#8fd8c8', hemiSky: '#3a5a8c', hemiGround: '#0a1020', hemi: 1.3,
@@ -143,6 +144,22 @@ const DATA = {
   tick: { park0: { s: 90, l: 70 } },
 };
 
+/** x of the sawn shelf edge at z (the DATA.shelfEdge polyline) */
+function edgeXAt(z) {
+  const P = DATA.shelfEdge;
+  if (z <= P[0][1]) return P[0][0];
+  for (let i = 0; i + 1 < P.length; i++) {
+    const [x0, z0] = P[i], [x1, z1] = P[i + 1];
+    if (z <= z1) return x0 + (x1 - x0) * (z - z0) / (z1 - z0);
+  }
+  return P[P.length - 1][0];
+}
+function edgeDiscs() {
+  const out = [];
+  for (let z = -470; z <= 470; z += 20) out.push({ at: [Math.round(edgeXAt(z) + 2 + 25), z], r: 25, falloff: 6, mode: 'flatten', h: -70, noScatter: true });
+  return out;
+}
+
 // ── terrain stamps (L1 §2.4, §17; order matters: stamps apply in sequence) ─────────────────────────────────────
 const STAMPS = [
   // Z1 bay, flat at the shelf surface
@@ -157,15 +174,19 @@ const STAMPS = [
   { at: { s: 1440 }, r: 150, falloff: 40, mode: 'flatten', h: 0 },
   { at: { s: ABEY_S }, r: 60, falloff: 20, mode: 'flatten', h: 0, noScatter: true },
   ...[1760, 1880, 2000, 2120].flatMap(s => [-260, 0, 260].map(l => ({ at: { s, l }, r: 170, falloff: 50, mode: 'flatten', h: 0 }))),
-  // open water: the seabed at -70 east of the shelf edge (x 655..1360); the cliff face hides the 640..655 transition
+  // open water: the seabed at -70 east of the shelf edge (x 655..1360)
   ...[760, 860, 960, 1060, 1160, 1255].flatMap(x => [-330, -220, -110, 0, 110, 220, 330].map(z =>
       ({ at: [x, z], r: 100, falloff: 15, mode: 'flatten', h: -70, noScatter: true }))),
-  // shore-fast ice and the stepped beach ramp
+  // ...and right up to the sawn edge: a chain of small discs whose rim follows the cliff face, so the drop happens
+  // inside the 10 m thick ice_cliff wall (no shelf strip or scalloped slope shows on the water side)
+  ...edgeDiscs(),
+  // shore-fast ice (s 3130..~3200, where the hole is) and the stepped beach ramp east of it: the steps are small enough
+  // that none reaches back over the fast ice (the kneel, the hole, Tick and the flare road stay flat at -21)
   { at: { s: 3165, l: -20 }, r: 70, falloff: 15, mode: 'flatten', h: -21, noScatter: true },
-  { at: { s: 3215, l: 0 }, r: 60, falloff: 20, mode: 'flatten', h: -15 },
-  { at: { s: 3250, l: 0 }, r: 60, falloff: 20, mode: 'flatten', h: -9 },
-  { at: { s: 3285, l: 0 }, r: 60, falloff: 20, mode: 'flatten', h: -3 },
-  { at: { s: 3320, l: 0 }, r: 70, falloff: 25, mode: 'flatten', h: 3 },
+  { at: { s: 3232, l: 5 }, r: 24, falloff: 14, mode: 'flatten', h: -15 },
+  { at: { s: 3258, l: 10 }, r: 26, falloff: 14, mode: 'flatten', h: -9 },
+  { at: { s: 3284, l: 15 }, r: 30, falloff: 15, mode: 'flatten', h: -3 },
+  { at: { s: 3316, l: 10 }, r: 42, falloff: 25, mode: 'flatten', h: 3 },
   // scatter keep-outs around set pieces (raise by 0 = no height change)
   { at: { s: 3290, l: 20 }, r: 40, falloff: 0, mode: 'raise', h: 0, noScatter: true },
   { at: { s: 1470, l: -60 }, r: 30, falloff: 0, mode: 'raise', h: 0, noScatter: true },
@@ -204,6 +225,7 @@ const ZONES = [
       ridge({ s: 165, l: 140 }, 'route', 270, 12, 4),                                 // south wall
       ridge({ s: 312, l: -40 }, 'route', 62, 16, 5),                                  // the east gully, north side
       ridge({ s: 312, l: 40 }, 'route', 62, 16, 6),                                   // the east gully, south side
+      { type: 'cut_lines', at: { s: 150, l: 0 }, yaw: 'route', params: { w: 220, d: 250, step: 15, seed: 3 } },
       { id: 'snowBridge', type: 'snow_bridge', at: { x: -1107, z: 32, y: 0 }, yaw: 'route', params: { span: 70, width: 56 }, state: 'intact' },
     ] },
 
@@ -223,6 +245,9 @@ const ZONES = [
       { type: 'founders_pod', at: { s: 430, l: 26 }, yaw: az(200), params: { size: 1 } },
       { type: 'founders_pod', at: { s: 540, l: -26 }, yaw: az(40), params: { size: 1.2 } },
       ...[[505, -14], [515, 12], [528, -4], [540, 18]].map(([s, l], i) => ({ type: 'ice_pillar', at: { s, l }, params: { h: 18, r: 4, seed: 80 + i } })),
+      // rubble heaps along the trench walls (the floor is otherwise bare; the middle stays clear for the walk)
+      ridge({ s: 455, l: 20 }, 'route', 22, 5, 40, { rubble: true }), ridge({ s: 482, l: -21 }, 'route', 26, 6, 41, { rubble: true }),
+      ridge({ s: 572, l: 20 }, 'route', 20, 5, 42, { rubble: true }), ridge({ s: 598, l: -17 }, 'route', 16, 4, 43, { rubble: true }),
       { id: 'shaft', type: 'shaft_ring', at: { s: 625 }, yaw: 'route', params: { r: 12, h: 34, door: 11 } },
     ] },
 
@@ -266,7 +291,9 @@ const ZONES = [
       { type: 'block_stack', at: { s: 1405, l: 95 }, yaw: az(40), params: { rows: 3 } },
     ] },
 
-  { id: 'z_cutline', range: [1700, 2500], name: 'The Cut-line', card: { title: 'THE CUT-LINE', sub: 'Dredge harvest ground' },
+  // Z5/Z6 meet at s 2460, not L1's 2500: the guaranteed Raft fragment where Moth surfaces (cp_floes, s 2470) must count as
+  // the floes, or a restart there would announce THE CUT-LINE (zones enter 10 m inside their range, arch §5.11)
+  { id: 'z_cutline', range: [1700, 2460], name: 'The Cut-line', card: { title: 'THE CUT-LINE', sub: 'Dredge harvest ground' },
     // the pre-dawn art is applied by onEnter so that re-entering after the sunrise keeps the dawn (index.js re-asserts it)
     art: ART_PREDAWN, artBlend: 6, music: DREDGE,
     structures: [
@@ -275,8 +302,10 @@ const ZONES = [
       ...cliffSegments(DATA.shelfEdge),
     ] },
 
-  { id: 'z_floes', range: [2500, 3130], name: 'The Floes', card: { title: 'THE FLOES' },
-    art: ART_FLOES, artBlend: 4, music: DAWN },
+  // no zone music: the dawn theme comes with the surfacing (events.finale, onCheckpoint.cp_floes), so a player who
+  // wanders east across the Raft during the night fight doesn't get it early
+  { id: 'z_floes', range: [2460, 3130], name: 'The Floes', card: { title: 'THE FLOES' },
+    art: ART_FLOES, artBlend: 4 },
 
   { id: 'z_shore', range: [3130, 3400], name: 'The Shore', card: { title: 'THE SHORE', sub: 'The Wake' },
     art: ART_SHORE, artBlend: 6,
@@ -755,15 +784,19 @@ const def = {
       { t: 0, pos: { s: 381, l: -23, h: 9.5 }, look: { s: 376, l: -27, h: 9.5 }, fov: 30 },
       { t: 3, pos: { s: 370, l: -12, h: 8 },   look: { s: 377, l: -26, h: 7 },   fov: 42, ease: 'inOut' },
       { t: 6, pos: { s: 357, l: 2, h: 10 },    look: { s: 377, l: -26, h: 6 },   fov: 50, ease: 'inOut' } ] },
+    // high in floor 3's south-west corner, over Moth's shoulder to the mark on the north wall
     stencil: { letterbox: false, hideHud: false, skippable: false, keys: [
-      { t: 0,   pos: abey(4, 74, 2), look: abey(-14, 71, -1), fov: 48 },
-      { t: 2.5, pos: abey(2, 73, 0), look: abey(-14, 72, -1), fov: 42 } ] },
+      { t: 0,   pos: abey(10, 84, 16), look: abey(-14, 72, -1), fov: 52 },
+      { t: 2.5, pos: abey(8, 82, 13),  look: abey(-14, 73, -1), fov: 46 } ] },
+    // out past the east face, above the crown's roost: the field, the Icebreaker at the edge, the Raft, the floes, the rim
     cutlineReveal: { skippable: true, keys: [
-      { t: 0, pos: abey(6, 136, -8), look: { x: 600, z: -200, y: 10 }, fov: 45 },
-      { t: 7, pos: abey(10, 134, -14), look: { x: 900, z: 0, y: -10 }, fov: 38, ease: 'inOut' } ] },
+      { t: 0, pos: abey(0, 152, -34), look: { x: 600, z: -160, y: 0 }, fov: 46 },
+      { t: 7, pos: abey(2, 148, -62), look: { x: 900, z: 0, y: -10 }, fov: 40, ease: 'inOut' } ] },
+    // behind Moth's left shoulder on the fast ice (the hatch never in view), looking north-east past the hole to where the
+    // watching Gleaners hang in the gold air (L1 §10.3 c_ballast)
     shoreKneel: { skippable: false, keys: [
-      { t: 0,  pos: { s: 3165, l: 25, h: 7 }, look: { s: 3183, l: -16, h: 4 }, fov: 40 },
-      { t: 18, pos: { s: 3170, l: 35, h: 9 }, look: { s: 3183, l: -16, h: 4 }, fov: 36, ease: 'linear' } ] },
+      { t: 0,  pos: { s: 3142, l: 2, h: 8 },  look: { x: 1440, z: -180, y: 4 }, fov: 42 },
+      { t: 18, pos: { s: 3150, l: -2, h: 9 }, look: { x: 1440, z: -180, y: 6 }, fov: 36, ease: 'linear' } ] },
     naming: { skippable: false, keys: [
       { t: 0,  pos: { s: 3262, l: 62, h: 8 }, look: { s: 3282, l: 20, h: 7 }, fov: 42 },
       { t: 15, pos: { s: 3254, l: 42, h: 6 }, look: { s: 3282, l: 20, h: 8 }, fov: 38, ease: 'inOut' } ] },

@@ -130,6 +130,8 @@ export function mats(ctx) {
     snow: S({ color: '#e8eef5', roughness: 0.78, metalness: 0, envMapIntensity: 0.4 }),
     ceramic: S({ color: '#e9e6dc', roughness: 0.35, metalness: 0.05, envMapIntensity: 0.7, wear: 0.4 }),
     ceramicAged: S({ color: '#b8b0a0', roughness: 0.5, metalness: 0.05, envMapIntensity: 0.6, wear: 0.7 }),
+    // a century of ice and grime on the Abeyance's plates (same program as ceramicAged)
+    ceramicGrey: S({ color: '#8f897d', roughness: 0.55, metalness: 0.05, envMapIntensity: 0.6, wear: 0.7 }),
     goldDead: S({ color: '#8a7440', roughness: 0.4, metalness: 0.9, envMapIntensity: 0.9 }),
     gold: S({ color: '#c99a3e', roughness: 0.32, metalness: 1.0, envMapIntensity: 1.1, wear: 0.4 }),
     iron: S({ color: '#1c1b1d', roughness: 0.62, metalness: 0.55, envMapIntensity: 0.7, wear: 0.6 }),
@@ -271,7 +273,7 @@ export function cached(ctx, key, make, o = {}) {
     // LOD1: rebuild with the lodFilter (big pieces only) into one vertex-coloured mesh
     const L = new Builder();
     (o.lodMake || make)(L, true);
-    lod = L.single();
+    lod = L.single(o.lodColorOf);
   }
   const parts = B.merged();
   e = { parts, lod, extra, tris: B.tris };

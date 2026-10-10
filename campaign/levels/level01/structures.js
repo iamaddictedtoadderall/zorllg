@@ -65,6 +65,35 @@ export function signMesh(ctx, text, w, h, o = {}) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════════ Z1 · the cut
+// Old cut lines (L1 §2.6 Z1): long dark refrozen saw cuts in a grid across the bay floor, some broken off, some
+// doubled. Flat strips just proud of the snow (no colliders), one material: they tell the story of the Wake's cutting and
+// give the empty bay a texture the eye can travel along toward the gully.
+type('cut_lines', {
+  params: { w: 200, d: 240, step: 16, seed: 1 },
+  footprint: (p) => ({ shape: 'rect', w: p.w, d: p.d, flatten: false, pad: 0, exclude: 0, h: 'auto' }),
+  colliders: () => [],
+  build(ctx, p) {
+    const M = mats(ctx);
+    return part(ctx, `cut_lines:${p.w}:${p.d}:${p.step}:${p.seed}`, (B) => {
+      const rng = rngFor('cuts' + p.seed);
+      const line = (x0, z0, x1, z1) => {
+        const len = Math.hypot(x1 - x0, z1 - z0); if (len < 2) return;
+        const a = Math.atan2(x1 - x0, z1 - z0);
+        B.add(slab(q5(0.5 + rng() * 0.3), 0.08, q5(len), 0.02), M.iceDeep, (x0 + x1) / 2, 0.05, (z0 + z1) / 2, 0, a, 0);
+      };
+      // lines across (x) and along (z), each in a few broken runs, with a slight wander
+      for (let x = -p.w / 2 + p.step / 2; x < p.w / 2; x += p.step * (0.8 + rng() * 0.5)) {
+        let z = -p.d / 2 + rng() * 20;
+        while (z < p.d / 2) { const run = 18 + rng() * 60, dx = (rng() - 0.5) * 1.2; line(x, z, x + dx, Math.min(p.d / 2, z + run)); z += run + 4 + rng() * 26; }
+      }
+      for (let z = -p.d / 2 + p.step / 2; z < p.d / 2; z += p.step * (1.1 + rng() * 0.8)) {
+        let x = -p.w / 2 + rng() * 20;
+        while (x < p.w / 2) { const run = 14 + rng() * 50, dz = (rng() - 0.5) * 1.2; line(x, z, Math.min(p.w / 2, x + run), z + dz); x += run + 6 + rng() * 30; }
+      }
+    }, { castShadow: false });
+  },
+});
+
 type('ice_block', {
   params: { w: 6, h: 3, d: 6 },
   states: {
@@ -337,7 +366,7 @@ type('ice_vault', {
       const rng = rngFor('vault' + p.seed), S = p.span, D = p.depth;
       // the roof is shelf ice lit through from above: a glowing core slab, darker haunches, snow on top
       B.add(slab(S * 0.5, 3.4, D, 0.5), M.iceGlow, 0, 1.7, 0);
-      for (const s of [-1, 1]) B.add(slab(S * 0.32, 3.6, D, 0.5), M.iceDeep, s * S * 0.36, 0.6, 0, 0, 0, s * 0.16);
+      for (const s of [-1, 1]) B.add(slab(S * 0.32, 3.6, D, 0.5), M.ice, s * S * 0.36, 0.6, 0, 0, 0, s * 0.16);
       B.add(slab(S * 0.98, 0.7, D * 0.98, 0.3), M.snow, 0, 3.2, 0, 0, 0, 0);
       // pressure cracks under the roof: thin zig-zag seams across the glow (short jittered segments, so from below
       // they read as cracks, not as beams)
@@ -776,10 +805,10 @@ type('bench_crawler', {
         B.add(slab(0.7, 0.7, 13, 0.12), M.hazard, s * 4.4, 17.6, 2.5, -0.25, s * 0.15, 0);
         B.add(cyl(0.06, 0.06, 8, 5), M.cable, s * 3.6, 13.8, -3.6);
       }
-      B.add(cyl(0.6, 0.4, 0.8, 10), M.dark, 0, 14.4, -4); B.add(cyl(0.4, 0.4, 0.06, 10), M.white, 0, 13.98, -4);
+      B.add(cyl(0.6, 0.4, 0.8, 10), M.dark, 0, 14.4, -4); B.add(cyl(0.4, 0.4, 0.06, 10), M.tungsten, 0, 13.98, -4);   // the work lamp (Wake tungsten, AD §1.6)
       if (!lod) for (let i = 0; i < 5; i++) B.add(slab(0.3, 3.2, 1.6, 0.05), [M.oxide, M.iron, M.ceramicAged][i % 3], 6.9, 4.2, 6 + i * 2.2);
     }, { lod: true });
-    const a = new THREE.Object3D(); a.position.set(0, 13.9, -4); glowAnchor(a, { color: '#fff1d6', size: 3.2, intensity: 3.5, pulse: 'none' }); r.root.add(a);
+    const a = new THREE.Object3D(); a.position.set(0, 13.9, -4); glowAnchor(a, { color: '#ffc58a', size: 3.4, intensity: 3.5, pulse: 'none' }); r.root.add(a);
     const b = new THREE.Object3D(); b.position.set(0, 10.2, 12.2); glowAnchor(b, { color: '#ffb36b', size: 3, intensity: 2.5, pulse: 'flicker' }); r.root.add(b);
     const s = signMesh(ctx, 'THE BENCH', 6, 1.1, { bg: '#4f8a86', color: '#efe4cc', weathered: 0.6, w: 512, h: 96 });
     if (s) { s.position.set(6.62, 6.2, 14); s.rotation.y = PI / 2; r.root.add(s); }

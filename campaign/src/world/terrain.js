@@ -34,11 +34,12 @@ import { createValueNoise2D, tileable2 } from '../core/noise.js';
 
 const ROOT = 1024, MIN = 128, MAXL = 3;
 const SPLIT_CAP = 1.8;
-const POOL_SPARE = 16;
-const RETAIN = 240;            // selections a built but unused node is kept (update() selects once or twice per frame)
+const POOL_SPARE = 12;
+const RETAIN = 240;            // selections a node stays built after it was last drawn (update() selects once or twice per frame)
+const MOVE_HOLD = 90;          // selections prefetching continues after the camera last moved
 const _col = new THREE.Color(), _c2 = new THREE.Color();
-const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, curv: 0, inside: false };
-const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere();
+const _bk = { flow: 0, bed: 0, path: 0, sky: 1, sun: 1, slope: 0, curv: 0, inside: false };
+const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere(), _dc = new THREE.Vector3();
 
 // ====================================================================== detail textures (AD §3.6), cached
 const TEX_CACHE = new Map();
@@ -204,7 +205,16 @@ function detailTextures(style, size, aniso) {
     o[1] = 0.6 * N4(u * 4, v * 4) + 0.4 * N8(u * 8, v * 8);
     o[2] = B(u * 32, v * 32); o[3] = 1;
   });
-  T = { soil, rock, noise };
+  // sea-ice cracks (AD §3.11): thin Worley-edge lines (R: a fine network, G: a wider, sparser one), seen in parallax
+  const Wk = worley(s + 31, 12), Wk2 = worley(s + 33, 5);
+  const cracks = makeData(Math.min(512, size), (u, v, o) => {
+    const uu = u + 0.01 * (E(u * 4 + 0.2, v * 4) - 0.5), vv = v + 0.01 * (E(u * 4, v * 4 + 0.6) - 0.5);
+    const a = Wk(uu, vv, _wo), b = Wk2(uu, vv, _wo2);
+    o[0] = smooth(0.03, 0.0, a.f2 - a.f1) * (hash1(a.id + 3) > 0.25 ? 1 : 0.35);
+    o[1] = smooth(0.05, 0.0, b.f2 - b.f1) * (0.6 + 0.4 * hash1(b.id + 9));
+    o[2] = 0; o[3] = 1;
+  });
+  T = { soil, rock, noise, cracks };
   for (const t of Object.values(T)) t.anisotropy = aniso;
   TEX_CACHE.set(key, T);
   return T;
@@ -265,14 +275,17 @@ const V_OUT = /* glsl */`
   vTN = inverseTransformDirection( transformedNormal, viewMatrix );
 `;
 const F_PARS = /* glsl */`
-uniform sampler2D tSoil, tRock, tNoise, tStrata;
+uniform sampler2D tSoil, tRock, tNoise, tStrata, tCracks;
+uniform float uIce;
+uniform vec3 uIceDeep, uIceCrack;
 uniform vec2 uRockSlope;
 uniform vec3 uStrata, uSnow, uSnowColor, uPath;
+uniform vec2 uStrataDip;
 uniform float uWet, uGloss, uBump, uSparkle, uSoilTexel;
 uniform vec3 uSunCol, uSunDirT;
 varying vec4 vSurf;
 varying vec3 vTW, vTN;
-float tH, tR, tSnowW, tRockW, tHr;
+float tH, tR, tSnowW, tRockW, tHr, tLedge, tSteep, tRill;
 vec2 tGrad;
 mat2 tRot2( float a ) { float c = cos( a ), s = sin( a ); return mat2( c, -s, s, c ); }
 vec3 tPerturbH( vec3 p, vec3 n, float h, float k ) {
@@ -301,7 +314,9 @@ const F_ALBEDO = /* glsl */`
   }
   soil = mix( soil, texture2D( tSoil, tRot2( 0.83 ) * vTW.xz * 0.027 ), 0.35 );
   vec3 bw = pow( abs( wn ), vec3( 4.0 ) ); bw /= dot( bw, vec3( 1.0 ) );
-  vec4 rk = texture2D( tRock, vTW.zy * 0.06 ) * bw.x + texture2D( tRock, vTW.xz * 0.06 ) * bw.y
+  // the top projection takes the soil map, rotated and coarser: the rock map's bed lines and joints seen from above
+  // would draw a straight-line grid across every moderate rock slope
+  vec4 rk = texture2D( tRock, vTW.zy * 0.06 ) * bw.x + texture2D( tSoil, tRot2( 0.52 ) * vTW.xz * 0.043 ) * bw.y
           + texture2D( tRock, vTW.xy * 0.06 ) * bw.z;
 #else
   vec4 rk = texture2D( tRock, vec2( vTW.x + vTW.z, vTW.y ) * 0.06 );
@@ -310,27 +325,73 @@ const F_ALBEDO = /* glsl */`
   float tFar = smoothstep( 180.0, 1200.0, length( vViewPosition ) );
   rk = mix( rk, vec4( 0.48, 0.5, 0.86, 0.86 ), tFar * 0.55 );
   soil = mix( soil, vec4( 0.5, 0.45, 0.9, 0.82 ), tFar * 0.4 );
-  float macro = texture2D( tNoise, vTW.xz * 0.0024 ).r;
+  vec4 tMac = texture2D( tNoise, vTW.xz * 0.0024 );     // 420 m tile: r macro brightness, g bed warp
+  float macro = tMac.r;
   float rockW = smoothstep( uRockSlope.x, uRockSlope.y, 1.0 - wn.y + ( soil.g - 0.5 ) * 0.12 );
-  float band = vTW.y / uStrata.x + ( texture2D( tNoise, vTW.xz * 0.0015 ).g - 0.5 ) * uStrata.y + rk.g * 0.15;
-  // explicit gradients of the unwrapped band: fract() would jump at every wrap and pick the smallest mip there (a line)
-  // two scales of layering: the ramp's fine beds (period strataHeight) and thick formations (≈ 4.3 × the period, offset
-  // along the ramp) that give a cliff a few big colour changes. The fine beds blur out with distance (a wider footprint
-  // on the ramp) so a far wall shows formations, not dozens of evenly spaced lines.
+  // bedding planes: a gentle seeded dip (2 to 4 degrees) so long walls show slanting beds, warped at two scales (≈ 400 m
+  // rolls and ≈ 40 m wobbles) so no boundary runs ruler-straight
+  float band = ( vTW.y + dot( vTW.xz, uStrataDip ) ) / uStrata.x
+             + ( tMac.g - 0.5 ) * uStrata.y
+             + ( texture2D( tNoise, tRot2( 1.9 ) * vTW.xz * 0.0045 ).r - 0.5 ) * 0.9 + rk.g * 0.15;
+  // colour comes in two scales: formations (≈ 17 strataHeights per ramp cycle: a cliff shows a few thick bands of
+  // different rock) and the fine beds inside them, which only modulate brightness (±15 %) and blur out with distance.
+  // Hue-alternating fine stripes on every metre of a wall read as a zebra. Explicit gradients of the unwrapped bands:
+  // fract() would jump at every wrap and pick the smallest mip there (a line).
   float tBlur = 1.0 + 6.0 * smoothstep( 150.0, 700.0, length( vViewPosition ) );
-  vec3 strataCol = textureGrad( tStrata, vec2( fract( band ), 0.5 ), vec2( dFdx( band ) * tBlur, 0.0 ), vec2( dFdy( band ) * tBlur, 0.0 ) ).rgb;
+  vec3 fineCol = textureGrad( tStrata, vec2( fract( band ), 0.5 ), vec2( dFdx( band ) * tBlur, 0.0 ), vec2( dFdy( band ) * tBlur, 0.0 ) ).rgb;
+  float band3 = band * 0.058 + 0.37;
+  vec3 formCol = textureGrad( tStrata, vec2( fract( band3 ), 0.5 ), vec2( dFdx( band3 ), 0.0 ), vec2( dFdy( band3 ), 0.0 ) ).rgb;
+  float tFL = dot( fineCol, vec3( 0.299, 0.587, 0.114 ) ), tML = dot( formCol, vec3( 0.299, 0.587, 0.114 ) );
+  vec3 strataCol = formCol * mix( 1.0, clamp( tFL / max( tML, 0.03 ), 0.7, 1.35 ), 0.4 );
   float band2 = band * 0.233 + 0.37;
-  vec3 formCol = textureGrad( tStrata, vec2( fract( band2 ), 0.5 ), vec2( dFdx( band2 ), 0.0 ), vec2( dFdy( band2 ), 0.0 ) ).rgb;
-  strataCol = mix( formCol, strataCol, 0.45 );
-  vec3 rockCol = mix( diffuseColor.rgb, strataCol, uStrata.z ) * ( 0.62 + 0.76 * rk.r );
+  // strong banding belongs on cliffs; moderate rock slopes take a softer share of it (stripes painted across a 30 degree
+  // hillside read as contour lines)
+  tSteep = smoothstep( uRockSlope.y - 0.05, uRockSlope.y + 0.3, 1.0 - wn.y );
+  // fractures and joints are cliff detail: on moderate rock slopes they read as scratches, so they fade there
+  float tRd = 0.25 + 0.75 * tSteep;
+  rk.rb = mix( vec2( 0.5, 0.9 ), rk.rb, tRd );
+  vec3 rockCol = mix( diffuseColor.rgb, strataCol, uStrata.z * ( 0.4 + 0.6 * tSteep ) ) * ( 0.62 + 0.76 * rk.r );
+  // ledges for the bump below: a descending staircase (a step every ≈ 1.4 strataHeights, following the warped beds), so
+  // the hard beds stand out as lit lips with shaded risers under them
+  float tLq = band2 * 3.0;
+  tLedge = -( floor( tLq ) + smoothstep( 0.8, 1.0, fract( tLq ) ) );
   // mid-scale patches (≈ 15 m blotches on a rotated 60 m tile) break up the soil between the vertex colour and the grain
   float tPatch = texture2D( tNoise, tRot2( 0.37 ) * vTW.xz * 0.0167 ).r;
   vec3 soilCol = mix( diffuseColor.rgb * ( 0.82 + 0.36 * soil.r ) * ( 0.86 + 0.28 * tPatch ), uPath * ( 0.9 + 0.2 * soil.r ), vSurf.a * 0.5 );
   vec3 col = mix( soilCol, rockCol, rockW ) * ( 0.86 + 0.28 * macro );
   col *= mix( 1.0, mix( soil.b, rk.b, rockW ), 0.55 ) * mix( 0.5, 1.0, vSurf.b );
+  tRill = 0.0;
+#ifndef TERRAIN_LITE
+  {
+    // slope rills: fine gullies a few metres apart running straight downhill on soil and scree slopes (the vertex
+    // lattice carries erosion only down to ≈ 16 m). The across-slope coordinate is warped by the patch and macro noise,
+    // so the rills wander, fan out round spurs and merge
+    float tSl = 1.0 - wn.y;
+    float tRw = smoothstep( 0.05, 0.16, tSl ) * ( 1.0 - smoothstep( 0.4, 0.62, tSl ) ) * ( 1.0 - vSurf.a )
+              * ( 1.0 - smoothstep( 380.0, 720.0, length( vViewPosition ) ) );
+    if ( tRw > 0.001 ) {
+      vec2 tSd = wn.xz / max( length( wn.xz ), 1e-3 );
+      float tPh = dot( vTW.xz, vec2( -tSd.y, tSd.x ) ) / 6.5 + tPatch * 2.6 + macro * 5.0 + soil.r * 0.25;
+      float tTri = 1.0 - abs( fract( tPh ) - 0.5 ) * 2.0;
+      tRill = smoothstep( 0.62, 1.0, tTri ) * tRw * ( 0.55 + 0.45 * tPatch );
+      col *= 1.0 - 0.14 * tRill;
+    }
+  }
+#endif
   float wet = vSurf.r * uWet * ( 1.0 - rockW * 0.5 );
   col *= 1.0 - wet * 0.35;
   tSnowW = uSnow.x * smoothstep( uSnow.y, uSnow.z, wn.y + ( soil.g - 0.5 ) * 0.15 );
+#ifndef TERRAIN_LITE
+  if ( uIce > 0.0 ) {
+    // sea ice (AD §3.11): bare ice darkens toward deep blue, with two layers of pale cracks under the surface in parallax
+    vec3 tV = normalize( cameraPosition - vTW );
+    vec2 tPar = tV.xz / max( tV.y, 0.25 );
+    float c1 = texture2D( tCracks, vTW.xz / 14.0 - tPar * ( 0.6 / 14.0 ) ).r;
+    float c2 = texture2D( tCracks, vTW.xz / 23.0 + 0.37 - tPar * ( 2.2 / 23.0 ) ).g;
+    float tIceW = uIce * ( 1.0 - rockW ) * ( 1.0 - smoothstep( 120.0, 400.0, length( vViewPosition ) ) * 0.6 );
+    col = mix( col, uIceDeep, 0.35 * tIceW ) + uIceCrack * ( c1 * 0.5 + c2 * 0.22 ) * tIceW;
+  }
+#endif
   diffuseColor.rgb = mix( col, uSnowColor * ( 0.92 + 0.08 * soil.r ), tSnowW ) * ( 0.55 + 0.45 * vSurf.g );
   tH = mix( soil.g, rk.g, rockW ) * ( 1.0 - 0.7 * tSnowW );
   tHr = rk.g * ( 1.0 - 0.7 * tSnowW );
@@ -353,12 +414,17 @@ const F_NORMAL = /* glsl */`
   float tMh = texture2D( tNoise, tRot2( 0.61 ) * vTW.xz * 0.0137 ).r + 0.5 * texture2D( tNoise, tRot2( -1.13 ) * vTW.xz * 0.031 ).r;
 #endif
   normal = tPerturbH( - vViewPosition, normal, tMh * 4.0, uBump * ( 0.3 + 0.3 * tRockW ) * ( 1.0 - 0.6 * tSnowW ) );
+#ifndef TERRAIN_LITE
+  normal = tPerturbH( - vViewPosition, normal, -tRill, uBump * 0.9 * ( 1.0 - 0.7 * tSnowW ) );
+#endif
 #ifdef TERRAIN_LITE
   normal = tPerturbH( - vViewPosition, normal, tH, uBump * 0.5 * ( 1.0 - smoothstep( 25.0, 40.0, tDist ) ) );
 #else
   vec3 tPert = vec3( tGrad.x, 0.0, tGrad.y ) * 0.07 * uBump * ( 1.0 - tRockW ) * ( 1.0 - smoothstep( 40.0, 160.0, tDist ) );
   normal = normalize( normal - mat3( viewMatrix ) * tPert );
   normal = tPerturbH( - vViewPosition, normal, tHr, uBump * 0.6 * tRockW * ( 1.0 - smoothstep( 80.0, 260.0, tDist ) ) );
+  normal = tPerturbH( - vViewPosition, normal, tLedge, uBump * 0.5 * uStrata.z * tSteep * tRockW * ( 1.0 - 0.6 * tSnowW )
+                      * ( 1.0 - smoothstep( 380.0, 1100.0, tDist ) ) );
 #endif
 }
 `;
@@ -388,6 +454,7 @@ export class TerrainRenderer {
     this._drawn = [];
     this._lastCam = new THREE.Vector3(hf.bounds.x0, 50, hf.bounds.z0);
     this._lastFocus = new THREE.Vector3();
+    this._moving = false; this._moveF = -1e9;
     this._stats = { nodes: 0, pending: 0, triangles: 0, built: 0, pooled: 0, buildMs: 0, builds: 0 };
     this._vn = createValueNoise2D(hf.seed ^ 0x51ab);
     this._setupPalette();
@@ -412,7 +479,10 @@ export class TerrainRenderer {
     const art = this._art(), S = art.surface || {}, pal = this.palRaw;
     const tier = this.ctx.tier;
     const size = tier.name === 'low' ? 256 : 512;
-    const T = detailTextures(S.style || 'grit', size, tier.anisotropy ?? 4);
+    // the detail style (AD §3.6): art.surface.style, else 'snow' when the art asks for snow cover, else 'grit'
+    const style = S.style || ((Number(S.snow) || 0) >= 0.3 ? 'snow' : 'grit');
+    this.style = style;
+    const T = detailTextures(style, size, tier.anisotropy ?? 4);
     const strata = Array.isArray(pal.strata) && pal.strata.length >= 2 ? pal.strata
       : (() => { const r = new THREE.Color(pal.rock), h = new THREE.Color(pal.high), g = new THREE.Color(pal.ground), d = new THREE.Color(pal.dust);
                  const hex = (c) => '#' + c.getHexString();
@@ -424,11 +494,16 @@ export class TerrainRenderer {
       tSoil: { value: T.soil }, tRock: { value: T.rock }, tNoise: { value: T.noise }, tStrata: { value: this._strataTex },
       uRockSlope: { value: new THREE.Vector2(...(S.rockSlope ?? [0.16, 0.36])) },
       uStrata: { value: new THREE.Vector3(S.strataHeight ?? 9, S.strataWarp ?? 1.5, S.strataStrength ?? 0.8) },
+      uStrataDip: { value: (() => { const r = mulberry32(this.hf.seed ^ 0xd1b5), a = r() * Math.PI * 2, g = 0.035 + 0.035 * r();
+                                    return new THREE.Vector2(Math.cos(a) * g, Math.sin(a) * g); })() },
       uSnow: { value: new THREE.Vector3(S.snow ?? 0, S.snowSlope?.[0] ?? 0.75, S.snowSlope?.[1] ?? 0.92) },
       uSnowColor: { value: new THREE.Color(pal.snow ?? '#e8eef5') },
       uWet: { value: S.wetness ?? 0.5 }, uGloss: { value: S.gloss ?? 0 }, uBump: { value: S.bump ?? 1 },
       uPath: { value: new THREE.Color(pal.dust ?? '#8a7a6a') },
       uSparkle: { value: S.sparkle ?? 0 }, uSoilTexel: { value: 1 / size },
+      tCracks: { value: T.cracks }, uIce: { value: this._iceAmount(S, style) },
+      uIceDeep: { value: new THREE.Color(pal.wet ?? '#1d2b38').lerp(new THREE.Color('#0d2236'), 0.5) },
+      uIceCrack: { value: new THREE.Color('#9fd3ec').lerp(new THREE.Color(pal.snow ?? '#e8eef5'), 0.3) },
       uSunCol: { value: sunCol }, uSunDirT: { value: new THREE.Vector3(0, 1, 0) },
       uLodCenter: { value: new THREE.Vector3() }, uSplitK: { value: 2 },
     };
@@ -453,6 +528,11 @@ export class TerrainRenderer {
     const patched = this.ctx.atmosphere?.patchMaterial ? this.ctx.atmosphere.patchMaterial(mat) : mat;
     this.material = patched || mat;
   }
+  /** sea-ice cracks: art.surface.iceCracks (0..1), else on for an icy snow surface (style 'snow' with some gloss) */
+  _iceAmount(S, style) {
+    if (S.iceCracks !== undefined) return Math.max(0, Number(S.iceCracks) || 0);
+    return style === 'snow' && (Number(S.gloss) || 0) >= 0.2 ? 0.6 : 0;
+  }
   _syncUniforms() {
     const art = this._art(), S = art.surface || {}, pal = art.palette || {}, U = this.uniforms;
     if (S.rockSlope) U.uRockSlope.value.set(S.rockSlope[0], S.rockSlope[1]);
@@ -461,7 +541,12 @@ export class TerrainRenderer {
     if (pal.snow) U.uSnowColor.value.set(pal.snow);
     if (pal.dust) U.uPath.value.set(pal.dust);
     U.uWet.value = S.wetness ?? 0.5; U.uGloss.value = S.gloss ?? 0; U.uBump.value = S.bump ?? 1;
+    U.uIce.value = this._iceAmount(S, this.style);
     U.uSparkle.value = (S.sparkle ?? 0) * (this.tier?.name === 'low' ? 0.5 : 1);
+    // the sky's PMREM already lights the terrain through the hemisphere light; half the library's env weight keeps
+    // shadowed faces dark enough for the relief to read (AD §3.1: big terrain casts big, dark shadows)
+    const env = 0.5 * (Number(art.light?.env) || 1);
+    if (this.material.envMapIntensity !== env) this.material.envMapIntensity = env;
     const at = this.ctx.atmosphere;
     if (at?.sun) U.uSunCol.value.copy(at.sun.color).multiplyScalar(at.sun.intensity / Math.PI);
     if (at?.sunDir) U.uSunDirT.value.copy(at.sunDir);
@@ -542,7 +627,7 @@ export class TerrainRenderer {
     if (!n) {
       const size = ROOT >> L, o = this.hf.gridOrigin;
       n = { key, L, ix, iz, size, x0: o.x + ix * size, z0: o.z + iz * size, mesh: null, slot: null, used: -1, kids: null,
-            minY: 0, maxY: 0, want: -1 };
+            minY: 0, maxY: 0, want: -1, drawnF: -1e9, builtF: -1e9, pf: -1 };
       this._nodes.set(key, n);
     }
     return n;
@@ -574,9 +659,10 @@ export class TerrainRenderer {
       if (all || this._settling) { for (const k of kids) this._cover(k, cx, cz, covered || !!n.mesh); return true; }
       for (const k of kids) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), covered || !!n.mesh); }
     }
-    else if (n.L < MAXL && n.mesh && d < this.K * n.size * 1.3) {
-      // prefetch: children are built a little before they're needed, so they appear fully morphed (no pop)
-      for (const k of this._kids(n)) if (!k.mesh) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), true, 2000); }
+    else if (this._moving && n.L < MAXL && n.mesh && d < this.K * n.size * 1.3) {
+      // prefetch while the camera moves: children are built a little before they're needed, so they appear fully
+      // morphed (no pop). A still camera prefetches nothing, so the built set settles to what is drawn.
+      for (const k of this._kids(n)) { k.pf = this._frame; if (!k.mesh) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), true, 2000); } }
     }
     if (n.mesh) { this._draw(n); return true; }
     // a split node without all its children is wanted as a fallback (drawn while they build); prewarm and settle skip
@@ -587,7 +673,7 @@ export class TerrainRenderer {
   }
   /** wanted-but-not-drawn nodes for a root that is about to enter the view distance */
   _prefetch(n, cx, cz, depth) {
-    n.used = this._frame;
+    n.used = this._frame; n.pf = this._frame;
     const d = this._dist(n, cx, cz);
     if (!n.mesh) this._want(n, d, true, 2000);
     if (depth < 1 && n.L < MAXL && d < this.K * n.size) for (const k of this._kids(n)) this._prefetch(k, cx, cz, depth + 1);
@@ -607,7 +693,7 @@ export class TerrainRenderer {
     this._queue.push(n); n._d = d;
   }
   _draw(n) {
-    n.used = this._frame;
+    n.used = this._frame; n.drawnF = this._frame;
     n.mesh.visible = true;
     this._drawn.push(n);
   }
@@ -629,7 +715,7 @@ export class TerrainRenderer {
       const d = this._dist(n, cx, cz);
       if (d > RP) continue;
       n.used = this._frame;
-      if (d > R) { this._prefetch(n, cx, cz, 0); continue; }   // just outside the view: build ahead, draw nothing
+      if (d > R) { if (this._moving) this._prefetch(n, cx, cz, 0); continue; }   // just outside the view: build ahead while moving
       if (!this._cover(n, cx, cz)) holes++;
     }
     this._queue.sort((a, b2) => a._p - b2._p || a.L - b2.L);
@@ -696,14 +782,15 @@ export class TerrainRenderer {
       t = Math.min(1, smooth(h20, h80, h) * 0.45 + (cv > 0 ? cv : 0) * 0.55); r += (hR - r) * t; gg += (hG - gg) * t; b += (hB - b) * t;
       t = (cv < 0 ? -cv : 0) * 0.45; r += (sR * 0.7 - r) * t; gg += (sG * 0.7 - gg) * t; b += (sB * 0.7 - b) * t;
       t = smooth(rs0, rs1, slope); r += (rR - r) * t; gg += (rG - gg) * t; b += (rB - b) * t;
-      t = _bk.bed * 0.6; r += (dR - r) * t; gg += (dG - gg) * t; b += (dB - b) * t;
+      const path = _bk.path ?? _bk.bed;
+      t = path * 0.6 + _bk.bed * 0.12; r += (dR - r) * t; gg += (dG - gg) * t; b += (dB - b) * t;
       // patchiness here; the baked sun term (arch §5.4) rides surf.g and multiplies the final albedo in the shader, so
       // the strata, path and snow colours that replace the vertex colour per pixel are shaded by it too
       const light = 0.88 + 0.24 * vn(x / 37, z / 37);
       r *= light; gg *= light; b *= light;
       C[v * 3] = (r > 1 ? 1 : r) * 65535; C[v * 3 + 1] = (gg > 1 ? 1 : gg) * 65535; C[v * 3 + 2] = (b > 1 ? 1 : b) * 65535;
       const fl = _bk.flow * 1.3;
-      SF[v * 4] = (fl > 1 ? 1 : fl) * 255; SF[v * 4 + 1] = _bk.sun * 255; SF[v * 4 + 2] = _bk.sky * 255; SF[v * 4 + 3] = _bk.bed * 255;
+      SF[v * 4] = (fl > 1 ? 1 : fl) * 255; SF[v * 4 + 1] = _bk.sun * 255; SF[v * 4 + 2] = _bk.sky * 255; SF[v * 4 + 3] = path * 255;
     }
     void isLow;
     // skirts
@@ -728,7 +815,7 @@ export class TerrainRenderer {
     mesh.matrixWorldNeedsUpdate = true;
     mesh.visible = false;
     if (!mesh.parent) this.root.add(mesh);
-    n.mesh = mesh; n.slot = slot;
+    n.mesh = mesh; n.slot = slot; n.builtF = this._frame;
     this._built++;
     this._stats.builds++;
     this._stats.buildMs += performance.now() - t0;
@@ -744,20 +831,22 @@ export class TerrainRenderer {
     else slot.geo.dispose();
   }
   _evict(cx, cz) {
-    // a built node that no selection has used (drawn, an ancestor of a drawn node, or prefetched) for RETAIN selections
-    // (≈ 2 to 4 s of play), or that lies beyond the view distance, returns its geometry to the pool: the built set
-    // tracks the working set, so memory after any flight returns to what the same view needed before it
-    const far = this.viewDist * 1.45, stale = this._frame - RETAIN;
-    let over = this._built - this.cacheMax;
+    // the built set tracks the working set, so memory after any flight returns to what the same view needed before it.
+    // A built node is kept while it is drawn or was drawn in the last RETAIN selections (≈ 2 to 4 s: quick back-and-forth
+    // reuses it), while it is a current prefetch (camera moving), or while it was built recently and the selection still
+    // uses it (a child waiting for its siblings, a fallback). Anything else (an ancestor nothing has drawn for a while, a
+    // prefetch the camera stopped short of, a node beyond the view) returns its geometry to the pool.
+    const far = this.viewDist * 1.45, F = this._frame, recent = F - RETAIN;
     const old = [];
     for (const n of this._nodes.values()) {
-      if (!n.mesh || n.used === this._frame) continue;
-      if (n.used < stale || this._dist(n, cx, cz) > far) { this._release(n); continue; }
-      if (over > 0) old.push(n);
+      if (!n.mesh || n.drawnF === F) continue;
+      const keep = (n.drawnF >= recent || n.pf === F || (n.used === F && n.builtF >= recent)) && this._dist(n, cx, cz) <= far;
+      if (!keep) { this._release(n); continue; }
+      old.push(n);
     }
-    over = this._built - this.cacheMax;
+    const over = this._built - this.cacheMax;
     if (over > 0 && old.length) {
-      old.sort((a, b) => a.used - b.used);
+      old.sort((a, b) => Math.max(a.drawnF, a.builtF) - Math.max(b.drawnF, b.builtF));
       for (let i = 0; i < Math.min(over, old.length); i++) if (old[i].mesh) this._release(old[i]);
     }
     // forget empty far nodes so the map stays small
@@ -772,8 +861,15 @@ export class TerrainRenderer {
   }
 
   // ------------------------------------------------------------------ public API
+  /** motion gate for prefetching: the camera moved within the last MOVE_HOLD selections */
+  _track(cam) {
+    const dx = cam.x - this._lastCam.x, dz = cam.z - this._lastCam.z;
+    if (dx * dx + dz * dz > 0.0025) this._moveF = this._frame;
+    this._moving = this._frame - (this._moveF ?? -1e9) < MOVE_HOLD;
+  }
   update(focus, cameraPos, budgetMs = 5) {
     const cam = cameraPos || focus;
+    this._track(cam);
     this._lastCam.copy(cam); if (focus) this._lastFocus.copy(focus);
     this.uniforms.uLodCenter.value.copy(cam);
     this._syncUniforms();
@@ -800,9 +896,16 @@ export class TerrainRenderer {
     this._stats.built = this._built;
     this._stats.pooled = this._pool.length;
   }
+  /** where settle() centres without an argument: the player in follow mode (a debug teleport settles before the
+   *  camera has caught up), otherwise the camera */
+  _defaultCam() {
+    const c = this.ctx, rig = c.cameraRig, p = c.player;
+    if ((!rig || rig.mode === 'follow') && p?.active && p.pos) return _dc.set(p.pos.x, p.pos.y + 12, p.pos.z);
+    return c.camera?.position || this._lastCam;
+  }
   /** build every wanted node now (no yields), re-selecting until nothing is pending */
   settle(cameraPos) {
-    const cam = cameraPos || this._lastCam;
+    const cam = cameraPos || this._defaultCam();
     this._lastCam.copy(cam);
     this.uniforms.uLodCenter.value.copy(cam);
     this._syncUniforms();

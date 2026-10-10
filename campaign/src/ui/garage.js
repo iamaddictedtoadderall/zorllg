@@ -105,7 +105,7 @@ export function install(ctx) {
   lamp.castShadow = true; lamp.shadow.mapSize.set(1024, 1024); lamp.shadow.bias = -0.0004; lamp.shadow.normalBias = 0.04;
   lamp.shadow.camera.near = 2; lamp.shadow.camera.far = 70;
   const weld = new THREE.PointLight(0xcfe6ff, 0, 9, 2);   // the Bench's welding arc (fixed light set: 0 outside the Bench)
-  scene.add(hemi, key, key.target, rim, lamp, lamp.target, weld);
+  scene.add(hemi, key, key.target, rim, lamp, lamp.target);
   let roomEnv = null;
   try {
     const pmrem = new THREE.PMREMGenerator(ctx.renderer);
@@ -117,6 +117,8 @@ export function install(ctx) {
   const hangarSet = buildHangar(ctx, M);
   const benchSet = buildBench(ctx, M);
   benchSet.root.visible = false;
+  // the welding arc light lives in the Bench dressing: hidden with it, so the hangar's programs carry one light fewer
+  benchSet.root.add(weld);
   scene.add(hangarSet.root, benchSet.root);
   let dressing = 'hangar';
   function setDressing(d) {
@@ -698,70 +700,81 @@ function lampAssembly(B, parent, mats, pos, dir, r, color, size, base) {
   parent.add(sp);
   return sp;
 }
+/** A plain lit material for the big receive-only surfaces of the two dressings (deck plates, back walls): no wear patch
+ *  and no atmosphere patch (these scenes use their own THREE.Fog), vertex colours for the per-plate tint. These
+ *  surfaces fill most of the title frame, and under software GL the library's patched kit shader there was the cost
+ *  that pushed the title render past the harness's screenshot timeout (P3 measurement: ~13 s of an ~18 s frame). */
+function plainMat(color, roughness, metalness, env = 0.6) {
+  const m = new THREE.MeshStandardMaterial({ color, roughness, metalness, envMapIntensity: env, vertexColors: true });
+  m.userData.shared = true;
+  return m;
+}
+/** Marks every mesh of a group as excluded from the GTAO pass (pipeline's GameGTAOPass honours userData.noAO). */
+function noAO(g) { g.traverse(o => { if (o.isMesh) o.userData.noAO = true; }); return g; }
 function buildHangar(ctx, M) {
   const root = new THREE.Group(); root.name = 'hangar';
   const mats = {
-    floor: M('steelDark', { color: '#2f3236', roughness: 0.5, metalness: 0.85 }), plate: M('concreteDark', { color: '#4d463e', roughness: 0.94, metalness: 0.02 }),
-    wall: M('concrete', { color: '#6e665c', roughness: 0.92, metalness: 0.02 }), steel: M('steel', { color: '#5b5e62', roughness: 0.38, metalness: 0.9 }),
+    plate: M('concreteDark', { color: '#4d463e', roughness: 0.94, metalness: 0.02 }),
+    steel: M('steel', { color: '#5b5e62', roughness: 0.38, metalness: 0.9 }),
     stripe: M('stripe', { color: '#d9a521', roughness: 0.55, metalness: 0.25 }), dark: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }),
     housing: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }), lens: M('lightAmber', null) || ctx.materials?.emissive?.('#ffb36b', 3),
     rust: M('rust', { color: '#7a4128', roughness: 0.88, metalness: 0.35 }),
+    deck: plainMat('#34373c', 0.52, 0.82, 0.9), wall: plainMat('#5f5850', 0.9, 0.02, 0.35), wallDark: plainMat('#423c35', 0.92, 0.02, 0.3),
   };
-  const B = new KIT.GeoBuilder(77), lights = [];
-  // turntable: drum, chamfered rim, hazard ring, lamp strip
-  B.add(KIT.cylinder(9.3, 9.8, 0.7, 64, 0.12), mats.plate, { pos: [0, -0.35, 0] });
-  B.add(KIT.ring(8.95, 0.5, 0.18, 64), mats.stripe, { pos: [0, 0.04, 0] });
-  B.add(KIT.ring(9.55, 0.4, 0.16, 64), mats.dark, { pos: [0, 0.03, 0] });
-  for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; B.add(KIT.plateBox(0.5, 0.1, 0.9, 0.03), mats.steel, { pos: [Math.sin(a) * 6.6, 0.03, Math.cos(a) * 6.6], rot: [0, a, 0] }); }
-  // floor: ribbed deck plates in an irregular grid, with service trenches
-  // (a separate, non-shadow-casting builder: the deck only receives; ribbed near the turntable, plain further out)
+  const lights = [];
+  // turntable (the only shadow caster of the set besides the mech): drum, chamfered rim, hazard ring, lamp strip
+  const Bt = new KIT.GeoBuilder(77);
+  Bt.add(KIT.cylinder(9.3, 9.8, 0.7, 64, 0.12), mats.plate, { pos: [0, -0.35, 0] });
+  Bt.add(KIT.ring(8.95, 0.5, 0.18, 64), mats.stripe, { pos: [0, 0.04, 0] });
+  Bt.add(KIT.ring(9.55, 0.4, 0.16, 64), mats.dark, { pos: [0, 0.03, 0] });
+  for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2; Bt.add(KIT.plateBox(0.5, 0.1, 0.9, 0.03), mats.steel, { pos: [Math.sin(a) * 6.6, 0.03, Math.cos(a) * 6.6], rot: [0, a, 0] }); }
+  // floor: ribbed deck plates in an irregular grid (receive-only; ribbed near the turntable, plain further out)
   const rng = mulberry32(5), F = new KIT.GeoBuilder(78);
   for (let x = -40; x < 40; x += 10) for (let z = -40; z < 40; z += 10) {
     const r = Math.hypot(x + 5, z + 5);
     if (r < 11) continue;
     F.add(r < 30 ? KIT.ribbedPlate(9.8, 9.8, 0.25, { pitch: rng() < 0.5 ? 2.2 : 2.9, axis: rng() < 0.5 ? 'x' : 'y' }) : KIT.plateBox(9.8, 9.8, 0.25, 0.05),
-          mats.floor, { pos: [x + 5, -0.12, z + 5], rot: [-Math.PI / 2, 0, 0], tint: 0.07 });
+          mats.deck, { pos: [x + 5, -0.12, z + 5], rot: [-Math.PI / 2, 0, 0], tint: 0.09 });
   }
-  for (const s of [-1, 1]) B.add(KIT.plateBox(0.6, 0.06, 70, 0.02), mats.stripe, { pos: [s * 14, 0.02, 2] });
+  // the set (no shadows, no AO): stripes, crane, towers, containers, drums, lamps
+  const Bs = new KIT.GeoBuilder(80);
+  for (const s of [-1, 1]) Bs.add(KIT.plateBox(0.6, 0.06, 70, 0.02), mats.stripe, { pos: [s * 14, 0.02, 2] });
   // the back wall of the bay (outside the camera's orbit, r 26): panelled bays between tapered pilasters, a coping and a
-  // hazard band over the main door; the rest of the bay stays in darkness. (Four lit walls were tried: they fill the
-  // whole frame with the kit shader and cost ~20 s per frame under software rendering, which broke the title screenshot
-  // in smoke; the dark bay is also the AD's "studio" read.) A separate receive-only builder, like the deck.
+  // hazard band over the main door; the rest of the bay stays in darkness (the AD's "studio" read).
   const WALL = 38, Wb = new KIT.GeoBuilder(79);
-  for (let side = 0; side < 1; side++) {
-    const ry = side * Math.PI / 2, m = new THREE.Matrix4().makeRotationY(ry), V = Wb.under(m);
-    for (let i = 0; i < 8; i++) {
-      const x = -40 + i * 10;
-      V.add(KIT.panelBox(9.6, 22, 1.2, { cols: 1, rows: 3, deps: 1 }), mats.wall, { pos: [x + 5, 11, WALL], tint: 0.07 });
-      V.add(KIT.slab(1.6, 24, 2.4, { taper: 0.82 }), mats.plate, { pos: [x, 12, WALL - 0.6] });
-      if (i % 2 === 1 && (i < 3 || i > 5)) lights.push(lampAssembly(V, root, mats, [x, 14, WALL - 1.6], [0, -0.35, -1], 0.4, '#ffb36b', 2.6, m));
-    }
-    V.add(KIT.slab(82, 1.4, 3.2), mats.plate, { pos: [0, 23.2, WALL - 0.8] });
+  for (let i = 0; i < 8; i++) {
+    const x = -40 + i * 10;
+    Wb.add(KIT.panelBox(9.6, 22, 1.2, { cols: 1, rows: 3, deps: 1 }), mats.wall, { pos: [x + 5, 11, WALL], tint: 0.08 });
+    Wb.add(KIT.slab(1.6, 24, 2.4, { taper: 0.82 }), mats.wallDark, { pos: [x, 12, WALL - 0.6] });
+    if (i % 2 === 1 && (i < 3 || i > 5)) lights.push(lampAssembly(Bs, root, mats, [x, 14, WALL - 1.6], [0, -0.35, -1], 0.4, '#ffb36b', 2.6));
   }
-  B.add(KIT.slab(26, 2.2, 1.8), mats.stripe, { pos: [0, 17.8, WALL - 1.2] });
-  for (let i = 0; i < 7; i++) B.add(KIT.plateBox(3.2, 0.5, 0.4, 0.06), mats.dark, { pos: [-9.6 + i * 3.2, 17.8, WALL - 2.2] });
+  Wb.add(KIT.slab(82, 1.4, 3.2), mats.wallDark, { pos: [0, 23.2, WALL - 0.8] });
+  Bs.add(KIT.slab(26, 2.2, 1.8), mats.stripe, { pos: [0, 17.8, WALL - 1.2] });
+  for (let i = 0; i < 7; i++) Bs.add(KIT.plateBox(3.2, 0.5, 0.4, 0.06), mats.dark, { pos: [-9.6 + i * 3.2, 17.8, WALL - 2.2] });
   // gantry crane overhead and two lattice towers with walkways
-  B.add(KIT.truss(60, 3, 3.2, 12, 0.32), mats.rust, { pos: [0, 19, 8] });
+  Bs.add(KIT.truss(60, 3, 3.2, 12, 0.32), mats.rust, { pos: [0, 19, 8] });
   for (const s of [-1, 1]) {
-    B.add(KIT.truss(22, 2.6, 2.6, 6, 0.28), mats.steel, { pos: [s * 21, 0, 10], rot: [0, 0, Math.PI / 2] });
-    B.add(KIT.ribbedPlate(4, 8, 0.2, { pitch: 0.5 }), mats.floor, { pos: [s * 19.4, 12, 10], rot: [-Math.PI / 2, 0, 0] });
-    for (let k = 0; k < 5; k++) B.add(KIT.bar(1.1, 0.08, 0.08), mats.steel, { pos: [s * 17.6, 12.6, 6.4 + k * 1.8], rot: [0, 0, Math.PI / 2] });
-    B.add(KIT.bar(8, 0.08, 0.08), mats.stripe, { pos: [s * 17.6, 13.1, 10], rot: [0, Math.PI / 2, 0] });
+    Bs.add(KIT.truss(22, 2.6, 2.6, 6, 0.28), mats.steel, { pos: [s * 21, 0, 10], rot: [0, 0, Math.PI / 2] });
+    Bs.add(KIT.ribbedPlate(4, 8, 0.2, { pitch: 0.5 }), mats.dark, { pos: [s * 19.4, 12, 10], rot: [-Math.PI / 2, 0, 0] });
+    for (let k = 0; k < 5; k++) Bs.add(KIT.bar(1.1, 0.08, 0.08), mats.steel, { pos: [s * 17.6, 12.6, 6.4 + k * 1.8], rot: [0, 0, Math.PI / 2] });
+    Bs.add(KIT.bar(8, 0.08, 0.08), mats.stripe, { pos: [s * 17.6, 13.1, 10], rot: [0, Math.PI / 2, 0] });
     // containers and drums by the walls
-    B.add(KIT.ribbedPlate(12, 5.4, 4.8, { pitch: 1.1 }), s < 0 ? mats.rust : mats.plate, { pos: [s * 30, 2.7, 16 - s * 4], rot: [0, Math.PI / 2 + s * 0.08, 0] });
-    for (let k = 0; k < 4; k++) B.add(KIT.drum(0.65, 1.7, 2), k % 2 ? mats.rust : mats.dark, { pos: [s * 24 + (k % 2) * 1.5, 0, 20 - Math.floor(k / 2) * 1.5] });
+    Bs.add(KIT.ribbedPlate(12, 5.4, 4.8, { pitch: 1.1 }), s < 0 ? mats.rust : mats.plate, { pos: [s * 30, 2.7, 16 - s * 4], rot: [0, Math.PI / 2 + s * 0.08, 0] });
+    for (let k = 0; k < 4; k++) Bs.add(KIT.drum(0.65, 1.7, 2), k % 2 ? mats.rust : mats.dark, { pos: [s * 24 + (k % 2) * 1.5, 0, 20 - Math.floor(k / 2) * 1.5] });
   }
-  for (const x of [-12, 0, 12]) lights.push(lampAssembly(B, root, mats, [x, 18.2, 8], [0, -1, 0], 0.7, '#ffb36b', 5));
-  for (const s of [-1, 1]) lights.push(lampAssembly(B, root, mats, [s * 19, 12.8, 13.8], [-s * 0.3, -0.4, -1], 0.45, '#ffb36b', 3));
-  const built = B.build({ name: 'hangarMerged' }), deck = F.build({ name: 'hangarDeck', castShadow: false, receiveShadow: true });
-  const walls = Wb.build({ name: 'hangarWalls', castShadow: false, receiveShadow: true });
-  for (const g of [built, deck, walls]) { g.traverse(m => { if (m.isMesh) { m.matrixAutoUpdate = false; m.updateMatrix(); } }); root.add(g); }
+  for (const x of [-12, 0, 12]) lights.push(lampAssembly(Bs, root, mats, [x, 18.2, 8], [0, -1, 0], 0.7, '#ffb36b', 5));
+  for (const s of [-1, 1]) lights.push(lampAssembly(Bs, root, mats, [s * 19, 12.8, 13.8], [-s * 0.3, -0.4, -1], 0.45, '#ffb36b', 3));
+  const table = Bt.build({ name: 'hangarTable' });
+  const set = noAO(Bs.build({ name: 'hangarMerged', castShadow: false, receiveShadow: true }));
+  const deck = noAO(F.build({ name: 'hangarDeck', castShadow: false, receiveShadow: true }));
+  const walls = noAO(Wb.build({ name: 'hangarWalls', castShadow: false, receiveShadow: false }));
+  for (const g of [table, set, deck, walls]) { g.traverse(m => { if (m.isMesh) { m.matrixAutoUpdate = false; m.updateMatrix(); } }); root.add(g); }
   return { root };
 }
 function buildBench(ctx, M) {
   const root = new THREE.Group(); root.name = 'bench';
   const mats = {
-    deck: M('steelDark', { color: '#2f3236', roughness: 0.5, metalness: 0.85 }), rust: M('rust', { color: '#7a4128', roughness: 0.88, metalness: 0.35 }),
+    deck: plainMat('#2c2b2b', 0.55, 0.8, 0.8), rust: M('rust', { color: '#7a4128', roughness: 0.88, metalness: 0.35 }),
     teal: M('paintWake', { color: '#4f8a86', roughness: 0.62, metalness: 0.28 }), canvas: M('canvas', { color: '#d9cba8', roughness: 0.95, metalness: 0 }),
     dark: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }), stripe: M('stripe', { color: '#d9a521', roughness: 0.55, metalness: 0.25 }),
     housing: M('dark', { color: '#141416', roughness: 0.8, metalness: 0.4 }), lens: M('lightAmber', null) || ctx.materials?.emissive?.('#ffb36b', 3),

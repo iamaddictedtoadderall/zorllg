@@ -465,7 +465,27 @@ export default async function (g) {
     });
     g.assert(reel.locked && reel.reeling && reel.hit && reel.hit.amt === 300 && reel.hit.imp === 2000 && reel.hit.staggered && reel.d1 < 16 && reel.d1 > 8,
       `harpoon reels a drone from ${reel.d0.toFixed(1)} m to ${reel.d1.toFixed(1)} m (300 dmg, 2000 imp, staggered) in ${reel.t.toFixed(2)} s`);
-    await shot('harpoon-reel');
+    // the shot: a second reel seen from the side, mid-haul, so the cable and the drone both show (after the reel the
+    // drone hangs 12 m ahead, hidden behind the mech in the chase view)
+    const rs = await g.eval(() => {
+      const H = window.__p4, G = H.G, c = H.c, p = c.player;
+      H.clean({ loadout: false }); H.place(170, 0);
+      p.setLoadout({ ...H.LO.DEFAULT_LOADOUT, L: 'harpoon_gaff' }); p.refill(); G.step(10);
+      const d = H.spawn('drone', H.fwd(48, 14));
+      d.pos.y = c.world.groundHeight(d.pos.x, d.pos.z) + 14;
+      G.step(1); H.face(d.center()); G.step(2);
+      G.input.press('blade');
+      let n = 0; while (p.weapons.L.state !== 'reel' && n < 60) { G.step(1); n++; }
+      G.step(12);
+      const a = p.center(), b = d.center(), m = a.clone().lerp(b, 0.5);
+      return { state: p.weapons.L.state, dist: a.distanceTo(b),
+               cam: [m.x + Math.cos(p.yaw) * 30, m.y + 6, m.z - Math.sin(p.yaw) * 30], look: [m.x, m.y + 1, m.z] };
+    });
+    g.log('harpoon shot', JSON.stringify({ state: rs.state, dist: +rs.dist.toFixed(1) }));
+    await g.camera(rs.cam, rs.look, 55);
+    await shot('harpoon-reel', { hud: false });
+    await g.freeCam(false);
+    await g.eval(() => { const H = window.__p4; H.G.step(40); H.c.player.setLoadout({ ...H.LO.DEFAULT_LOADOUT }); H.clean(); });
 
     const pull = await g.eval(() => {
       const H = window.__p4, G = H.G, c = H.c, p = c.player;

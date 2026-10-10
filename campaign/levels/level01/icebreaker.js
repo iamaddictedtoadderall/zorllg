@@ -22,6 +22,13 @@ import * as KIT from '../../src/art/kit.js';
 const PI = Math.PI;
 const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _c = new THREE.Vector3(), _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion();
 
+// sodium lamp positions (hull-local): six along each sponson, four up the bridge tower's corners, two on the stern
+const LAMPS = [
+  ...[-1, 1].flatMap(s => [-16, -9, -2, 5, 12, 19].map(z => [s * 14.2, 9.4, z])),
+  ...[[-4.8, 16.5, 16.8], [4.8, 16.5, 16.8], [-4.8, 27, 16.8], [4.8, 27, 16.8]],
+  [-6, 8.6, 36.5], [6, 8.6, 36.5],
+];
+
 function model(ctx) {
   const M = mats(ctx);
   const hullP = [[-30, 4], [-26, 12], [-14, 14], [22, 14], [30, 9], [30, 2], [-24, 1]];
@@ -52,6 +59,9 @@ function model(ctx) {
     // deck turret mounts and the mast step
     [cyl(2.2, 2.6, 1.0, 12), M.iron, -5, 15.2, 4], [cyl(2.2, 2.6, 1.0, 12), M.iron, 5, 15.2, 12],
     [cyl(0.6, 0.8, 16, 8), M.steel, 0, 22, -4],
+    // rows of sodium work lamps along the sponsons and up the bridge tower (AD §1.3: Dredge lamps in rows): iron
+    // housings with hazard-painted hoods; the light itself is a glow anchor (no extra material, L1 §6.1's call budget)
+    ...LAMPS.flatMap(([x, y, z]) => [[slab(0.9, 0.55, 0.7, 0.08), M.iron, x, y, z], [slab(1.0, 0.14, 0.8, 0.03), M.hazard, x, y + 0.34, z]]),
   ];
   // the arm carries its saw guard (static, so merged into the arm part): oxide, steel and hazard only (L1 §6.1: ≤ 24 calls)
   const sawArm = (s) => [[slab(1.6, 1.6, 16, 0.25), M.oxide, 0, 0, -8], [cyl(0.4, 0.4, 12, 8), M.steel, s * 1.1, 0.9, -7, PI / 2, 0, 0], [cyl(1.4, 1.4, 2.0, 12), M.steel, 0, 0, 0, 0, 0, PI / 2],
@@ -67,7 +77,8 @@ function model(ctx) {
       { name: 'stackTop', at: [-3.5, 45.5, 24] },
       { name: 'turret0', at: [-5, 15.8, 4] }, { name: 'turret1', at: [5, 15.8, 12] }, { name: 'stern', at: [0, 6, 38] },
       { name: 'strobe0', at: [-12, 15, -20], glow: { color: '#ffb04a', size: 2, intensity: 3, pulse: 'flicker' } },
-      { name: 'strobe1', at: [12, 15, -20], glow: { color: '#ffb04a', size: 2, intensity: 3, pulse: 'flicker' } }] },
+      { name: 'strobe1', at: [12, 15, -20], glow: { color: '#ffb04a', size: 2, intensity: 3, pulse: 'flicker' } },
+      ...LAMPS.map(([x, y, z], i) => ({ name: 'lamp' + i, at: [x, y - 0.35, z], glow: { color: '#ff9a2e', size: 1.6, intensity: 3, pulse: 'flicker', phase: (i * 0.29) % 1 } }))] },
     cab: { pivot: [0, 34, 15.8], parent: 'hull', items: [[KIT.plateGeo([[-0.5, 0], [0, 0.5], [0.5, 0], [0, -0.5]], 0.1, 'front', 0.02), M.ghost, 0, 0, 0]] },
     flood: { pivot: [0, 30, -4], parent: 'hull', items: [
       [slab(4.2, 1.4, 1.4, 0.15), M.iron, 0, 0, 0],

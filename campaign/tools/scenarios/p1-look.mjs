@@ -449,6 +449,26 @@ export default async function (g) {
   lap('weather');
 
   }
+  if (on('skyline')) {
+  // skyline objects (arch §5.8): every built-in kind on the horizon ahead of an 80 m vista, under the level's art
+  const sk = await g.eval(() => {
+    const a = window.__p1.route(260, 0, 80), b = window.__p1.route(1500, 0, 20);
+    const az = (Math.atan2(b[0] - a[0], -(b[2] - a[2])) * 180 / Math.PI + 360) % 360;
+    return { a, az };
+  });
+  await g.eval(([art, az]) => {
+    const kinds = [['tower', -36, 3600, 1], ['megastructure', -18, 5200, 1], ['spire', -4, 4200, 1], ['wreck', 9, 3000, 1],
+                   ['tether', 20, 7000, 1], ['smoke', 30, 4500, 1], ['storm_wall', 0, 6000, 1]];
+    const skyline = kinds.map(([kind, d, dist, size]) => ({ kind, at: { azimuth: (az + d + 360) % 360, dist }, size }));
+    window.__game.ctx.atmosphere.apply({ ...art, skyline, weather: { type: 'clear' } });
+  }, [base, sk.az]);
+  await lookDir(sk.a, sk.az, 3, 400, 70);
+  await shot('skyline', { hud: false, settle: false });
+  const skErr = await g.eval(() => window.__game.errors());
+  g.assert(skErr.length === 0, `every skyline kind builds without errors${skErr.length ? ': ' + JSON.stringify(skErr.slice(0, 3)) : ''}`);
+  await g.eval((art) => window.__game.ctx.atmosphere.apply(art), base);
+  lap('skyline');
+  }
   // ------------------------------------------------------------------ A6: L1 night sky (High), blend to dawn
   async function nightShots(tier) {
     await g.eval((a) => { window.__game.ctx.atmosphere.apply(a); }, L1_NIGHT);

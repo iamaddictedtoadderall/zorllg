@@ -258,10 +258,21 @@ function reachable(field, DATA, e) {
 /** a floe variant at unit radius: the body spans y -1..0 (top at 0), a snow cap sits just above it (scaled by thickness) */
 function variantGeo(ctx, v) {
   const rng = mulberry32(900 + v);
-  const pts = blob(rng, 1, 7 + (v % 3), 0.18);
-  const q3 = (k) => pts.map(([a, b]) => [Math.round(a * k) / 1000, Math.round(b * k) / 1000]);
+  // an irregular outline (10 to 13 sides, one or two bites taken out), so the field never reads as tiles
+  const pts = blob(rng, 1, 10 + (v % 4), 0.22);
+  for (let b = 0; b < 1 + (v % 2); b++) { const k = Math.floor(rng() * pts.length); pts[k] = [pts[k][0] * 0.82, pts[k][1] * 0.82]; }
+  const q3 = (k, o = [0, 0]) => pts.map(([a, b]) => [Math.round(a * k + o[0] * 1000) / 1000, Math.round(b * k + o[1] * 1000) / 1000]);
   const body = KIT.plateGeo(q3(1000), 1, 'top', 0.12);
   const cap = KIT.plateGeo(q3(900), 0.03, 'top', 0.008);
+  // pressure rubble: a couple of rafted chunks near the rim (scaled with the floe: a few metres across, ~1 m tall)
+  const rubble = [];
+  for (let i = 0; i < 2 + (v % 2); i++) {
+    const a = rng() * PI * 2, d = 0.55 + rng() * 0.25, rr = 0.07 + rng() * 0.07;
+    const cp = blob(rng, rr, 6, 0.3).map(([x, z]) => [Math.round((x + Math.cos(a) * d) * 1000) / 1000, Math.round((z + Math.sin(a) * d) * 1000) / 1000]);
+    const g = KIT.plateGeo(cp, 0.3 + rng() * 0.25, 'top', 0.03);
+    g.rotateZ((rng() - 0.5) * 0.25); g.rotateX((rng() - 0.5) * 0.25);
+    rubble.push(g);
+  }
   const col = (g, c, y) => {
     const n = g.index ? g.toNonIndexed() : g.clone();
     n.translate(0, y, 0);
@@ -274,9 +285,25 @@ function variantGeo(ctx, v) {
     out.setAttribute('color', new THREE.BufferAttribute(a, 3));
     return out;
   };
-  const g = mergeGeometries([col(body, new THREE.Color('#c6d8ea'), -0.51), col(cap, new THREE.Color('#ffffff'), -0.01)], false);
+  const g = mergeGeometries([col(body, new THREE.Color('#c6d8ea'), -0.51), col(cap, new THREE.Color('#ffffff'), -0.01),
+                             ...rubble.map(r => col(r, new THREE.Color('#dde8f2'), 0.08))], false);
   g.computeBoundingSphere();
-  return shared(g);
+  return { body: shared(g), foam: shared(foamStrip(pts, 0.985, 1.09, 0.92)) };
+}
+/** a flat foam band hugging an outline (unit space, y 0, facing up): from pts × k0 to pts × k1, vertex colour c */
+function foamStrip(pts, k0, k1, c) {
+  const n = pts.length, P = [], N = [], C = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % n];
+    const q = [[ax * k0, az * k0], [bx * k0, bz * k0], [bx * k1, bz * k1], [ax * k1, az * k1]];
+    for (const k of [0, 2, 1, 0, 3, 2]) { P.push(q[k][0], 0, q[k][1]); N.push(0, 1, 0); C.push(c, c, c); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(C, 3));
+  g.computeBoundingSphere();
+  return g;
 }
 const VGEO = new WeakMap();
 
@@ -300,23 +327,19 @@ export class FloeField {
     // instanced meshes per variant
     let vg = VGEO.get(ctx); if (!vg) { vg = Array.from({ length: NV }, (_, v) => variantGeo(ctx, v)); VGEO.set(ctx, vg); }
     const mat = ctx.materials.standard({ color: '#ffffff', vertexColors: true, roughness: 0.42, metalness: 0, envMapIntensity: 0.9 });
-    this.meshes = vg.map((g, v) => {
-      const count = fl.filter(f => f.v === v && f.kind !== 'berg').length + 1;
+    const inst = (g, count, name) => {
       const m = new THREE.InstancedMesh(g, mat, count);
-      m.count = 0; m.castShadow = false; m.receiveShadow = true; m.frustumCulled = false; m.name = 'floes' + v;
-      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+      m.count = 0; m.castShadow = false; m.receiveShadow = true; m.frustumCulled = false; m.name = name;
+      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3).fill(1), 3);
       ctx.levelRoot.add(m);
       return m;
-    });
+    };
+    const counts = vg.map((_, v) => fl.filter(f => f.v === v && f.kind !== 'berg').length + 1);
+    this.meshes = vg.map((g, v) => inst(g.body, counts[v], 'floes' + v));
+    // foam at the waterline, hugging each floe's own outline (same material and program; white per instance)
+    this.foams = vg.map((g, v) => { const m = inst(g.foam, counts[v], 'foam' + v); m.receiveShadow = false; return m; });
     this.slot = new Int32Array(this.n).fill(-1);
-    fl.forEach((f, i) => { if (f.kind === 'berg') return; const m = this.meshes[f.v]; this.slot[i] = m.count++; });
-    // foam rings at the waterline: one InstancedMesh on the floes' own material (same shader program), white per instance
-    const rg = new THREE.RingGeometry(1.0, 1.16, 28, 1); rg.rotateX(-PI / 2); rg.deleteAttribute('uv');
-    rg.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(rg.attributes.position.count * 3).fill(0.9), 3));
-    this.foam = new THREE.InstancedMesh(rg, mat, this.n);
-    this.foam.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.n * 3).fill(1), 3);
-    this.foam.count = this.n; this.foam.frustumCulled = false; this.foam.castShadow = false; this.foam.receiveShadow = false;
-    ctx.levelRoot.add(this.foam);
+    fl.forEach((f, i) => { if (f.kind === 'berg') return; const m = this.meshes[f.v]; this.slot[i] = m.count++; this.foams[f.v].count = m.count; });
     // bergs: tabular icebergs (merged; 1 draw call per material)
     this.bergMesh = this.buildBergs(ctx);
     // colliders: one per floe, created once
@@ -337,21 +360,48 @@ export class FloeField {
     this.split = false; this.running = false; this.frozen = false;
     this.reset(false);
   }
+  /**
+   * Tabular icebergs (the shade casters, r × h as the shade rule sees them): an irregular cliffed body, a snow cap a
+   * little inset from the rim, a darker wave-cut notch at the waterline, two clearer strata bands and fallen blocks at
+   * the foot. Merged per material: 4 draw calls for all nine.
+   */
   buildBergs(ctx) {
-    const M = mats(ctx), group = new THREE.Group();
-    const parts = [];
-    for (const b of this.field.bergs) {
-      const rng = mulberry32(Math.floor(b.x * 7 + b.z));
-      const pts = blob(rng, b.r, 9, 0.12);
-      const g = KIT.plateGeo(pts.map(([a, c]) => [Math.round(a * 100) / 100, Math.round(c * 100) / 100]), b.h + 6, 'top', 1.2);
+    const M = mats(ctx), group = new THREE.Group(), top0 = this.L.DATA.floeTop;
+    const byMat = new Map();
+    const put = (mat, g, x, y, z, ry = 0) => {
       const n = (g.index ? g.toNonIndexed() : g.clone());
       n.deleteAttribute('uv'); n.clearGroups?.();
-      n.translate(b.x, this.L.DATA.floeTop + (b.h + 6) / 2 - 6, b.z);
-      parts.push(n);
+      if (ry) n.rotateY(ry);
+      n.translate(x, y, z);
+      const o = new THREE.BufferGeometry(); o.setAttribute('position', n.attributes.position); o.setAttribute('normal', n.attributes.normal);
+      if (!byMat.has(mat)) byMat.set(mat, []);
+      byMat.get(mat).push(o);
+    };
+    const r2 = (v) => Math.round(v * 100) / 100;
+    for (const b of this.field.bergs) {
+      const rng = mulberry32(Math.floor(b.x * 7 + b.z));
+      const pts = blob(rng, b.r, 15, 0.13);
+      const sc = (k) => pts.map(([a, c]) => [r2(a * k), r2(c * k)]);
+      // the large floe the berg stands on (its walkable ring; always shaded: the shade-lane blue) and its foam
+      const base = blob(mulberry32(Math.floor(b.x * 13 + b.z * 3)), b.r + 12, 16, 0.08);
+      put(M.iceDeep, KIT.plateGeo(base.map(([a, c]) => [r2(a), r2(c)]), 5.4, 'top', 0.4), b.x, top0 - 2.7, b.z);
+      put(M.snow, foamStrip(base.map(([a, c]) => [a / (b.r + 12), c / (b.r + 12)]), 0.99, 1.07, 1).scale(b.r + 12, 1, b.r + 12), b.x, this.L.DATA.sea + 0.06, b.z);
+      const bodyH = b.h - 2.2 + 6;                                           // from 6 m below the floe tops
+      put(M.ice, KIT.plateGeo(sc(1), bodyH, 'top', 1.0), b.x, top0 - 6 + bodyH / 2, b.z);
+      put(M.snow, KIT.plateGeo(sc(0.95), 2.6, 'top', 0.9), b.x, top0 + b.h - 1.3, b.z);
+      put(M.iceDeep, KIT.plateGeo(sc(1.03), 1.8, 'top', 0.5), b.x, top0 + 0.4, b.z);
+      for (const k of [0.38, 0.68]) put(M.iceClear, KIT.plateGeo(sc(1.012), 0.5, 'top', 0.15), b.x, top0 + b.h * k, b.z);
+      for (let i = 0; i < 4; i++) {
+        // small fallen blocks (no colliders: knee-high to the frame)
+        const a = rng() * PI * 2, d = b.r * (1.02 + rng() * 0.2), s = 1.2 + rng() * 1.6;
+        const cp = blob(rng, s, 6, 0.3).map(([x, z]) => [r2(x), r2(z)]);
+        put(i % 2 ? M.ice : M.snow, KIT.plateGeo(cp, s * (0.5 + rng() * 0.4), 'top', 0.2), b.x + Math.cos(a) * d, top0 + s * 0.15, b.z + Math.sin(a) * d, rng() * PI);
+      }
     }
-    const geo = mergeGeometries(parts.map(p => { const o = new THREE.BufferGeometry(); o.setAttribute('position', p.attributes.position); o.setAttribute('normal', p.attributes.normal); return o; }), false);
-    const mesh = new THREE.Mesh(geo, M.ice); mesh.castShadow = true; mesh.receiveShadow = true; mesh.name = 'bergs';
-    group.add(mesh);
+    for (const [mat, list] of byMat) {
+      const mesh = new THREE.Mesh(mergeGeometries(list, false), mat); mesh.castShadow = true; mesh.receiveShadow = true; mesh.name = 'bergs';
+      group.add(mesh);
+    }
     this.L.ctx.levelRoot.add(group);
     return group;
   }
@@ -499,14 +549,15 @@ export class FloeField {
       _q.setFromAxisAngle(_p.set(0, 1, 0), f.yaw);
       _s.set(hide ? 0 : f.r, hide ? 0 : thick, hide ? 0 : f.r);
       _m4.compose(_p.set(f.x, this.topOf(i), f.z), _q, _s);   // the body spans y -1..0 × thick below the top
-      if (s >= 0) this.meshes[f.v].setMatrixAt(s, _m4);
-      // foam ring at the waterline
-      const fr = hide ? 0 : f.r * 1.02;
+      if (s < 0) continue;
+      this.meshes[f.v].setMatrixAt(s, _m4);
+      // foam at the waterline (gone once the floe has sunk below it)
+      const fr = hide || this.sinkY[i] > 2.5 ? 0 : f.r;
       _m4.compose(_p.set(f.x, this.L.DATA.sea + 0.06, f.z), _q, _s.set(fr, 1, fr));
-      this.foam.setMatrixAt(i, _m4);
+      this.foams[f.v].setMatrixAt(s, _m4);
     }
     for (const m of this.meshes) m.instanceMatrix.needsUpdate = true;
-    this.foam.instanceMatrix.needsUpdate = true;
+    for (const m of this.foams) m.instanceMatrix.needsUpdate = true;
     this.placeSled();
     this.writeColors();
   }
@@ -516,7 +567,6 @@ export class FloeField {
     const C = this.L.ctx.collision;
     for (const c of this.cols) C?.remove(c);
     for (const c of this.bergCols) C?.remove(c);
-    this.foam.geometry.dispose();
   }
 }
 
@@ -528,7 +578,8 @@ export class Sea {
     const w = B.x1 - B.x0, d = B.z1 - B.z0;
     const g = new THREE.PlaneGeometry(w, d, 1, 1); g.rotateX(-PI / 2);
     // library materials (no extra shader programs): a glossy dark green-black top, an emissive green-white underside
-    const top = ctx.materials.standard({ color: '#0d2226', roughness: 0.1, metalness: 0.05, envMapIntensity: 1.3 });
+    // black water: dark enough that it never reads as a sandy plane when it mirrors the dawn rim
+    const top = ctx.materials.standard({ color: '#061219', roughness: 0.16, metalness: 0.0, envMapIntensity: 0.7 });
     this.top = new THREE.Mesh(g, top); this.top.position.set((B.x0 + B.x1) / 2, y, (B.z0 + B.z1) / 2); this.top.receiveShadow = true; this.top.name = 'sea';
     const g2 = new THREE.PlaneGeometry(w, d, 1, 1); g2.rotateX(PI / 2);
     const under = ctx.materials.emissive('#7fc0a8', 1.0);

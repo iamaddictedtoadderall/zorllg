@@ -93,7 +93,7 @@ vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth) {
   float rays = 0.12 + 0.88 * r1 * r1 * r1 + 0.4 * r2 * r2 * r2 * smoothstep(2.4, 1.0, abs(u));
   // patches that brighten and fade along the curtain, and its ends
   float seg = 0.1 + 0.9 * smoothstep(0.3, 0.8, cNoise(vec2(u * 0.9 + ph * 3.0, t * 0.025)));
-  float ends = smoothstep(4.0, 1.6, abs(u));
+  float ends = smoothstep(3.6, 1.2, abs(u));   // fade gently toward the ends: a fold seen far off-axis never reads as a cut
   // emission integrates through the sheet: brighter where it is seen edge-on (the folds)
   float g = dm / (1.0 + m) + u;
   float graze = pow(min(sqrt(1.0 + g * g), 5.0), 0.6);
@@ -409,45 +409,77 @@ export function install(ctx) {
     group.add(m);
     return m;
   }
+  // Kit geometry where it exists (namespace import, feature-detected: kit.js is another package's file), plain
+  // geometry otherwise. Profiles are silhouette-first (AD §1.4, §2.17): battered walls, chamfered steps, flanges and
+  // see-through trusses, so a skyline object reads as a designed shape at 3 km and never as a stack of boxes.
+  const lathe = (prof, seg) => (KIT.latheHard ? KIT.latheHard(prof, seg, { crease: 30 })
+    : new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), seg));
+  const plate = (pts, depth, view, bevel) => (KIT.plateGeo ? KIT.plateGeo(pts, depth, view, bevel) : (() => {
+    const sh = new THREE.Shape(); pts.forEach(([x, y], i) => (i ? sh.lineTo(x, y) : sh.moveTo(x, y)));
+    const g = new THREE.ExtrudeGeometry(sh, { depth, bevelEnabled: false }); g.translate(0, 0, -depth / 2);
+    if (view === 'side') g.rotateY(Math.PI / 2);
+    return g;
+  })());
+  const crect = (w, h, c, cx = 0, cy = 0) => {
+    const x = w / 2, y = h / 2;
+    const r = [[cx - x, cy - y], [cx + x, cy - y], [cx + x, cy + y], [cx - x, cy + y]];
+    return KIT.chamfer ? KIT.chamfer(r, c) : r;
+  };
+  const batter = (pts, k) => (KIT.taper ? KIT.taper(pts, k) : pts);
   // Builders return { obj, h } in metres at the object's true distance; `mat` is the silhouette material.
   const BUILD = {
-    tower(mat, rng) {   // a lattice mast with platforms and guy-wire stubs
-      const g = new THREE.Group(), H = 340;
-      addPart(g, geo.cyl(5, 14, H, 6), mat, 0, H / 2, 0);
-      for (let i = 1; i <= 3; i++) addPart(g, geo.box(34 - i * 6, 6, 34 - i * 6, 1.5), mat, 0, H * (0.25 + i * 0.2), 0, 0, rng() * 3, 0);
-      addPart(g, geo.cyl(1.5, 2.5, 60, 5), mat, 0, H + 30, 0);
-      return { obj: g, h: H + 60 };
+    tower(mat, rng) {   // a flared mast: stepped shaft, platform flanges, a cantilevered pod and an antenna
+      const g = new THREE.Group(), H = 340, f = (k) => H * k;
+      addPart(g, lathe([[0, 0], [26, 0], [26, 5], [17, 14], [12, 60], [9.5, f(0.32)], [15, f(0.32)], [15, f(0.32) + 7], [8.5, f(0.32) + 10],
+                        [7, f(0.62)], [12, f(0.62)], [12, f(0.62) + 6], [6.5, f(0.62) + 8], [5, f(0.86)], [17, f(0.86)], [19, f(0.86) + 9],
+                        [17, f(0.86) + 16], [3.2, f(0.86) + 18], [3.2, H], [0, H]], 10), mat, 0, 0, 0, 0, rng() * 3, 0);
+      addPart(g, plate(crect(36, 14, 4, 0, 0), 12, 'front', 1.5), mat, 20, f(0.74), 0, 0, rng() * 6, 0);
+      addPart(g, geo.cyl(0.9, 1.6, 70, 5), mat, 0, H + 35, 0);
+      addPart(g, geo.cyl(0.6, 0.9, 40, 5), mat, 9, H - 10, 0, 0, 0, 0.12);
+      return { obj: g, h: H + 70 };
     },
     tether(mat) {       // an orbital tether climbing out of sight, with a station ring
       const g = new THREE.Group(), H = 9000;
       addPart(g, geo.cyl(9, 14, H, 10), mat, 0, H / 2 - 50, 0);
+      addPart(g, lathe([[0, -30], [40, -30], [60, -12], [60, 12], [40, 30], [0, 30]], 16), mat, 0, 900, 0);
       addPart(g, new THREE.TorusGeometry(120, 10, 8, 40), mat, 0, 900, 0, Math.PI / 2, 0, 0);
-      addPart(g, geo.box(60, 40, 60, 4), mat, 0, 900, 0);
+      for (let i = 0; i < 4; i++) addPart(g, geo.cyl(3, 3, 230, 5), mat, 0, 900, 0, 0, i * Math.PI / 4, Math.PI / 2);   // spokes
       return { obj: g, h: 1200 };
     },
-    spire(mat, rng) {   // a tapered, stepped spire
-      const g = new THREE.Group(); let y = 0, r = 60;
-      for (let i = 0; i < 5; i++) { const h = 140 - i * 15; addPart(g, geo.cyl(r * 0.78, r, h, 8), mat, 0, y + h / 2, 0, 0, rng(), 0); y += h; r *= 0.68; }
-      addPart(g, geo.cyl(0.5, r, 160, 6), mat, 0, y + 80, 0);
-      return { obj: g, h: y + 160 };
-    },
-    megastructure(mat, rng) {   // stepped massing with buttresses and a see-through gantry
+    spire(mat, rng) {   // a stepped, tapering spire with flanges and a needle
+      const prof = [[0, 0]]; let y = 0, r = 62;
+      for (let i = 0; i < 5; i++) {
+        const h = 140 - i * 15, rt = r * 0.74;
+        prof.push([r + 6, y], [r + 6, y + 5], [r, y + 8], [rt, y + h]);
+        y += h; r = rt * 0.9;
+      }
+      prof.push([r * 0.6, y + 4], [1.2, y + 170], [0, y + 170]);
       const g = new THREE.Group();
-      const W = 520, D = 260;
-      addPart(g, geo.box(W, 380, D, 12), mat, 0, 190, 0);
-      addPart(g, geo.box(W * 0.7, 260, D * 0.8, 10), mat, -40, 380 + 130, 0);
-      addPart(g, geo.box(W * 0.35, 220, D * 0.6, 8), mat, 60, 640 + 110, 0);
-      for (let i = -2; i <= 2; i++) addPart(g, geo.box(30, 300 + rng() * 120, 70, 4), mat, i * 110, 150, D / 2 + 20, -0.12, 0, 0);
-      for (let i = 0; i < 4; i++) addPart(g, geo.cyl(4, 4, 160, 5), mat, -200 + i * 40, 900, 0);
-      return { obj: g, h: 980 };
+      addPart(g, lathe(prof, 8), mat, 0, 0, 0, 0, rng(), 0);
+      return { obj: g, h: y + 170 };
     },
-    wreck(mat, rng) {   // a broken hull lying on its side
+    megastructure(mat, rng) {   // battered, stepped massing with chamfered shoulders, buttresses, stacks and a truss gantry
       const g = new THREE.Group();
-      addPart(g, geo.box(420, 90, 110, 8), mat, 0, 40, 0, 0, 0, 0.12);
-      addPart(g, geo.box(160, 120, 90, 8), mat, 230, 90, 0, 0, 0.2, 0.5);
-      addPart(g, geo.box(30, 220, 20, 3), mat, -120, 120, 0, 0, 0, -0.35);
-      addPart(g, geo.box(60, 50, 60, 4), mat, -260, 20, 30, 0, rng(), 0.3);
-      return { obj: g, h: 230 };
+      addPart(g, plate(batter(crect(520, 380, 34, 0, 190), 0.84), 260, 'front', 6), mat, 0, 0, 0);
+      addPart(g, plate(batter(crect(360, 260, 26, -40, 510), 0.86), 210, 'front', 5), mat, 0, 0, 0);
+      addPart(g, plate(batter(crect(170, 230, 22, 70, 755), 0.8), 150, 'front', 4), mat, 0, 0, 0);
+      // buttresses: wedges against the front face, irregular spacing (3-5-8 rhythm)
+      for (const [x, h] of [[-225, 300], [-150, 250], [-30, 340], [95, 280], [200, 320]]) {
+        const hh = h * (0.9 + rng() * 0.2);
+        addPart(g, plate(crect(80, hh, 10, -40, hh / 2).map(([a, b]) => [a * (1 - b / hh * 0.85), b]), 26, 'side', 2), mat, x, 0, 130);   // side view flips z: the wedge leans out of the face
+      }
+      for (let i = 0; i < 3; i++) addPart(g, geo.cyl(7, 9, 120 + i * 30, 8), mat, 100 + i * 26, 870 + i * 15, -20);
+      if (KIT.truss) addPart(g, KIT.truss(300, 0, 34, 9, 4), mat, -60, 645, 60);
+      return { obj: g, h: 1000 };
+    },
+    wreck(mat, rng) {   // a broken hull on its side: two hull sections, exposed ribs at the break, a fin
+      const g = new THREE.Group();
+      const hull = [[-210, 0], [150, 0], [215, 30], [200, 80], [120, 96], [-160, 92], [-200, 60]];
+      addPart(g, plate(hull, 110, 'side', 6), mat, 0, 20, 0, 0, 0, 0.06);
+      addPart(g, plate([[0, 0], [150, 0], [175, 50], [120, 110], [10, 100]], 90, 'side', 5), mat, 0, 40, -240, 0.35, 0.25, 0.5);
+      for (let i = 0; i < 6; i++) addPart(g, geo.box(8, 70 + rng() * 60, 8, 1), mat, (rng() - 0.5) * 80, 110, -150 - i * 16, 0.2 + rng() * 0.5, 0, (rng() - 0.5) * 0.6);
+      addPart(g, plate([[0, 0], [90, 0], [40, 150], [10, 150]], 14, 'side', 2), mat, 0, 105, 120, -0.3, 0, 0);
+      return { obj: g, h: 260 };
     },
     smoke(mat) {        // a rising plume, widening and fading
       const g = new THREE.Group(), H = 1600;

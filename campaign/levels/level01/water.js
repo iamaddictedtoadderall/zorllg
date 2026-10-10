@@ -57,7 +57,7 @@ export class Water {
     this.scripted = false;       // the drowning owns the player
     this.bubbleT = 0;
     if (this.camUnder) this.cameraOut(true);
-    this.camUnder = false; this.saved = null;
+    this.camUnder = false; this.saved = null; this.lastSaved = null; this.lastOut = null;
     this.saveAb = null;
   }
   /** is this world point in open water (no floe or structure under it above the sea)? */
@@ -167,7 +167,10 @@ export class Water {
     const under = ctx.camera.position.y < this.sea - 0.2 && this.cameraOverWater();
     if (under && !this.camUnder) {
       this.camUnder = true;
-      this.saved = pick(A.art, this.underArt);
+      // dipping back under while the last surfacing's blend is still running would snapshot a half-underwater art
+      // (and restore THAT on the next surfacing): reuse the last good snapshot instead
+      const t = ctx.clock?.time ?? 0;
+      this.saved = this.lastSaved && t - (this.lastOut ?? -99) < 1.5 ? this.lastSaved : pick(A.art, this.underArt);
       A.set(this.underArt, 0.4);
       ctx.audio?.duck?.(0.45, 0.6);
     } else if (!under && this.camUnder) this.cameraOut(false);
@@ -175,8 +178,24 @@ export class Water {
   }
   cameraOut(instant) {
     this.camUnder = false;
-    if (this.saved) this.L.ctx.atmosphere?.set?.(this.saved, instant ? 0 : 0.4);
+    // after the sunrise the art above the water is the dawn (plus the zone's own changes), whatever was mid-blend when
+    // the camera went under (the drowning starts while the sunrise blend is still running)
+    const dawn = this.dawnTarget();
+    const to = dawn ? pick(dawn, this.underArt) : this.saved;
+    if (to) this.L.ctx.atmosphere?.set?.(to, instant ? 0 : 0.4);
+    this.lastSaved = this.saved; this.lastOut = this.L.ctx.clock?.time ?? 0;
     this.saved = null;
+  }
+  /** the intended above-water art after the sunrise: ART_DAWN with the floes' or the shore's changes, else null */
+  dawnTarget() {
+    const L = this.L, A = L.art || {};
+    if (!L.dawnArt || !A.ART_DAWN) return null;
+    const t = JSON.parse(JSON.stringify(A.ART_DAWN));
+    const p = L.ctx.player, s = p?.active ? L.routeS(p.pos) : 0;
+    const extra = s >= 3130 ? A.ART_SHORE : s >= 2460 ? A.ART_FLOES : null;
+    const merge = (a, b) => { for (const [k, v] of Object.entries(b || {})) { if (v && typeof v === 'object' && !Array.isArray(v)) merge(a[k] ??= {}, v); else a[k] = v; } };
+    if (extra) merge(t, extra);
+    return t;
   }
   /** the camera is over the sea region (not inside a terrain cave below the sea line) */
   cameraOverWater() {

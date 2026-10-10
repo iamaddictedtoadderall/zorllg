@@ -131,6 +131,7 @@ export default {
     { id: 't_player_low', when: { health: { below: 0.4 } }, do: [{ hint: 'AP low. R uses a repair kit.' }] },
     { id: 't_custom', when: { custom: 'p5.flagged', args: { flag: 'p5.custom' } }, do: [{ flag: ['p5.customFired', true] }] },
     { id: 't_once', when: { flag: 'p5.toggle' }, once: false, do: [{ call: 'p5.count', args: { flag: 'p5.edges' } }] },
+    { id: 't_after_once', when: { flag: 'p5.toggle' }, after: 't_once', do: [{ flag: ['p5.afterOnce', true] }] },   // armed by a once:false trigger
     { id: 't_disabled', when: { flag: 'p5.armed' }, enabled: false, do: [{ flag: ['p5.armedFired', true] }] },
     { id: 't_any', when: { any: [{ flag: 'p5.a' }, { flag: 'p5.b' }] }, do: [{ flag: ['p5.any', true] }] },
     { id: 't_all_not', when: { all: [{ flag: 'p5.a' }, { not: { flag: 'p5.b' } }] }, do: [{ flag: ['p5.allNot', true] }] },

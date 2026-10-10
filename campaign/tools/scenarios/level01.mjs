@@ -255,7 +255,13 @@ export default async function (g) {
     g.assert(r.ok, 'the cutter saw cuts block1 in three strikes');
     await step(0.5);
     s = await st();
-    if (SHOTS) await shot('z1-cut-gameplay');
+    if (SHOTS) {
+      // frame the cut site (the kite-look left the view pitched up at the sky)
+      const pitch0 = await ev(() => { const p = window.__game.ctx.player, v = p.pitch; p.pitch = -0.12; return v; });
+      await step(0.3, 3);
+      g.log('z1 framing', { pitchBefore: pitch0 });
+      await shot('z1-cut-gameplay');
+    }
     await ev(() => {
       const ctx = window.__game.ctx;
       for (const id of ['block1', 'block2', 'block3']) { const i = ctx.structures.get(id); if (i.state !== 'destroyed' && i.target) ctx.combat.kill(i.target, { team: 'player' }); }
@@ -315,8 +321,8 @@ export default async function (g) {
     r = await until((ctx) => ctx.player.abilities.jump && ctx.player.abilities.hover, null, 6);
     g.assert(r.ok && await hasFired('t_shaft'), 't_shaft: jump and hover remembered');
     if (SHOTS) {
-      const a = await routePos(600, 0, 3), b = await routePos(625, 0, 30);
-      await vista('z2-shaft-light', a, b, 60);
+      const a = await routePos(578, 12, 5), b = await routePos(625, 0, 12);   // down the trench to the light in the moulin
+      await vista('z2-shaft-light', a, b, 55);
     }
     // the climb: hold JUMP (jump, then hover) up the 34 m shaft, then step out onto the shelf
     await g.input({ clear: true, hold: { jump: true } });
@@ -691,7 +697,7 @@ export default async function (g) {
     g.assert(r.ok, 't_finale: the bow auger dead');
     await g.setGod(false);
     // the sunrise: the light wall sweeps in (T 1.5 .. ~9)
-    r = await until((ctx, L) => !!L.wall && L.wall.d < 1500, null, 8, 5);
+    r = await until((ctx, L) => !!L.wall && L.wall.d - L.wall.playerD() < 520, null, 8, 5);
     if (SHOTS) {
       const pp = (await st()).player.pos;
       await vista('z5-sunrise-wall', [pp[0] - 140, pp[1] + 40, pp[2] - 60], [pp[0] + 400, pp[1] + 20, pp[2]], 55);
@@ -704,7 +710,10 @@ export default async function (g) {
     await step(2);
     const w1 = await watchV();
     g.assert(w1.mode === 'live' && w1.bpm >= 140, `vitals race (${w1.mode} ${w1.bpm})`);
-    if (SHOTS) await shot('z5-underwater');
+    if (SHOTS) {   // settled at −48, looking up at the split (L1 §7.2's 6 to 10 s silence)
+      await until((ctx, L) => (L.drown?.t ?? 0) > 9, null, 10, 5);
+      await shot('z5-underwater');
+    }
     r = await until((ctx) => ctx.hud.vitalsState.mode === 'flat', null, 25, 5);
     const w2 = await watchV();
     g.assert(r.ok && w2.bpm == null, `flat line: SENSOR FAULT (${w2.mode} ${w2.bpm})`);
@@ -719,7 +728,7 @@ export default async function (g) {
     });
     g.log('over black', black);
     g.assert(r.ok && black.visible, '"Hold on to me." on the comms over black');
-    if (SHOTS) await shot('z5-black-hold-on', { settle: false });
+    if (SHOTS) { await step(0.8, 4); await shot('z5-black-hold-on', { settle: false }); }   // the line typed out
     r = await until((ctx) => ctx.hud.vitalsState.mode === 'locked', null, 5, 3);
     const w3 = await watchV();
     g.assert(r.ok && w3.bpm === 60, `reboot: vitals locked at 60 (${w3.mode} ${w3.bpm})`);
@@ -974,6 +983,28 @@ export default async function (g) {
     r = await until((ctx) => (ctx.haul?.rack?.length ?? 0) >= 1, null, 3, 2);
     await g.input({ clear: true });
     g.assert(r.ok, 'alt: the guaranteed TEAR');
+    // cp_harvest from a cold start (L1 §9): the Icebreaker respawns directly in phase 3 at the edge, both saws gone;
+    // the bow auger killed from the Raft starts the finale
+    await start('cp_harvest', { resetSave: true });
+    await g.setGod(true);
+    r = await until((ctx) => ctx.mission.flags['ib:phase'] === 3 && ctx.combat.query({ tag: 'drillhead' }).length === 1 &&
+                             ctx.combat.query({ tag: 'head_bow' }).length === 1, null, 8);
+    const hv = await ev(() => {
+      const ctx = window.__game.ctx, u = ctx.enemies.alive({ kind: 'icebreaker' })[0];
+      return { phase: ctx.mission.flags['ib:phase'], obj: ctx.mission.objective('o_heads')?.state, pos: u && [Math.round(u.pos.x), Math.round(u.pos.z)],
+               turrets: ctx.enemies.count({ tag: 'ib_turret' }), music: !!ctx.music };
+    });
+    g.log('cp_harvest cold', hv);
+    g.assert(r.ok && hv.obj === 'active' && hv.pos && Math.abs(hv.pos[0] - 612) < 30, `alt: cp_harvest cold: phase 3 at the edge, the bow auger the last head (${JSON.stringify(hv)})`);
+    await ev(() => {
+      const ctx = window.__game.ctx, F = ctx.l01.floes, h = ctx.combat.query({ tag: 'head_bow' })[0];
+      const i = F.nearestFloe(h.pos.x + 30, h.pos.z, true), f = F.field.floes[i];
+      ctx.player.teleport(new ctx.player.pos.constructor(f.x, f.top + 0.3, f.z));
+    });
+    await step(0.5, 5);
+    await ev(() => { const ctx = window.__game.ctx, h = ctx.combat.query({ tag: 'head_bow' })[0]; ctx.combat.kill(h, { team: 'player' }); });
+    r = await until((ctx, L) => ctx.mission.flags['p:finale'] && !!L.drown?.active, null, 3);
+    g.assert(r.ok, 'alt: from cp_harvest, the bow auger dead starts the finale');
     // sled 3 lost: its floe goes sunlit (sprint ~62 s) and rots under the player before it is flagged
     await start('cp_floes', { resetSave: true });
     await g.setGod(true);

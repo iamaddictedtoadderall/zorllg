@@ -50,7 +50,10 @@ void main() {
     vec2 sv = (viewMatrix * vec4(uVel, 0.0)).xy;
     float sl = length(sv);
     vec2 d = sl > 1e-4 ? sv / sl : vec2(0.0, 1.0);
-    float len = ndcSize + projectionMatrix[1][1] * sl * uStreak / max(-mv.z, 0.1);
+    // streak length varies per particle (motion-blur of drops and grit at different speeds), so a storm never reads
+    // as a field of identical dashes
+    float sk = 0.55 + 0.9 * fract(aSeed.w * 13.71 + aSeed.x * 3.3);
+    float len = ndcSize + projectionMatrix[1][1] * sl * uStreak * sk / max(-mv.z, 0.1);
     off = d * c.y * len + vec2(d.y, -d.x) * c.x * ndcSize;
   } else off = c * ndcSize;
   clip.xy += off * vec2(projectionMatrix[0][0] / projectionMatrix[1][1], 1.0) * clip.w;
@@ -62,7 +65,8 @@ void main() {
   float edge = 1.0 - smoothstep(0.35, 0.5, max(abs(rel.x) / uBox.x, max(abs(rel.y) / uBox.y, abs(rel.z) / uBox.z)));
   float near = smoothstep(2.0, 7.0, -mv.z);   // flakes right at the lens would read as out-of-focus blobs
   float f = cFogAmount(wp);
-  vCol = vec4(uColor * light, uAlpha * fade * edge * near * (1.0 - f * 0.8));
+  float va = 0.7 + 0.5 * fract(aSeed.y * 9.13 + aSeed.z * 5.7);   // per-particle density variation (mean ≈ 0.95)
+  vCol = vec4(uColor * light, uAlpha * va * fade * edge * near * (1.0 - f * 0.8));
   gl_Position = clip;
 }`;
 const FS = /* glsl */`

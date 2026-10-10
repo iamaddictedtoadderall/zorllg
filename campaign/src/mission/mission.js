@@ -971,7 +971,8 @@ export function install(ctx) {
       if (!t.enabled) continue;
       const once = t.def.once !== false;
       if (once && t.fired) continue;
-      if (t.def.after && !triggers.get(t.def.after)?.fired) continue;
+      // armed once the named trigger has fired at least once (a `once: false` trigger never sets `fired`)
+      if (t.def.after && !((triggers.get(t.def.after)?.firedAt ?? -1) >= 0)) continue;
       const now = m.check(t.def.when);
       if (once) { if (now) m.fire(t.def.id); }
       else { if (now && !t.prev) m.fire(t.def.id); t.prev = now; }
@@ -1054,9 +1055,9 @@ export function install(ctx) {
       }
       triggers = new Map();
       for (const t of def.triggers || []) {
-        const st = useSnap?.triggers?.[t.id];
-        triggers.set(t.id, { def: t, fired: !!useSnap?.fired?.includes(t.id), enabled: st?.enabled ?? (t.enabled !== false),
-                             firedAt: st?.firedAt ?? -1, prev: !!st?.prev });
+        const st = useSnap?.triggers?.[t.id], fired = !!useSnap?.fired?.includes(t.id);
+        triggers.set(t.id, { def: t, fired, enabled: st?.enabled ?? (t.enabled !== false),
+                             firedAt: st?.firedAt ?? (fired ? 0 : -1), prev: !!st?.prev });
       }
       encounters = new Map(); encKills = new Map();
       kills = new Map(Object.entries(useSnap?.kills || {}));

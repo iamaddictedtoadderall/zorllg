@@ -343,7 +343,8 @@ export function install(ctx) {
         if (s.def.skippable !== false) {
           const h = ctx.input?.heldFor?.('skip') || 0;
           ctx.hud?.skipHint?.(clamp(h / 0.6, 0, 1));
-          if (h >= 0.6) { finishShot(true); }
+          // SKIP held 0.6 s; on touch the dedicated SKIP button skips on a tap (it can't be pressed by accident)
+          if (h >= 0.6 || (ctx.input?.isTouch && ctx.input.pressed?.('skip'))) { finishShot(true); }
         }
         if (shot === s) {
           if (s.t >= s.dur) { s.t = s.dur; poseShot(s); finishShot(false); }

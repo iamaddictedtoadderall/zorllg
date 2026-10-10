@@ -92,6 +92,21 @@ const SCREEN_CSS = `
 @media (max-width:700px){.set-cols{grid-template-columns:1fr}#screen .doc.settings-doc{width:min(620px,calc(100% - 32px))}}
 @media (max-width:900px) and (min-width:701px){.set-cols{gap:0 28px}.set-cols .set-row{grid-template-columns:1fr minmax(110px,150px) 44px}}
 @media (max-height:520px){.set-group{margin-top:10px}.set-group h3{margin-bottom:2px}.set-row{padding-block:3px}}
+@media (max-height:520px){
+  #screen:has(.settings-doc){padding-block:10px}
+  #screen .doc.settings-doc{position:relative;padding-top:14px;padding-bottom:16px}
+  .settings-doc h2{display:none}
+  .settings-doc .hdr{font-size:12px;color:var(--hud);letter-spacing:.2em;padding-bottom:12px}
+  .settings-doc .hdr span:last-child{display:none}
+  #screen .doc.settings-doc .actions{position:absolute;top:8px;bottom:auto;right:clamp(18px,3vw,34px);margin:0;padding:0;background:none}
+  #screen .doc.settings-doc .actions .btn{padding:5px 16px;font-size:13px;clip-path:none}
+  .settings-doc .set-grid{gap:0!important;margin-top:2px!important}
+  .settings-doc .set-group{margin-top:8px}
+  .settings-doc .set-group h3{font-size:11px;margin:0 0 2px}
+  .settings-doc .set-row{font-size:12px;padding-block:2px;letter-spacing:.06em}
+  .settings-doc .set-row select{padding:1px 6px}
+  .settings-doc .fine{margin-top:8px;padding-top:6px}
+}
 .set-group h3{margin:0 0 6px}
 .set-row:focus-within{color:var(--hud)}
 .set-row input[type=range]{height:18px}
@@ -104,8 +119,7 @@ const SCREEN_CSS = `
 .debrief-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:nowrap}
 .debrief-top>div:first-child{min-width:0}
 .debrief-top .rank{flex:none}
-.debrief-top h2.long{font-size:clamp(30px,3.7vw,46px);line-height:1.02;text-wrap:balance}
-.rank{display:grid;place-items:center;width:84px;height:84px;border:2px solid var(--accent);font:700 54px/1 var(--f-display);color:var(--accent);clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)}
+.debrief-top h2.long{font-size:clamp(30px,3.7vw,46px);line-height:1.02;text-wrap:balance}.rank{display:grid;place-items:center;width:84px;height:84px;border:2px solid var(--accent);font:700 54px/1 var(--f-display);color:var(--accent);clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)}
 .rank small{display:block;font:500 9px var(--f-mono);letter-spacing:.2em;color:var(--hud-dim);text-align:center;margin-top:-4px}
 .list-item .nm{display:flex;flex-direction:column;gap:2px}
 .list-item .nm small{font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--hud-dim)}

@@ -20,6 +20,10 @@ import { yawTo, DEG, hashString } from '../core/util.js';
 const _v = new THREE.Vector3(), _d = new THREE.Vector3(), _f = new THREE.Vector3();
 const _hit = { t: 0, point: new THREE.Vector3(), normal: new THREE.Vector3(), collider: null, ground: false, surface: '' };
 const _rc = { s: 0, l: 0, dist: 0 };
+// playArea() is called every frame by the player and every unit: results come from a small ring of reused objects (no
+// per-frame garbage). A result stays valid for PA_RING further calls; pass `out` to keep one longer.
+const PA_RING = 32, _pa = Array.from({ length: PA_RING }, () => ({ inside: true, edge: 0, s: 0, l: 0, halfWidth: 0 }));
+let _paI = 0;
 
 export function install(ctx) {
   ctx.collision = new Collision(ctx);
@@ -175,19 +179,25 @@ export function install(ctx) {
       }
       return 0;
     },
-    playArea(x, z) {
-      if (!world.route) return { inside: true, edge: 0, s: 0, l: 0, halfWidth: Infinity };
+    playArea(x, z, out) {
+      const o = out || _pa[_paI = (_paI + 1) % PA_RING];
+      if (!world.route) { o.inside = true; o.edge = 0; o.s = 0; o.l = 0; o.halfWidth = Infinity; return o; }
+      // exact closest point (O(1) grid): the same s and l on every tier, so triggers fire identically
       world.route.closestInto(x, z, _rc);
       const hw = world.route.halfWidthAt(_rc.s);
       const d = _rc.dist / Math.max(1, hw);
       // edge 0.6 at 85 % of the half-width (the warning), 1 at 100 % (the hard limit); it keeps growing outside
-      return { inside: d < 1, edge: Math.max(0, (d - 0.625) / 0.375), s: _rc.s, l: _rc.l, halfWidth: hw };
+      o.inside = d < 1; o.edge = Math.max(0, (d - 0.625) / 0.375); o.s = _rc.s; o.l = _rc.l; o.halfWidth = hw;
+      return o;
     },
-    raycast(origin, dir, maxDist) {
+    /** §4.2; extra optional `out` ({ point, normal } vectors reused) for per-frame callers */
+    raycast(origin, dir, maxDist, out) {
       _d.copy(origin).addScaledVector(dir, maxDist);
       const h = ctx.collision.segment(origin, _d, _hit);
       if (!h) return null;
-      return { dist: h.t * maxDist, point: h.point.clone(), normal: h.normal.clone(), ground: h.ground, collider: h.collider };
+      const o = out || { dist: 0, point: new THREE.Vector3(), normal: new THREE.Vector3(), ground: false, collider: null };
+      o.dist = h.t * maxDist; o.point.copy(h.point); o.normal.copy(h.normal); o.ground = h.ground; o.collider = h.collider;
+      return o;
     },
     /** the point streaming centres on: the camera rig focus (the camera itself in free fly) */
     _focusNow(out) {

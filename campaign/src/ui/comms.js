@@ -46,6 +46,17 @@ const CSS = `
   background:var(--spk);animation:commsChime .35s ease-in-out infinite alternate}
 @keyframes commsChime{from{opacity:.25}to{opacity:1}}
 #comms .line .cur{display:inline-block;width:.55em;height:1em;margin-left:1px;vertical-align:-2px;background:var(--spk);opacity:.7}
+#game.cine #comms:not(.overblack){left:50%;right:auto;top:auto;bottom:calc(11vh + 16px);transform:translateX(-50%);width:min(640px,72vw);
+  background:linear-gradient(90deg,rgba(12,11,14,0),rgba(12,11,14,.62) 18%,rgba(12,11,14,.62) 82%,rgba(12,11,14,0));border-left-color:transparent;text-align:center}
+#game.cine #comms:not(.overblack) .who{justify-content:center}
+#comms.overblack{left:50%!important;right:auto!important;top:50%!important;bottom:auto!important;transform:translate(-50%,-50%)!important;
+  width:min(620px,84vw)!important;background:none!important;border-left-color:transparent;text-align:center;padding:0}
+#comms.overblack .who{justify-content:center}
+#comms.overblack .who canvas{display:none}
+#game #comms.overblack .line{font-size:16px;line-height:1.55;margin-top:10px}
+#game #comms.overblack[data-font=sans] .line{font-size:21px}
+#game #comms.overblack[data-font=serif] .line{font-size:19px}
+#game #comms.overblack .who{font-size:12px}
 @media (prefers-reduced-motion:reduce){#comms .stat{animation:none}#comms:not([hidden]){animation:none}}
 `;
 
@@ -192,6 +203,10 @@ export function install(ctx) {
     /** extra: true while the current line is still typing (tests, skip logic) */
     get typing() { return !!cur && cur.wait === undefined && (phase === 'chime' || typed < cur.text.length); },
     update(dt) {
+      // over a full fade to black the box moves to the centre of the screen, without its panel (L1's boot text and the
+      // drowning's black are comms typography over black)
+      const black = (ctx.hud?.fadeLevel ?? 0) >= 0.95;
+      if (box && box.classList.contains('overblack') !== black) box.classList.toggle('overblack', black);
       if (!cur) {
         if (!queue.length) { setVisible(false); drawWave(dt); return; }
         startLine();

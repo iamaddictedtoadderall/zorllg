@@ -63,6 +63,14 @@ export class Collision {
     this._list.splice(i, 1);
     this._unhash(c);
   }
+  /** extra: remove many colliders in one pass (scatter teardown: thousands of prop colliders) */
+  removeMany(list) {
+    if (!list || !list.length) return;
+    const gone = new Set(list);
+    let w = 0;
+    for (let r = 0; r < this._list.length; r++) { const c = this._list[r]; if (gone.has(c)) this._unhash(c); else this._list[w++] = c; }
+    this._list.length = w;
+  }
   _bounds(c) {
     if (c.type === 'circle') {
       if (!(c.r > 0)) throw new Error('Collision.add: circle needs r > 0');

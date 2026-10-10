@@ -380,7 +380,7 @@ const CELL = 64;
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _s = new THREE.Vector3(),
       _p = new THREE.Vector3(), _n = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _col = new THREE.Color();
 const _rc = { s: 0, l: 0, dist: 0 };
-const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, inside: false };
+const _bk = { flow: 0, bed: 0, sky: 1, sun: 1, slope: 0, curv: 0, inside: false };
 const ckey = (i, j) => i * 100003 + j;
 const ORD = 16384, _ordD = new Float64Array(ORD), _ordI = new Int32Array(ORD), _ordA = new Array(ORD).fill(null);
 
@@ -487,8 +487,9 @@ export class Scatter {
       if (LC.surfMode === 'sediment' && smooth(0.15, 0.6, _bk.flow) * (1 - rock) < 0.35) return;
       if (LC.surfMode === 'flat' && sl > 0.06) return;
     }
-    // rocks gather at slope breaks, in gullies and on steep ground; they thin out on open flats (AD §3.8)
-    if (LC.isRock && !LC.cover && r6 > clamp(0.3 + sl * 2.2 + _bk.flow * 0.8, 0, 1)) return;
+    // rocks gather at slope breaks and hollows (concave curvature), in gullies and on steep ground; they thin out on
+    // open flats (AD §3.8)
+    if (LC.isRock && !LC.cover && r6 > clamp(0.3 + sl * 2.2 + _bk.flow * 0.8 + Math.max(0, -(_bk.curv || 0)) * 0.9, 0, 1)) return;
     // power-law scale for rocks (many small, few big)
     const t = LC.isRock ? r1 * r1 * r1 : r1;
     const sz = lerp(LC.sc[0], LC.sc[1], t);
@@ -503,7 +504,10 @@ export class Scatter {
     _q2.slerp(_q.identity(), 1 - LC.align);
     _q.setFromAxisAngle(_up, r2 * TAU);
     _q.premultiply(_q2);
-    _p.set(x, gy - LC.sink * spec.height * sz, z); _s.set(sz, sz, sz);
+    // no prop floats: on a slope the part of the footprint that isn't tilted with the ground hangs over the downhill
+    // side, so sink it by the drop across its radius as well
+    const ny = Math.max(0.2, _n.y), drop = r * Math.sqrt(1 - ny * ny) / ny * (1 - LC.align);
+    _p.set(x, gy - LC.sink * spec.height * sz - Math.min(drop, spec.height * sz * 0.45), z); _s.set(sz, sz, sz);
     _m.compose(_p, _q, _s);
     const B = LC.batchByKey.get(LC.keys[Math.floor(r3 * LC.keys.length) % LC.keys.length]);
     const ck = ckey(Math.floor(x / CELL), Math.floor(z / CELL));
@@ -714,7 +718,14 @@ export class Scatter {
     this._stats.visible = visible;
   }
   /** refill now (optionally around a new focus) */
-  settle(focus) { this._refill(focus || this._lastFocus); }
+  settle(focus) {
+    if (!focus) {
+      // no argument (a debug teleport): the player in follow mode, otherwise the camera rig's focus
+      const c = this.ctx, rig = c.cameraRig, p = c.player;
+      focus = (!rig || rig.mode === 'follow') && p?.active && p.pos ? p.pos : rig?.mode === 'free' ? c.camera.position : (rig?.focus || this._lastFocus);
+    }
+    this._refill(focus);
+  }
   setTier(t) {
     const prev = this.tier;
     this.tier = t;
@@ -737,7 +748,8 @@ export class Scatter {
     return (h >>> 0).toString(16) + ':' + this.colliders.length;
   }
   dispose() {
-    for (const c of this.colliders) this.ctx.collision?.remove(c);
+    const col = this.ctx.collision;
+    if (col?.removeMany) col.removeMany(this.colliders); else for (const c of this.colliders) col?.remove(c);
     this.colliders.length = 0;
     for (const M of this.meshes.values()) {
       if (M.inst) { this.root.remove(M.inst); M.inst.dispose(); }

@@ -323,7 +323,7 @@ export function genSparkAtlas(cw, seed = 71) {
 /** alpha atlas, 4 × 2 cells: RG sprite-space normal (0..1), B detail, A density */
 export function genSmokeAtlas(cw, seed = 81) {
   const w = cw * 4, h = cw * 2, data = new Uint8Array(w * h * 4);
-  const nA = fbmTile(seed, 3, 3, 5, 0.55), nB = fbmTile(seed + 50, 3, 3, 5, 0.55), nC = fbmTile(seed + 90, 6, 6, 4, 0.6);
+  const nA = fbmTile(seed, 3, 3, 5, 0.55), nB = fbmTile(seed + 50, 3, 3, 5, 0.55), nC = fbmTile(seed + 90, 6, 6, 3, 0.5);
   const hgt = new Float32Array(cw * cw), den = new Float32Array(cw * cw), det = new Float32Array(cw * cw);
   for (let cell = 0; cell < 8; cell++) {
     const ox = (cell % 4) * cw, oy = Math.floor(cell / 4) * cw;
@@ -354,7 +354,13 @@ export function genSmokeAtlas(cw, seed = 81) {
           D = sstep(1, 0.3, rr) ** 1.3 * (0.8 + 0.2 * n); H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.7 + 0.5 * n2); B = 0.35 + 0.3 * n; break;
         }
         case 6: { const a = Math.atan2(v, u), rr = r * (1 + 0.35 * Math.sin(a * 3 + 1) + 0.2 * Math.sin(a * 5)); D = sstep(0.75, 0.6, rr); H = 1 - rr; B = 0.3; break; }   // chip
-        case 7: D = sstep(0.8, 0.55, r); H = Math.sqrt(Math.max(0, 1 - r * r)); break;   // flake
+        case 7: {   // fire billow: a lumpy, cauliflower puff; B = heat structure (hot lobes inside, cool ragged rim)
+          const n = nB((u + 0.5) * 0.7 + 0.61, (v + 0.5) * 0.7 + 0.23), n2 = nC((u + 0.5) * 1.3 + 0.17, (v + 0.5) * 1.3 + 0.71);
+          const rr = r + (n - 0.5) * 0.95 + (n2 - 0.5) * 0.3;
+          D = sstep(1.0, 0.5, rr);
+          H = Math.sqrt(Math.max(0, 1 - Math.min(1, rr * rr))) * (0.6 + 0.6 * n);
+          B = clamp01(sstep(1.05, 0.1, rr) * (0.45 + 0.75 * n2)); break;
+        }
       }
       den[k] = clamp01(D); hgt[k] = H; det[k] = B;
     }

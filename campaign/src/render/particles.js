@@ -7,7 +7,8 @@
 //   additive system (sparkSprite): 0 soft dot · 1 streak (stretched along velocity) · 2 flare · 3 fireball (cools over
 //                                  its life) · 4 ring · 5 shard glint · 6 ember · 7 tight hot dot
 //   alpha system    (smokeSprite): 0 soft dot · 1 billow A (lit) · 2 billow B (lit) · 3 wisp (lit) · 4 ring ·
-//                                  5 dust clump (lit) · 6 chip · 7 flake
+//                                  5 dust clump (lit) · 6 chip · 7 fire billow (emissive, occluding: hot lobes and a
+//                                  cool rim that burn down to soot over its life; rgb tints the heat, 1 = neutral)
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { FOG_PARS, NOISE_PARS } from './glsl.js';
@@ -132,10 +133,20 @@ void main() {
   float litOn = 0.0;
   for (int i = 0; i < 8; i++) if (i == ci) litOn = uLitCells[i];
   vec2 n = t.rg * 2.0 - 1.0;
-  float lit = 0.4 + 0.6 * clamp(dot(n, vSun) * 0.9 + 0.3, 0.0, 1.0);
+  float lit = 0.22 + 0.98 * clamp(dot(n, vSun) * 0.9 + 0.35, 0.0, 1.0);   // a sunny side and a shadow side
   vec3 amb = mix(uHemiGround, uHemiSky, 0.5 + 0.5 * n.y * 0.6 + 0.2);
   vec3 lightC = amb + uSunCol * mix(0.75, lit, litOn);
-  vec3 c = vCol.rgb * lightC * (0.8 + 0.4 * t.b);
+  vec3 c = vCol.rgb * lightC * (0.86 + 0.28 * t.b);
+  if (ci == 7) {
+    // fire billow: temperature falls with age and toward the puff's ragged rim, so every billow shows a bright
+    // yellow core, orange body and deep red edge, then burns down to lit soot (the hand-over to smoke)
+    float heat = clamp((1.12 - vLife * 1.45) * (0.15 + 1.1 * t.b), 0.0, 1.0);
+    vec3 fire = mix(vec3(0.42, 0.05, 0.012), vec3(1.0, 0.3, 0.045), smoothstep(0.06, 0.5, heat));
+    fire = mix(fire, vec3(1.0, 0.72, 0.36), smoothstep(0.58, 0.97, heat));
+    fire *= vCol.rgb * (0.3 + 4.6 * heat * heat);
+    vec3 soot = vec3(0.085, 0.075, 0.07) * lightC;
+    c = mix(soot, fire, smoothstep(0.02, 0.2, heat));
+  }
   c = mix(c, vFogCol, vFog);
   gl_FragColor = vec4(c, dens * vCol.a * (1.0 - vFog * 0.35));
   #include <tonemapping_fragment>
@@ -247,6 +258,10 @@ export class ParticleSystem {
         // fireball billows: snap on, hold their body, then burn out (the shader cools them as they go)
         const f = t < 0.45 ? 0 : (t - 0.45) / 0.55;
         C[i * 4 + 3] = this.a0[i] * (t < 0.05 ? t / 0.05 : 1 - f * f * (3 - 2 * f));
+      } else if (!this._add && M[i * 4 + 1] === 7) {
+        // fire billows: snap on, hold while they burn down to soot, then thin out
+        const f = t < 0.55 ? 0 : (t - 0.55) / 0.45;
+        C[i * 4 + 3] = this.a0[i] * (t < 0.03 ? t / 0.03 : 1 - f * f * (3 - 2 * f));
       } else C[i * 4 + 3] = this.a0[i] * (t < 0.1 ? t / 0.1 : 1 - (t - 0.1) / 0.9);
     }
     this._alive = alive;
@@ -312,7 +327,14 @@ const GLOW_FS = /* glsl */`
 varying vec3 vCol; varying vec2 vUv;
 void main() {
   float a = smoothstep(0.5, 0.0, length(vUv - 0.5));
-  gl_FragColor = vec4(vCol * (a * a * a * 4.0 + a * a * 0.6), 1.0);   // hot core, soft halo
+  vec3 c = vCol * (a * a * a * 4.0 + a * a * 0.6);   // hot core, soft halo
+  #ifdef TONE_MAPPING
+    // Low (direct render, no bloom): keep the hue instead of clipping to white, so a ghost light still reads pale
+    // green and a sodium lamp orange (AD §7.2 rule 1); High/Medium keep HDR for the bloom
+    float m = max(c.r, max(c.g, c.b));
+    if (m > 1.0) c *= (1.0 + 0.12 * log2(m)) / m;
+  #endif
+  gl_FragColor = vec4(c, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;

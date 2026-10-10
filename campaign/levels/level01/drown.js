@@ -298,6 +298,9 @@ export class Drown {
     // sinking at 4 m/s, settling at y −48
     if (p.pos.y > this.sinkTo + 0.05) p.vel.y = -4;
     else { p.pos.y = this.sinkTo; p.vel.y = 0; }
+    // the view drifts up toward the light while the player isn't looking around: the split above, the floe undersides
+    // dark against the bright green-white surface (L1 §7.2)
+    if (this.t < 26 && !(ctx.input?.look?.dx) && !(ctx.input?.look?.dy)) p.pitch = damp(p.pitch, 0.42, 0.5, dt);
     // the vitals race (150 → 168, ragged), then the slowing sequence
     if (this.t < 20) {
       this.vT = (this.vT ?? 0) - dt;

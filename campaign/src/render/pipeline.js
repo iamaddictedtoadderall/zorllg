@@ -279,7 +279,7 @@ export function install(ctx) {
   let view = null, viewCam = null;
   let composer = null, P = {};
   const size = new THREE.Vector2();
-  const counters = { shadow: 0, shadowTris: 0, main: 0, mainTris: 0, ao: 0, post: 0, frameMs: 0 };
+  const counters = { shadow: 0, shadowTris: 0, main: 0, mainTris: 0, ao: 0, post: 0, frameMs: 0, afterMain: 0, afterMainTris: 0 };
 
   // count shadow-map draw calls separately (whole-frame stats include them)
   const sm = r.shadowMap;
@@ -315,6 +315,13 @@ export function install(ctx) {
     composer.setPixelRatio(pr);
     const scene = view || ctx.scene, cam = viewCam || ctx.camera;
     P.render = new RenderPass(scene, cam);
+    {   // record the totals right after the main pass (wrapped once here, so render() allocates nothing per frame)
+      const rp = P.render, orig = rp.render;
+      rp.render = function (a, b, c, d, e) {
+        orig.call(this, a, b, c, d, e);
+        counters.afterMain = r.info.render.calls; counters.afterMainTris = r.info.render.triangles;
+      };
+    }
     composer.addPass(P.render);
     if (t.ao && ctx.settings.get('ao') !== false) {
       P.ao = new GameGTAOPass(scene, cam, Math.max(1, size.x * pr / 2), Math.max(1, size.y * pr / 2), undefined,
@@ -402,14 +409,11 @@ export function install(ctx) {
       if (composer) {
         applyUniforms();
         if (P.render.scene !== scene || P.render.camera !== cam) api.setView(view, viewCam);
-        const rp = P.render, orig = rp.render;
-        let afterMain = 0, afterMainTris = 0;
-        rp.render = function (...a) { orig.apply(this, a); afterMain = r.info.render.calls; afterMainTris = r.info.render.triangles; };
+        counters.afterMain = 0; counters.afterMainTris = 0;
         composer.render(ctx.clock.realDt || 1 / 60);
-        rp.render = orig;
-        counters.main = afterMain - counters.shadow; counters.mainTris = afterMainTris - counters.shadowTris;
+        counters.main = counters.afterMain - counters.shadow; counters.mainTris = counters.afterMainTris - counters.shadowTris;
         counters.ao = P.ao?.sceneCalls ?? 0;
-        counters.post = r.info.render.calls - afterMain - counters.ao;
+        counters.post = r.info.render.calls - counters.afterMain - counters.ao;
       } else {
         const e0 = r.toneMappingExposure;
         r.toneMappingExposure = e0 * (grade.exposure || 1);

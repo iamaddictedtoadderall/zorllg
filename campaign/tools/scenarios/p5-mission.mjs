@@ -230,6 +230,7 @@ export default async function (g) {
     f = await flags();
     g.assert(f['p5.customFired'] && f['p5.edges'] === 2 && f['p5.armedFired'] && f['p5.any'] && f['p5.allNot'] && f['p5.eq'] && f['p5.objFailed'] && f['p5.doomedFailed'],
       `custom, once:false edges (${f['p5.edges']}), enable, any, all+not, flag eq, objective failed + onFail`);
+    g.assert(f['p5.afterOnce'] === true, '`after` naming a once:false trigger arms once that trigger has fired');
     // interact objective path needs the relay down: zone ridge, checkpoint, barrage
     await tp({ s: 1310 }); await g.step(12);
     {   // zone hysteresis (§5.11): never two neighbouring zones at once, whichever way the frame moves through the boundary
@@ -515,10 +516,13 @@ export default async function (g) {
     await g.eval(() => { const c = window.__game.ctx; c.comms.clear(); c.comms.defineSpeakers({ OPS: { name: 'RANGE CONTROL' } }); c.hud.fade(1, 0); c.comms.say('OPS', 'Comms ride above the fade.'); window.__game.step(40); });
     const over = await g.eval(() => {
       const b = document.getElementById('comms'), f = document.getElementById('fade');
+      const r = b.getBoundingClientRect();
       return { inHud: !!b.closest('#hud'), vis: !b.hidden, z: +getComputedStyle(b).zIndex, fz: +getComputedStyle(f).zIndex || 0, fade: getComputedStyle(f).opacity,
-               name: b.querySelector('.nm')?.textContent, color: b.style.getPropertyValue('--spk') };
+               name: b.querySelector('.nm')?.textContent, color: b.style.getPropertyValue('--spk'), black: b.classList.contains('overblack'),
+               centred: Math.abs(r.left + r.width / 2 - innerWidth / 2) < 4 };
     });
     g.assert(!over.inHud && over.vis && over.z > over.fz && over.fade === '1' && over.name === 'RANGE CONTROL', `comms box above #fade (z ${over.z} > ${over.fz}), mid-level rename applies (${over.name})`);
+    g.assert(over.black && over.centred, `over a full fade the comms box moves to the centre of the screen (${JSON.stringify({ black: over.black, centred: over.centred })})`);
     await g.shot('comms-over-fade', { settle: false });
     await g.eval(() => { window.__game.ctx.hud.fade(0, 0); window.__game.ctx.comms.clear(); });
 
@@ -639,6 +643,11 @@ export default async function (g) {
   const setKeys = await g.eval(() => [...document.querySelectorAll('#screen [data-k]')].map(e => e.dataset.k));
   g.assert(['sens', 'invertY', 'fov', 'cameraShake', 'volMaster', 'volMusic', 'volSfx', 'quality', 'ao', 'touch', 'commsSpeed', 'showFps', 'reducedMotion'].every(k => setKeys.includes(k)),
     `settings screen covers every setting (${setKeys.length})`);
+  const setFit = await g.eval(() => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight + 1; };
+    return { rows: [...document.querySelectorAll('#screen [data-k]')].every(vis), back: vis(document.getElementById('bBack')) };
+  });
+  g.assert(setFit.rows && setFit.back, `every setting and Back fit on screen without scrolling (${JSON.stringify(setFit)})`);
   await g.eval(() => { const r = document.querySelector('#screen [data-k="fov"]'); r.value = '72'; r.dispatchEvent(new Event('input')); });
   const fov = await g.eval(() => window.__game.ctx.settings.get('fov'));
   g.assert(fov === 72, `settings write live (fov ${fov})`);
@@ -701,7 +710,11 @@ export default async function (g) {
     boss: !document.getElementById('bossbar').hidden, prompt: !document.getElementById('prompt').hidden, zone: document.getElementById('zonecard').classList.contains('on'),
     warn: document.getElementById('warn').textContent, hint: document.getElementById('hint').style.opacity, toast: document.getElementById('checkpointToast').classList.contains('on'),
     vitals: !document.getElementById('vitals').hidden, comms: !document.getElementById('comms').hidden,
+    behindX: (() => { const e = document.querySelector('#markers .mk.waypoint.edge:not([hidden])'); const m = e && /translate\(([-\d.]+)px/.exec(e.style.transform); return m ? +m[1] : null; })(),
+    w: innerWidth,
   }));
+  g.assert(hudDom.behindX != null && (hudDom.behindX < 80 || hudDom.behindX > hudDom.w - 80),
+    `a marker behind the camera sits on a side edge with its arrow (x ${hudDom.behindX?.toFixed?.(0)} of ${hudDom.w})`);
   g.log('HUD elements:', hudDom);
   g.assert(hudDom.lock === 'block' && hudDom.markers >= 2 && hudDom.edge >= 1 && hudDom.boss && hudDom.prompt && hudDom.zone && /LEAVING/.test(hudDom.warn) && hudDom.hint === '1' && hudDom.toast && hudDom.vitals && hudDom.comms,
     'every HUD element is up: lock box, markers with an edge arrow, compass marks, boss bar, prompt, zone card, warning, hint, toast, vitals, comms');

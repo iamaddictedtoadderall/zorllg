@@ -25,6 +25,10 @@ const SURF = {
   rock: { dust: 'rock', sparks: 2, chips: 6, chipCol: [0.2, 0.18, 0.16] },
   concrete: { dust: [0.5, 0.48, 0.45], sparks: 4, chips: 4, chipCol: [0.35, 0.34, 0.32] },
   metal: { dust: null, sparks: 12, chips: 0, chipCol: [0.3, 0.3, 0.3] },
+  // L1's collider surfaces (A5.5 passes any string through): internal variants of the ground recipe, so ice and
+  // snow hits throw pale powder and glassy chips instead of brown dirt (no new interface: AD §6.5's full set is deferred)
+  ice: { dust: [0.78, 0.85, 0.92], sparks: 0, chips: 7, chipCol: [0.7, 0.8, 0.9] },
+  snow: { dust: [0.88, 0.91, 0.95], sparks: 0, chips: 0, chipCol: [0.85, 0.88, 0.92] },
 };
 const EMITTERS = ['smoke', 'fire', 'sparks', 'steam', 'dustDevil'];
 const AMBIENTS = ['battle', 'flak', 'lightning', 'searchlights', 'fires'];
@@ -151,7 +155,7 @@ export function install(ctx) {
     for (let i = 0; i < n; i++) {
       const g = dark * R(0.85, 1.25);
       sm.spawn(pos.x + R(-2, 2) * scale, pos.y + R(-0.5, 2) * scale, pos.z + R(-2, 2) * scale, R(-4, 4) * scale, R(3, 8) * Math.sqrt(scale),
-               R(-4, 4) * scale, R(2, 4), R(3, 5) * scale, R(10, 16) * scale, g, g * 0.93, g * 0.86, 0.75, 1.2, -1.2, Math.random() < 0.5 ? 1 : 2);
+               R(-4, 4) * scale, R(2, 4), R(3, 5) * scale, R(10, 16) * scale, g, g * 0.94, g * 0.9, 0.86, 1.2, -1.2, Math.random() < 0.5 ? 1 : 2);
     }
   }
   function explosion(pos, scale = 1, o = {}) {
@@ -168,40 +172,18 @@ export function install(ctx) {
       // flash: a short white-yellow core and a star flare, gone before the fireball peaks
       add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.13, 4 * s, 11 * s, 1.5, 1.1, 0.62, 1, 0, 0, 7);
       add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.07, 7 * s, 12 * s, 0.9, 0.7, 0.45, 1, 0, 0, 2);
-      // fireball (AD §6.6): billows inside a sphere of radius 2s, expanding 3s → 9s over ~0.6 s, hot yellow-orange
-      // cooling to deep red as they burn out (particle shader), then a few slower rolling billows that rise into the
-      // smoke; kept under white so the body reads as fire with structure, not as a bloom blob
-      const nf = Math.max(4, Math.round(R(9, 14) * k));
-      for (let i = 0; i < nf; i++) {
-        _v.set(R(-1, 1), R(-0.25, 1), R(-1, 1)).normalize();
-        const sp = R(4, 12) * sq, rr = 2 * s * Math.sqrt(Math.random()), hot = R(0.85, 1.15);
-        add.spawn(pos.x + _v.x * rr, pos.y + Math.abs(_v.y) * rr * 0.8, pos.z + _v.z * rr,
-                  _v.x * sp, _v.y * sp + 3, _v.z * sp, R(0.65, 1.05), 3 * s * R(0.8, 1.2), 9.5 * s * R(0.8, 1.15),
-                  0.62 * hot, 0.3 * hot, 0.1 * hot, 1, 2.6, -3, 3);   // additive: ~6 overlap at the centre → hot yellow core, red rim
-      }
-      const nr = Math.max(2, Math.round(4 * k));
-      for (let i = 0; i < nr; i++) {
-        const a = Math.random() * TAU, rr = R(0.5, 1.5) * s;
-        add.spawn(pos.x + Math.cos(a) * rr, pos.y + R(0.5, 2) * s, pos.z + Math.sin(a) * rr, Math.cos(a) * R(1, 3) * sq, R(4, 8) * sq, Math.sin(a) * R(1, 3) * sq,
-                  R(1.0, 1.5), 4 * s, 8 * s, 0.5, 0.2, 0.06, 0.85, 1.4, -2, 3);
-      }
-      // sparks: 30s streaks, speed 40√s
-      const ns = Math.round(30 * s * k);
-      for (let i = 0; i < ns; i++) {
-        _v.set(R(-1, 1), R(-0.2, 1.2), R(-1, 1)).normalize().multiplyScalar(40 * sq * R(0.4, 1));
-        add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.3, 0.8), R(0.15, 0.35), 0.05, 2.2, 1.1, 0.4, 1, 2, 30, 1);
-      }
-      // embers rising slowly
-      const ne = Math.round(20 * s * k);
-      for (let i = 0; i < ne; i++) {
-        add.spawn(pos.x + R(-2, 2) * s, pos.y + R(0, 2) * s, pos.z + R(-2, 2) * s, R(-3, 3), R(2, 6), R(-3, 3), R(1.5, 3), R(0.15, 0.3), 0.05,
-                  2.4, 0.9, 0.22, 1, 0.8, -1.5, 6);
+      // a soft additive heat glow under the fireball body (it carries the bloom; the body itself is opaque fire)
+      const ng = Math.max(1, Math.round(3 * k));
+      for (let i = 0; i < ng; i++) {
+        add.spawn(pos.x + R(-1, 1) * s, pos.y + R(0, 1.2) * s, pos.z + R(-1, 1) * s, 0, R(1, 3), 0, R(0.35, 0.5), 5 * s, 10 * s,
+                  0.34, 0.15, 0.045, 1, 1.5, 0, 3);
       }
     }
     if (sm) {
-      // lit smoke: dark billows rising and growing; a second, higher puff for big blasts
-      smokePuff(pos, s, Math.max(3, Math.round(12 * s * k)), 0.11);
-      if (s >= 2) later(1.0, (p, a) => smokePuff(_v2.set(p.x, p.y + 6 * a, p.z), a, Math.max(2, Math.round(6 * a * tierK())), 0.09), pos, s);
+      // lit smoke: dark billows rising and growing; a second, higher puff for big blasts. Spawned before the fire
+      // billows so the opaque fire draws over the smoke it turns into (the alpha pool draws in spawn order)
+      smokePuff(pos, s, Math.max(3, Math.round(12 * s * k)), 0.065);
+      if (s >= 2) later(1.0, (p, a) => smokePuff(_v2.set(p.x, p.y + 6 * a, p.z), a, Math.max(2, Math.round(6 * a * tierK())), 0.055), pos, s);
       // dust ring: palette dust billows rushing outward low to the ground (not on Low)
       if (ctx.tier.name !== 'low') {
         const gy = groundAt(pos.x, pos.z);
@@ -213,6 +195,40 @@ export function install(ctx) {
                      R(1.2, 2.2), 2 * s, 7 * s, dustCol.r, dustCol.g, dustCol.b, 0.55, 3, -0.3, 5);
           }
         }
+      }
+    }
+    if (sm) {
+      // fireball body (AD §6.6): opaque, emissive fire billows (alpha cell 7) inside a sphere of radius 2s, expanding
+      // 3s → 9s over ~0.6 s. Each billow shows a hot core, an orange body and a deep red rim, and burns down to soot
+      // (the shader), so the fireball reads as rolling fire with structure rather than an additive bloom blob. A few
+      // slower billows roll upward into the smoke column.
+      const nf = Math.max(5, Math.round(R(10, 14) * k));
+      for (let i = 0; i < nf; i++) {
+        _v.set(R(-1, 1), R(-0.25, 1), R(-1, 1)).normalize();
+        const sp = R(5, 13) * sq, rr = 2 * s * Math.sqrt(Math.random()), hot = R(0.9, 1.15);
+        sm.spawn(pos.x + _v.x * rr, pos.y + Math.abs(_v.y) * rr * 0.8, pos.z + _v.z * rr,
+                 _v.x * sp, _v.y * sp + 3, _v.z * sp, R(0.75, 1.15), 3 * s * R(0.8, 1.2), 9 * s * R(0.85, 1.15),
+                 hot, hot, hot, 1, 3.2, -3, 7);
+      }
+      const nr = Math.max(2, Math.round(5 * k));
+      for (let i = 0; i < nr; i++) {
+        const a = Math.random() * TAU, rr = R(0.5, 1.5) * s;
+        sm.spawn(pos.x + Math.cos(a) * rr, pos.y + R(1, 2.5) * s, pos.z + Math.sin(a) * rr, Math.cos(a) * R(1, 3) * sq, R(5, 9) * sq, Math.sin(a) * R(1, 3) * sq,
+                 R(1.3, 1.9), 3.5 * s, 8 * s, 0.85, 0.8, 0.8, 1, 1.4, -2, 7);
+      }
+    }
+    if (add) {
+      // sparks: 30s streaks, speed 40√s
+      const ns = Math.round(30 * s * k);
+      for (let i = 0; i < ns; i++) {
+        _v.set(R(-1, 1), R(-0.2, 1.2), R(-1, 1)).normalize().multiplyScalar(40 * sq * R(0.4, 1));
+        add.spawn(pos.x, pos.y, pos.z, _v.x, _v.y, _v.z, R(0.3, 0.8), R(0.15, 0.35), 0.05, 2.2, 1.1, 0.4, 1, 2, 30, 1);
+      }
+      // embers rising slowly
+      const ne = Math.round(20 * s * k);
+      for (let i = 0; i < ne; i++) {
+        add.spawn(pos.x + R(-2, 2) * s, pos.y + R(0, 2) * s, pos.z + R(-2, 2) * s, R(-3, 3), R(2, 6), R(-3, 3), R(1.5, 3), R(0.15, 0.3), 0.05,
+                  2.4, 0.9, 0.22, 1, 0.8, -1.5, 6);
       }
     }
     shockwave(_v3.set(pos.x, Math.max(pos.y - 0.5, groundAt(pos.x, pos.z) + 0.3), pos.z), 14 * s, '#ffa860', 0.35);
@@ -241,7 +257,7 @@ export function install(ctx) {
     // read warm, enemy plasma red-orange and the rail cyan) and a streak (or a fan for the shotgun) along the barrel
     const v = len / 0.045, ck = kk * 0.55;
     add.spawn(pos.x + dx * len * 0.1, pos.y + dy * len * 0.1, pos.z + dz * len * 0.1, 0, 0, 0, 0.05, len * 0.22 * j, len * 0.3 * j,
-              1.6 + col[0] * 0.6, 1.4 + col[1] * 0.6, 1.1 + col[2] * 0.6, 1, 0, 0, 7);
+              0.45 + col[0] * 1.5, 0.45 + col[1] * 1.5, 0.45 + col[2] * 1.5, 1, 0, 0, 7);   // hot but hue-keeping core
     if (kind === 'plasma') {   // a soft orb, no petals
       add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.08, len * 0.7 * j, len * 1.0 * j, col[0] * ck, col[1] * ck, col[2] * ck, 1, 0, 0, 0);
     } else {                   // a ragged burst (the noisy fireball cell, gone in two frames) pushed out of the barrel
@@ -332,7 +348,7 @@ export function install(ctx) {
       if (kind === 'shell') {
         ps?.lights?.flash(pos, 0xff9a52, 450, 16, 0.2);
         if (add) add.spawn(pos.x, pos.y, pos.z, 0, 0, 0, 0.22, 2.0, 4.5, 1.1, 0.52, 0.16, 1, 0, 0, 3);
-        smokePuff(pos, 0.45, Math.max(2, Math.round(4 * k)), 0.14);
+        smokePuff(pos, 0.45, Math.max(2, Math.round(4 * k)), 0.1);
         if (surface === 'ground' || surface === 'rock' || surface === 'concrete') ps?.decals?.spawn(pos, n, 2.2, surface === 'concrete' ? 'scorch' : 'crater');
         else ps?.decals?.spawn(pos, n, 1.4, 'scorch');
       } else {
@@ -457,26 +473,31 @@ export function install(ctx) {
     for (let i = 0; i < n; i++) {
       switch (h.kind) {
         case 'smoke': {
-          const g = c ? 1 : R(0.09, 0.15);
+          const g = c ? 1 : R(0.055, 0.1);
           sm.spawn(p.x + R(-1, 1) * s, p.y + R(0, 1) * s, p.z + R(-1, 1) * s, R(-0.6, 0.6) + windX(), R(2.5, 4.5) * s, R(-0.6, 0.6) + windZ(),
                    R(4, 7), 1.5 * s, R(7, 11) * s, c ? c[0] : g, c ? c[1] : g * 0.94, c ? c[2] : g * 0.88, 0.6, 0.15, -0.4, Math.random() < 0.5 ? 1 : 2);
           break;
         }
         case 'fire': {
           const fr = c ? c[0] : 1, fg = c ? c[1] : 0.46, fb = c ? c[2] : 0.12;
-          const hot = Math.random();
-          // tongues: rising flame billows that shrink and cool (cell 3 cools to deep red over its life)
-          add.spawn(p.x + R(-0.8, 0.8) * s, p.y + R(0, 0.5) * s, p.z + R(-0.8, 0.8) * s, R(-0.4, 0.4) + windX() * 0.3, R(3, 6) * s, R(-0.4, 0.4) + windZ() * 0.3,
-                    R(0.55, 0.95), R(1.3, 1.9) * s, 0.35 * s, fr * (1.1 + hot * 0.6), fg * (1.0 + hot * 0.6), fb * (0.9 + hot * 0.5), 1, 1.0, -3, 3);
+          const hot = Math.random(), hk = 0.85 + hot * 0.3;
+          // the billow tint is relative to the default flame colour (1 = neutral heat ramp)
+          const tr = Math.min(2, Math.max(0.3, fr)), tg = Math.min(2, Math.max(0.3, fg / 0.46)), tb = Math.min(2, Math.max(0.3, fb / 0.12));
+          // tongues: opaque flame billows (alpha cell 7) that rise, shrink and cool from yellow to red to soot, so the
+          // fire has a body with structure; a fainter additive billow behind each carries the glow into the bloom
+          sm.spawn(p.x + R(-0.9, 0.9) * s, p.y + R(0, 0.6) * s, p.z + R(-0.9, 0.9) * s, R(-0.4, 0.4) + windX() * 0.3, R(3.5, 6.5) * s, R(-0.4, 0.4) + windZ() * 0.3,
+                   R(0.7, 1.1), R(2.0, 2.9) * s, 0.5 * s, tr * hk, tg * hk, tb * hk, 0.95, 0.9, -3, 7);
+          if (Math.random() < 0.5) add.spawn(p.x + R(-0.6, 0.6) * s, p.y + R(0, 0.5) * s, p.z + R(-0.6, 0.6) * s, R(-0.3, 0.3), R(3, 5) * s, R(-0.3, 0.3),
+                                             R(0.5, 0.8), R(1.8, 2.4) * s, 0.5 * s, fr * 0.32, fg * 0.3, fb * 0.28, 1, 1.0, -3, 3);
           // licks: thin streaks along the updraft
           if (Math.random() < 0.5) add.spawn(p.x + R(-0.6, 0.6) * s, p.y + R(0.3, 1.2) * s, p.z + R(-0.6, 0.6) * s, windX() * 0.3, R(4, 8) * s, windZ() * 0.3,
                                              R(0.25, 0.45), R(0.35, 0.6) * s, 0.1 * s, fr * 1.3, fg * 1.1, fb * 0.9, 1, 1.5, -2, 1);
           // the glowing bed
           if (Math.random() < 0.3) add.spawn(p.x + R(-0.5, 0.5) * s, p.y + 0.2 * s, p.z + R(-0.5, 0.5) * s, 0, R(0.3, 1.0), 0, R(0.4, 0.7),
-                                             R(1.6, 2.4) * s, R(1.0, 1.4) * s, fr * 0.9, fg * 0.65, fb * 0.6, 0.8, 1, 0, 0);
+                                             R(1.6, 2.4) * s, R(1.0, 1.4) * s, fr * 0.45, fg * 0.32, fb * 0.3, 0.8, 1, 0, 0);
           if (Math.random() < 0.3) add.spawn(p.x, p.y + s, p.z, R(-1, 1), R(2, 5), R(-1, 1), R(1, 2.2), 0.2, 0.05, 2.4, 0.9, 0.22, 1, 0.5, -1, 6);
           if (Math.random() < 0.35) sm.spawn(p.x + R(-0.5, 0.5) * s, p.y + 2 * s, p.z + R(-0.5, 0.5) * s, R(-0.5, 0.5) + windX(), R(3, 5) * s,
-                                             R(-0.5, 0.5) + windZ(), R(3, 5), 1.5 * s, R(6, 10) * s, 0.1, 0.09, 0.085, 0.65, 0.1, -0.5, 1);
+                                             R(-0.5, 0.5) + windZ(), R(3, 5), 1.8 * s, R(6, 10) * s, 0.065, 0.06, 0.057, 0.75, 0.1, -0.5, 1);
           break;
         }
         case 'sparks': {

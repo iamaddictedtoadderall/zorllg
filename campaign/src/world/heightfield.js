@@ -42,6 +42,10 @@ const MAX_ERODE = 0.6;           // m removed per droplet step at most
 const MASK_MAX = 1.25;           // detail mask ceiling (slopes)
 const MASK_Q = 200;              // detail mask quantisation (Uint8 = mask × 200)
 const PEAKS = 0.5;               // default ridged peaks behind the rim (× walls.height)
+const BENCHES = 6;               // default cliff bands up a corridor wall
+const BENCH_SHARP = 0.72;        // default bench flatness / riser steepness
+const RIM = 0.7;                 // default rim sharpness (0: the face rounds over into the plateau, 1: a hard edge)
+const CRAG = 5;                  // default crag relief on steep ground (m)
 let EROSION_STRENGTH = 1;        // default for TerrainDef.erosion.strength
 /** extra (tools): override the default erosion strength */
 export function setErosionStrength(v) { EROSION_STRENGTH = v; }
@@ -129,9 +133,13 @@ export class Heightfield {
     this.P = {
       base: { scale: base.scale ?? 900, amp: base.amp ?? 120, octaves: base.octaves ?? 6, ridged: base.ridged ?? 0,
               warp: base.warp ?? 0, terrace: base.terrace || null },
-      detail: { scale: Math.max(2, D.detail?.scale ?? 22), amp: D.detail?.amp ?? 1.6 },
+      // extra optional field: detail.crag (m): broken-rock relief on steep ground (0 turns it off)
+      detail: { scale: Math.max(2, D.detail?.scale ?? 22), amp: D.detail?.amp ?? 1.6, crag: Math.max(0, Number(D.detail?.crag ?? CRAG)) },
+      // extra optional fields: walls.peaks (ridged peaks behind the rim, × height), walls.benches (cliff bands up the
+      // wall face, 0 = a plain ramp) and walls.benchSharp (0..1: how flat the benches and how steep the risers)
       walls: { height: D.walls?.height ?? 260, start: D.walls?.start ?? 0.85, noise: D.walls?.noise ?? 0.3,
-               peaks: D.walls?.peaks ?? PEAKS },
+               peaks: D.walls?.peaks ?? PEAKS, benches: Math.max(0, Math.round(D.walls?.benches ?? BENCHES)),
+               benchSharp: clamp(D.walls?.benchSharp ?? BENCH_SHARP, 0, 0.95), rim: clamp(D.walls?.rim ?? RIM, 0, 1) },
       carve: { depth: D.carve?.depth ?? 4, bedWidth: D.carve?.bedWidth ?? 60, shoulder: D.carve?.shoulder ?? 80,
                smooth: D.carve?.smooth ?? 160, maxGrade: D.carve?.maxGrade ?? 0.08, strength: D.carve?.strength ?? 1 },
       // extra optional field: erosion.strength scales how hard each droplet cuts (1 = default)
@@ -164,7 +172,18 @@ export class Heightfield {
     this.nDetail = createNoise2D(sd ^ 0x3c3c3c);
     this.nFeat = createNoise2D(sd ^ 0x2468ac);
     this.nPeak = createNoise2D(sd ^ 0x6d6f75);
+    this.nCrag = createNoise2D(sd ^ 0x43a6);
     this.features = (D.features || []).map(f => this._feature(f)).filter(Boolean);
+    // irregular bench heights (seeded): cumulative edges in [0, 1], so the cliff bands differ in height
+    {
+      const nb = this.P.walls.benches, r = mulberry32(sd ^ 0xbe7c4e5), w = [];
+      let sum = 0;
+      for (let i = 0; i < nb; i++) { const x = 0.55 + r() * 0.9; w.push(x); sum += x; }
+      const e = new Float64Array(nb + 1); let acc = 0;
+      for (let i = 0; i < nb; i++) { acc += w[i] / sum; e[i + 1] = acc; }
+      e[nb] = 1;
+      this._benchE = e;
+    }
     // band-limited detail (arch §5.5): octave 1 at scale, octave 2 at scale / 2.03 (≤ ±0.3 m below 12 m wavelength)
     const Dd = this.P.detail, a2 = 0.35;
     this._dInv = 1 / Dd.scale;
@@ -271,6 +290,28 @@ export class Heightfield {
     }
     if (this.features.length) h += this._featureAt(x, z);
     return h;
+  }
+  /** the wall's rise across [start, 1.2] half-widths: eased in at the foot, and (by walls.rim) cut off sharply at the
+   *  rim instead of rounding over, so the canyon edge reads as an edge */
+  _rimRamp(d, start) {
+    const t = clamp((d - start) / (1.2 - start), 0, 1);
+    const round = t * t * (3 - 2 * t), sharp = t * t * (2.2 - 1.2 * t);
+    return lerp(round, sharp, this.P.walls.rim);
+  }
+  /**
+   * cliff bands: maps the wall ramp (0 at the foot, 1 at the rim) through an irregular staircase, so the face reads as
+   * benches (talus-covered ledges) separated by steep risers. `wobble` (the wall noise, ≈ 0.8..1.2) shifts the band edges
+   * a little along the wall, so the ledges don't run at one level for kilometres.
+   */
+  _bench(r, wobble) {
+    const E = this._benchE, n = E.length - 1, k = this.P.walls.benchSharp;
+    const rr = clamp(r + (wobble - 1) * 0.06, 0, 1);
+    let i = 0; while (i < n - 1 && rr >= E[i + 1]) i++;
+    const a = E[i], b = E[i + 1], f = (rr - a) / Math.max(1e-6, b - a);
+    // riser in the middle of each band (the steepness grows with k), benches either side
+    const lo = 0.5 - 0.5 * (1 - k * 0.8), hi = 0.5 + 0.5 * (1 - k * 0.8);
+    const stepped = a + (b - a) * smooth(lo, hi, f);
+    return lerp(r, stepped, k);
   }
   /** wall noise factor */
   _wallF(x, z) {
@@ -457,7 +498,7 @@ export class Heightfield {
     // ---- D. corridor shaping. Route coordinates per cell: exact on a 4-cell lattice near the route and interpolated
     // between (s and l are smooth away from the medial axis; exact again where the lattice straddles a jump in s or
     // the route ends); far away a conservative lower bound
-    const RS = new Float32Array(N), RD = new Float32Array(N);
+    const RS = new Float32Array(N), RD = new Float32Array(N), RL = new Float32Array(N);
     const FAR = Math.max(hwMax * 2.3, hwMax + 700);
     const bedHalf = P.carve.bedWidth / 2, sh = Math.max(1, P.carve.shoulder);
     const RL4 = 4, lnx2 = Math.ceil((nx - 1) / RL4) + 2, lnz2 = Math.ceil((nz - 1) / RL4) + 2, lstep = cell * RL4;
@@ -510,7 +551,7 @@ export class Heightfield {
             _c.dist = LD[q00] * w00 + LD[q10] * w10 + LD[q01] * w01 + LD[q11] * w11;
           } else route.closestInto(x, z, _c);
         } else route.closestInto(x, z, _c);
-        RS[k] = _c.s; RD[k] = _c.dist;
+        RS[k] = _c.s; RD[k] = _c.dist; RL[k] = _c.l;
         const hw = hwAt(_c.s), d0 = _c.dist / hw;
         let h = H[k];
         if (d0 > start - 0.3) {
@@ -520,8 +561,8 @@ export class Heightfield {
           // always stands well above the route; the lift fades out between 1.5 and 2.1 half-widths
           bic4((i & 3) * 4, p4z, (i >> 2) + 1, j4);
           const d = d0 * q4[3], dsp = d - q4[2];
-          let ramp = smooth(start, 1.2, dsp);
-          if (ramp > 0 && ramp < 1) { const q = ramp * 5, f = q - Math.floor(q); ramp = lerp(ramp, (Math.floor(q) + smooth(0.3, 0.7, f)) / 5, 0.45); }
+          let ramp = this._rimRamp(dsp, start);
+          if (ramp > 0 && ramp < 1 && W.benches > 1) ramp = this._bench(ramp, q4[0]);
           if (ramp > 0) {
             const lift = Math.max(0, this._bedRefAt(_c.s) + 0.12 * WH - h) * (1 - smooth(1.5, 2.1, d));
             h += ramp * (WH * (q4[0] + W.peaks * q4[1] * smooth(1.15, 2.0, d)) + lift);
@@ -574,6 +615,18 @@ export class Heightfield {
       H[k] = lerp(H[k], this._bedAt(RS[k]), P.carve.strength * (0.5 * bw + 0.5 * inner));
       bedMask[k] = Math.round(255 * (1 - smooth(bedHalf * 0.7, bedHalf + sh * 0.35, dk)));
     }
+    // the worn path (colour only, AD §3.1 "the route bed reads as a worn road"): a track narrower than the carved bed
+    // that wanders across it, so the floor reads as a valley with a road in it rather than a 100 m wide pale strip
+    const pathMask = new Uint8Array(N);
+    {
+      const ph = clamp(bedHalf * 0.32, 6, 15), amp = Math.max(0, bedHalf - ph * 1.4), ph0 = (this.seed % 1000) * 0.0063;
+      for (let k = 0; k < N; k++) {
+        if (RS[k] < 0 || RD[k] > bedHalf + ph * 2) continue;
+        const sk = RS[k], c = amp * (0.7 * Math.sin(sk / 137 + ph0) + 0.3 * Math.sin(sk / 53 + ph0 * 2.3));
+        const dl = Math.abs(RL[k] - c);
+        pathMask[k] = Math.round(255 * (1 - smooth(ph * 0.55, ph * 1.5, dl)) * (bedMask[k] / 255));
+      }
+    }
     const stampMask = new Uint8Array(N);
     this._applyStamps(H, stampMask, bedMask);
     await tick(0.7, 'Stamps');
@@ -623,7 +676,8 @@ export class Heightfield {
       const lap = (H[k - 2] + H[k + 2] + H[k - 2 * nx] + H[k + 2 * nx] - 4 * H[k]) * icc;
       curv[k] = Math.round(127 + 127 * Math.tanh(-lap));
     }
-    const slope = new Uint8Array(N), mask = new Uint8Array(N);
+    const slope = new Uint8Array(N), mask = new Uint8Array(N), crag = new Uint8Array(N);
+    const useCrag = P.detail.crag > 0;
     for (let j = 0; j < nz; j++) {
       const jm = j > 0 ? j - 1 : j, jp = j < nz - 1 ? j + 1 : j, izz = 1 / ((jp - jm) * cell);
       for (let i = 0; i < nx; i++) {
@@ -636,6 +690,9 @@ export class Heightfield {
         // flats (and sediment-filled channels) are smoother than slopes, where the detail is strongest
         const m = (1 - bw * 0.97) * (1 - stampMask[k] / 255) * (0.45 + 0.8 * smooth(0.03, 0.3, sl)) * (1 - 0.35 * flow[k] / 255);
         mask[k] = Math.round(m * MASK_Q);
+        // crags: broken rock on steep ground only (not on the bed, stamps or channels), so cliffs and steep hillsides
+        // stop reading as smooth loaves between the erosion gullies
+        if (useCrag) crag[k] = Math.round(255 * smooth(0.2, 0.5, sl) * (1 - bw) * (1 - stampMask[k] / 255) * (1 - 0.5 * flow[k] / 255));
       }
     }
     await tick(0.74, 'Bakes');
@@ -651,7 +708,8 @@ export class Heightfield {
       this.hMin = hs.length ? hs[0] : 0; this.hMax = hs.length ? hs[hs.length - 1] : 1;
       if (this.h80 - this.h20 < 1) this.h80 = this.h20 + 1;
     }
-    this.H = H; this.flow = flow; this.slope = slope; this.mask = mask; this.bedMask = bedMask; this.curv = curv;
+    this.H = H; this.flow = flow; this.slope = slope; this.mask = mask; this.bedMask = bedMask; this.curv = curv; this.pathMask = pathMask;
+    this.crag = useCrag ? crag : null;
     // the route lattice stays (scatter and other placement queries read route coordinates from it)
     this._rl = { nx: lnx2, nz: lnz2, step: lstep, S: LS, L: LL, D: LD };
     stage('bakes');
@@ -663,7 +721,7 @@ export class Heightfield {
     stage('outer');
     this.built = true;
     this.stats.buildMs = performance.now() - t0;
-    CACHE = { key, data: { H, flow, slope, mask, bedMask, curv, h20: this.h20, h80: this.h80, hMin: this.hMin, hMax: this.hMax,
+    CACHE = { key, data: { H, flow, slope, mask, bedMask, curv, pathMask, crag: this.crag, h20: this.h20, h80: this.h80, hMin: this.hMin, hMax: this.hMax,
                            sun: this.sun, sky: this.sky, lnx: this.lnx, lnz: this.lnz, outer: this.outer, _bed: this._bed,
                            _bedDs: this._bedDs, _bedRef: this._bedRef, _rl: this._rl, _cdAt: this._cdAt,
                            stamps: this.stamps.map(t => ({ ...t })), stats: { ...this.stats } } };
@@ -719,6 +777,9 @@ export class Heightfield {
         const s = rng() * route.length, hw = route.halfWidthAt(s);
         const l = (rng() * 2 - 1) * (hw + 600);
         route.toWorld(s, l, v);
+        // rainfall varies across the map (≈ 500 m patches), so some faces are deeply gullied and others stay as cliffs;
+        // uniform rain cuts the same evenly spaced rills into every wall
+        if (rng() > 0.25 + 0.75 * smooth(0.28, 0.72, this.nWall(v.x / 520 + 41.3, v.z / 520 - 17.9))) continue;
         const px = (v.x - x0) / cell, pz = (v.z - z0) / cell;
         if (px < P.lo || pz < P.lo || px >= P.hiX || pz >= P.hiZ) continue;
         if (!region[Math.floor(pz) * nx + Math.floor(px)]) continue;
@@ -924,6 +985,11 @@ export class Heightfield {
     const u = x * this._dInv, v = z * this._dInv, n = this.nDetail;
     return this._dA1 * n(u, v) + this._dA2 * n(u * 2.03 + 17.1, v * 2.03 - 9.7);
   }
+  /** crag relief (× the crag weight by the caller): two octaves at 47 m and 19 m, smooth enough for the 2 m tiles */
+  _crag(x, z) {
+    const n = this.nCrag, A = this.P.detail.crag;
+    return A * (0.65 * n(x * 0.0213 + 3.1, z * 0.0213 - 1.7) + 0.35 * n(x * 0.0518 - 7.3, z * 0.0518 + 5.9));
+  }
   /** analytic surface: bicubic macro + detail (use it for meshes and placement) */
   heightAt(x, z) {
     if (!this.built) return this._relief(x, z);
@@ -931,8 +997,10 @@ export class Heightfield {
     const e = Math.min(x - b.x0, b.x1 - x, z - b.z0, b.z1 - z);
     if (e <= 0) return this._outerAt(x, z);
     let h = this._macro(x, z), m = this._sampleGrid(this.mask, x, z) * (1 / MASK_Q);
-    if (e < EDGE_BLEND) { const t = smooth(0, EDGE_BLEND, e); h = lerp(this._outerAt(x, z), h, t); m *= t; }
+    let cw = this.crag ? this._sampleGrid(this.crag, x, z) * (1 / 255) : 0;
+    if (e < EDGE_BLEND) { const t = smooth(0, EDGE_BLEND, e); h = lerp(this._outerAt(x, z), h, t); m *= t; cw *= t; }
     if (m > 0.001) h += m * this._detail(x, z);
+    if (cw > 0.002) h += cw * this._crag(x, z);
     return h;
   }
   /**
@@ -942,7 +1010,7 @@ export class Heightfield {
    */
   heightGrid(x0, z0, step, cols, rows, out, stride = cols) {
     if (!this.built) { for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) out[r * stride + c] = this._relief(x0 + c * step, z0 + r * step); return out; }
-    const { nx, nz, cell } = this, H = this.H, M = this.mask, b = this.bounds;
+    const { nx, nz, cell } = this, H = this.H, M = this.mask, CR = this.crag, b = this.bounds;
     const buf = this._gridBuf && this._gridBuf.n >= Math.max(cols, rows) ? this._gridBuf : (this._gridBuf = {
       n: Math.max(cols, rows), cA: new Int32Array(Math.max(cols, rows) * 4), cW: new Float64Array(Math.max(cols, rows) * 4),
       rA: new Int32Array(Math.max(cols, rows) * 4), rW: new Float64Array(Math.max(cols, rows) * 4),
@@ -980,6 +1048,10 @@ export class Heightfield {
         const k = gk + cI[c], tx = cT[c];
         const m = ((M[k] * (1 - tx) + M[k + 1] * tx) * (1 - tz) + (M[k + nx] * (1 - tx) + M[k + nx + 1] * tx) * tz) * iq;
         if (m > 0.001) h += m * this._detail(x, z);
+        if (CR) {
+          const cw = ((CR[k] * (1 - tx) + CR[k + 1] * tx) * (1 - tz) + (CR[k + nx] * (1 - tx) + CR[k + nx + 1] * tx) * tz) * (1 / 255);
+          if (cw > 0.002) h += cw * this._crag(x, z);
+        }
         out[o] = h;
       }
     }
@@ -1046,7 +1118,7 @@ export class Heightfield {
   bakeAt(x, z, o) {
     const b = this.bounds;
     if (!this.built || x < b.x0 || z < b.z0 || x > b.x1 || z > b.z1) {
-      o.flow = 0; o.bed = 0; o.sky = 1; o.sun = this.sunDir.y > 0 ? 1 : 0; o.slope = -1; o.curv = 0; o.inside = false;
+      o.flow = 0; o.bed = 0; o.path = 0; o.sky = 1; o.sun = this.sunDir.y > 0 ? 1 : 0; o.slope = -1; o.curv = 0; o.inside = false;
       return o;
     }
     o.inside = true;
@@ -1057,6 +1129,8 @@ export class Heightfield {
     const F = this.flow, B = this.bedMask, S = this.slope, C = this.curv;
     o.flow = (F[k] * w00 + F[k + 1] * w10 + F[k1] * w01 + F[k1 + 1] * w11) / 255;
     o.bed = (B[k] * w00 + B[k + 1] * w10 + B[k1] * w01 + B[k1 + 1] * w11) / 255;
+    const PM = this.pathMask;
+    o.path = PM ? (PM[k] * w00 + PM[k + 1] * w10 + PM[k1] * w01 + PM[k1 + 1] * w11) / 255 : o.bed;
     o.slope = (S[k] * w00 + S[k + 1] * w10 + S[k1] * w01 + S[k1 + 1] * w11) / 255;
     o.curv = (C[k] * w00 + C[k + 1] * w10 + C[k1] * w01 + C[k1 + 1] * w11) / 127 - 1;
     const lc = cell * BAKE_DIV, ln = this.lnx;

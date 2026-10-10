@@ -544,6 +544,39 @@ export function pipeRun(pts, r, o = {}) {
   }
   return kitMerge(parts);
 }
+/** A bevelled plate laid on an arbitrary quad (hull plating, skins that follow a curved surface): p0..p3 are the base
+ *  corners ([x,y,z] or Vector3), counter-clockwise seen from outside; the plate stands t proud along the quad's normal,
+ *  with straight side walls and a `bevel` chamfer around a top face inset by `bevel`. 18 triangles, uncached (the
+ *  corners are usually unique); the bottom is open (it sits on a surface). */
+export function quadPlate(p0, p1, p2, p3, t = 0.3, bevel = 0.06) {
+  const V = [p0, p1, p2, p3].map(p => (Array.isArray(p) ? p : [p.x, p.y, p.z]));
+  const cx = (V[0][0] + V[1][0] + V[2][0] + V[3][0]) / 4, cy = (V[0][1] + V[1][1] + V[2][1] + V[3][1]) / 4, cz = (V[0][2] + V[1][2] + V[2][2] + V[3][2]) / 4;
+  // outward normal from the diagonals (robust for slightly non-planar quads)
+  const d1 = [V[2][0] - V[0][0], V[2][1] - V[0][1], V[2][2] - V[0][2]], d2 = [V[3][0] - V[1][0], V[3][1] - V[1][1], V[3][2] - V[1][2]];
+  let nx = d1[1] * d2[2] - d1[2] * d2[1], ny = d1[2] * d2[0] - d1[0] * d2[2], nz = d1[0] * d2[1] - d1[1] * d2[0];
+  const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+  const b = Math.max(0, Math.min(bevel, t * 0.8));
+  const M = [], T = [];
+  for (const v of V) {
+    M.push([v[0] + nx * (t - b), v[1] + ny * (t - b), v[2] + nz * (t - b)]);
+    const dx = v[0] - cx, dy = v[1] - cy, dz = v[2] - cz, dl = Math.hypot(dx, dy, dz) || 1, s = Math.max(0.2, 1 - b * 1.41 / dl);
+    T.push([cx + dx * s + nx * t, cy + dy * s + ny * t, cz + dz * s + nz * t]);
+  }
+  const P = [], N = [], E = [];
+  const tri = (a, c, d, e) => {
+    const ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2], wx = d[0] - a[0], wy = d[1] - a[1], wz = d[2] - a[2];
+    let fx = uy * wz - uz * wy, fy = uz * wx - ux * wz, fz = ux * wy - uy * wx; const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+    P.push(...a, ...c, ...d); N.push(fx, fy, fz, fx, fy, fz, fx, fy, fz); E.push(e, e, e);
+  };
+  const quad = (a, c, d, f, e) => { tri(a, c, d, e); tri(a, d, f, e); };
+  quad(T[0], T[1], T[2], T[3], 0);
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    quad(V[i], V[j], M[j], M[i], 0);
+    quad(M[i], M[j], T[j], T[i], 1);
+  }
+  return fromArrays(new Float32Array(P), new Float32Array(N), new Float32Array(E));
+}
 /** Architecture signature: a pipe through `points` (Vector3[] or [x,y,z][]), built as a pipeRun (straights + bends). */
 export function pipe(points, radius, radial = 8) {
   return pipeRun(points, radius, { radial, flangeEnds: false });

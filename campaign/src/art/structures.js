@@ -1277,19 +1277,44 @@ export const CATALOG = {
         .multiply(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(-0.075, 0.16, -0.09)))
         .multiply(new THREE.Matrix4().makeTranslation(0, 0, -zb));
       const piece = (V, list, key, breakAt) => {
-        V.add(geo(`shipHull|${L}|${key}`, () => KIT.loft(list.map(s => ({ z: s.z, pts: s.pts })))), M.oxide);
+        // the hull core is dark (it shows in the plating seams and where plates are gone); LOD1 gets the painted hull
+        const core = geo(`shipHull|${L}|${key}`, () => KIT.loft(list.map(s => ({ z: s.z, pts: s.pts }))));
+        V.add(core, M.ironBlack, { lod0: true });
+        V.add(core, M.oxide, { lod1: true });
         const q = list[0].pts.length;
-        // frames (every section) and strakes (every perimeter point between sections): a plated hull
+        // frames (every section): ribs that sit in the plating seams
         list.forEach((s, i) => {
           if (i === 0 || i === list.length - 1) return;
           for (let j = 0; j < q; j += 2) V.add(KIT.barBetween([s.pts[j][0] * 1.01, s.pts[j][1], s.z], [s.pts[(j + 2) % q][0] * 1.01, s.pts[(j + 2) % q][1], s.z], 0.45, 0.4), M.ceramicAged, { lod0: i % 2 === 1 });
         });
+        // hull plating (AD §2.6): strakes of bevelled plates that follow the section outline, a seam at every frame and
+        // between strakes; the boot-top band below the sheer line is black iron, the topsides oxide; ~7% of plates gone
+        const cyOf = (s) => s.top - s.h / 2;
         for (let i = 0; i < list.length - 1; i++) {
-          const a = list[i], b = list[i + 1];
+          const a = list[i], b = list[i + 1], zA = a.z + 0.4, zB = b.z - 0.4;
+          const nzs = zB - zA < 1.5 ? 0 : Math.max(1, Math.round((zB - zA) / 6));
           for (let j = 0; j < q; j++) {
-            const ya = a.pts[j][1], yb = b.pts[j][1];
-            if (ya < -Hh * 0.25) continue;   // nothing under the turn of the bilge (buried)
-            V.add(KIT.barBetween([a.pts[j][0] * 1.006, ya, a.z], [b.pts[j][0] * 1.006, yb, b.z], 0.3, 0.3), j % 3 ? M.oxide : M.ceramicAged, { lod0: true });
+            const j1 = (j + 1) % q, A0 = a.pts[j], A1 = a.pts[j1], B0 = b.pts[j], B1 = b.pts[j1];
+            const ex = A1[0] - A0[0], ey = A1[1] - A0[1], el = Math.hypot(ex, ey);
+            if (el < 0.8) continue;
+            const ny = -ex / el;                         // outward normal's y for a counter-clockwise outline
+            if (ny > 0.75 || ny < -0.75) continue;       // the deck (plated below) and the buried bottom
+            if (Math.max(A0[1], A1[1]) < -Hh * 0.25) continue;
+            const n = Math.max(1, Math.round(el / 6.5));
+            for (let k = 0; k < n; k++) for (let m = 0; m < nzs; m++) {
+              if (rng() < 0.07) continue;
+              const t0 = k / n + 0.25 / el, t1 = (k + 1) / n - 0.25 / el;
+              // corners on the hull surface: girth fraction t (between outline points j, j1), length fraction u (a → b)
+              const at = (t, u) => {
+                const xa = A0[0] + (A1[0] - A0[0]) * t, ya = A0[1] + (A1[1] - A0[1]) * t, xb = B0[0] + (B1[0] - B0[0]) * t, yb = B0[1] + (B1[1] - B0[1]) * t;
+                const w = (zA + (zB - zA) * u - a.z) / (b.z - a.z);
+                return [xa + (xb - xa) * w, ya + (yb - ya) * w, zA + (zB - zA) * u];
+              };
+              const u0 = m / nzs + (m ? 0.2 / (zB - zA) : 0), u1 = (m + 1) / nzs - (m < nzs - 1 ? 0.2 / (zB - zA) : 0);
+              const p0 = at(t0, u0), p1 = at(t1, u0), p2 = at(t1, u1), p3 = at(t0, u1);
+              const low = (p0[1] + p1[1]) / 2 < cyOf(a) - a.h * 0.12;
+              V.add(KIT.quadPlate(p0, p1, p2, p3, 0.55, 0.18), low ? M.ironBlack : M.oxide, { tint: 0.09, lod0: true });
+            }
           }
           // deck plating and hatch covers (one in four hatches gone)
           const dw = Math.min(a.w, b.w) * 0.86, top = Math.min(a.top, b.top), dz = b.z - a.z;
@@ -1340,6 +1365,15 @@ export const CATALOG = {
         VS.add(KIT.panelBox(bw, bh, bd, { cols: 4, rows: 1, inset: 0.05 }), M.ceramicAged, P(0, y + bh / 2, sz, 0, 0, 0, { tint: 0.05 }));
         if (k === 3) VS.add(KIT.plateBox(bw + 0.3, bh * 0.32, bd + 0.3, 0.05), M.dark, P(0, y + bh * 0.55, sz));
         else VS.add(KIT.plateBox(bw + 0.8, 0.35, bd + 0.8, 0.05), M.steelDark, P(0, y + bh, sz));
+        // window bands on the front and both sides (dead: dark glass in a frame lip), and a deck rail at each level's
+        // front edge (scale cues: a 2.4 m window row and a 1.1 m rail on a 300 m hull)
+        if (k < 3) {
+          const wy = y + bh * 0.58, wh = Math.min(2.4, bh * 0.3);
+          VS.add(KIT.plateBox(bw * 0.86, wh, 0.5, 0.08), M.darkGlass, P(0, wy, sz - bd / 2 - 0.15));
+          VS.add(KIT.plateBox(bw * 0.9, 0.35, 0.8, 0.06), M.steelDark, P(0, wy + wh / 2 + 0.25, sz - bd / 2 - 0.3));
+          for (const s2 of [-1, 1]) VS.add(KIT.plateBox(0.5, wh, bd * 0.8, 0.08), M.darkGlass, P(s2 * (bw / 2 + 0.15), wy, sz));
+          railing(VS, M, [-bw / 2 - 0.2, y + bh + 0.2, sz - bd / 2 - 0.3], [bw / 2 + 0.2, y + bh + 0.2, sz - bd / 2 - 0.3], 1.1, M.steelDark);
+        }
         y += bh;
       }
       for (const s2 of [-1, 1]) VS.add(KIT.plateBox(W * 0.12, 0.4, Hh * 0.08, 0.05), M.steelDark, P(s2 * (W * 0.42), y - Hh * 0.17, sz - L * 0.035));   // bridge wings

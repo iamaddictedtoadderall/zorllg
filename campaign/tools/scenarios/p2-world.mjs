@@ -57,29 +57,32 @@ function rendererCpu() {
 
 const ROUTE = { points: [[0, 0], [90, -900], [-70, -1800], [80, -2700], [-60, -3600], [0, -4500]], halfWidth: 600 };
 
-// AD §5.7 L3 (Gerrow Canyon) recipe, minus the deferred fields: a real level palette for judging the canyon look
+// AD §5.7 L3 (Gerrow Canyon) recipe, minus the deferred fields: a real level palette for judging the canyon look.
+// Tuned for review shots (P2 decision): the haze is lighter than the recipe's (density 0.0012 / falloff 0.004 hid the
+// relief past 300 m), the fog colour matches the sky horizon (no seam where the terrain's far fade meets the sky), the
+// ridge band is tall enough to read as mountains, and rock starts at about 30 degrees as AD §3.1's text says.
 export const DESERT_ART = {
   toneMapping: 'aces',
   palette: { ground: '#8a4a2c', rock: '#7a3a22', sediment: '#a0603a', high: '#c08a5e', dust: '#d8a07a',
              wet: '#3a1e12', concrete: '#6e665c', rust: '#7a4128', accent: '#ff9a2e',
              strata: ['#7a3a22', '#a8583a', '#c9845a', '#5e2a1a', '#e0b48a', '#8a4428'] },
-  sky: { top: '#4f86c6', mid: '#b9d3e8', horizon: '#f2efe9',
+  sky: { top: '#4f86c6', mid: '#b9d3e8', horizon: '#eadccb',
          sun: { azimuth: 105, elevation: 32, color: '#fff0d8', size: 1, glow: 0.7 },
-         clouds: { cover: 0.12, color: '#ffffff' }, ridges: { height: 0.6, color: '#b07a5a' } },
-  fog: { color: '#e9d9c8', density: 0.0012, heightFalloff: 0.004, inscatter: 0.6, sunColor: '#fff4e0' },
+         clouds: { cover: 0.12, color: '#ffffff' }, ridges: { height: 2.2, color: '#c7a084', layers: 2 } },
+  fog: { color: '#eadccb', density: 0.0007, heightFalloff: 0.006, inscatter: 0.6, sunColor: '#fff4e0' },
   light: { sun: 8.5, sunColor: '#fff0d8', hemi: 1.1, hemiSky: '#8fb3d9', hemiGround: '#5a2a1a',
            rim: 1.8, rimColor: '#c86a40', exposure: 0.95, env: 0.8 },
   grade: { contrast: 1.14, saturation: 1.08, lift: [0.0, 0.0, 0.01], shadowsTint: [0.9, 0.95, 1.1],
            highlightsTint: [1.04, 1.0, 0.94], vignette: 0.3, grain: 0.03 },
   bloom: { strength: 0.7, threshold: 0.9 },
-  weather: { type: 'dust', intensity: 0.25, wind: [1, -2] },
-  surface: { style: 'grit', rockSlope: [0.25, 0.45], strataHeight: 9, strataWarp: 1.5, strataStrength: 0.9, wetness: 0.7 },
+  weather: { type: 'dust', intensity: 0.12, wind: [1, -2] },
+  surface: { style: 'grit', rockSlope: [0.14, 0.32], strataHeight: 9, strataWarp: 1.5, strataStrength: 0.9, wetness: 0.7 },
   scatter: [
     { prop: 'rock_medium', density: 5, scale: [0.7, 2.6], slope: [0, 0.8], collide: true, collideMinScale: 1.8 },
     { prop: 'rock_large', density: 1.4, scale: [1, 2.6], slope: [0.12, 0.9], collide: true, collideMinScale: 1.4, castShadow: true },
     { prop: 'boulder', density: 0.45, scale: [3.5, 8], avoidRoute: true, collide: true, castShadow: true },
     { prop: 'slab', density: 0.8, scale: [1, 2.4], slope: [0, 0.5], collide: true, collideMinScale: 1.6 },
-    { prop: 'pebbles', density: 70, maxDist: 110, slope: [0, 0.5] },
+    { prop: 'pebbles', density: 70, scale: [1, 2.6], maxDist: 110, slope: [0, 0.5] },
     { prop: 'scrub', density: 18, maxDist: 140, slope: [0, 0.3], avoidRoute: true },
     { prop: 'dead_tree', density: 0.25, scale: [0.8, 1.25], slope: [0, 0.25], avoidRoute: true, collide: true, collideMinScale: 0 },
   ],
@@ -94,7 +97,7 @@ export const SNOW_ART = {
   light: { sun: 5.5, sunColor: '#ffd8b0', hemiSky: '#9fb6d8', hemiGround: '#3a4658', hemi: 1.8, rim: 2.0, exposure: 1.0 },
   weather: { type: 'snow', intensity: 0.2, wind: [3, -1] },
   surface: { style: 'snow', snow: 0.85, snowSlope: [0.72, 0.9], rockSlope: [0.3, 0.55], strataHeight: 14, strataStrength: 0.6,
-             wetness: 0.2, gloss: 0.15, sparkle: 1 },
+             wetness: 0.2, gloss: 0.15, sparkle: 1, iceCracks: 0.8 },
   scatter: [
     { prop: 'snow_drift', density: 6, scale: [0.8, 1.6], slope: [0, 0.25] },
     { prop: 'ice_shard', density: 50, maxDist: 110, slope: [0, 0.4] },
