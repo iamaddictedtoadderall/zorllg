@@ -242,23 +242,50 @@ function iceShardGeo(seed) {
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
+/**
+ * A wind drift: a low mound on a polar grid whose height falls smoothly to zero at a wobbling elliptical rim (and a
+ * little below it, so the edge sinks into the ground instead of standing on it). The crest sits toward the lee end
+ * (+x): a long gentle windward back and a short steeper lee face, with a shallow tail scooped behind it. About 1:9
+ * height to length at its steepest, so it reads as snow piled on the ground rather than an object lying on it.
+ */
 function driftGeo(seed) {
   const rng = mulberry32(seed), n2 = createNoise2D(seed);
-  let g = new THREE.IcosahedronGeometry(1, 3);
-  g.deleteAttribute('uv'); g.deleteAttribute('normal'); g = mergeVertices(g);
-  const len = 2.6 + 1.2 * rng(), hgt = 0.55 + 0.25 * rng(), p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    V.fromBufferAttribute(p, i);
-    const r = 1 + 0.12 * n2(V.x * 2.1, V.z * 2.1);
-    V.x *= len * r; V.z *= 1.1 * r;
-    // windward face gentle, lee face steeper: skew the crest toward +x
-    V.y = Math.max(0, V.y) * hgt * (1 - 0.25 * V.x / len) ;
-    V.x += V.y * 0.8;
-    p.setXYZ(i, V.x, V.y - 0.05, V.z);
+  const RS = 9, AS = 24;                                    // rings, segments (≈ 400 triangles)
+  const len = 2.8 + 1.4 * rng(), wid = 1.1 + 0.5 * rng(), hgt = 0.34 + 0.16 * rng(), crest = 0.35 + 0.2 * rng();
+  const pos = [], idx = [];
+  const rim = (a) => 1 + 0.16 * n2(Math.cos(a) * 1.3 + 4.1, Math.sin(a) * 1.3) + 0.06 * n2(Math.cos(a) * 3.7, Math.sin(a) * 3.7 - 2.2);
+  pos.push(crest * len * 0.5, hgt, 0);                     // centre vertex (the crest region)
+  for (let r = 1; r <= RS; r++) {
+    const q = r / RS;
+    for (let a = 0; a < AS; a++) {
+      const ang = a / AS * TAU, k = rim(ang) * q;
+      // the ellipse is centred on the crest: the windward (−x) side is longer than the lee side
+      const cx = Math.cos(ang), cz = Math.sin(ang);
+      const reach = cx < 0 ? len * (1 + crest * 0.5) : len * (1 - crest * 0.5);
+      const x = crest * len * 0.5 + cx * reach * k, z = cz * wid * k;
+      // profile: a smooth cap that reaches 0 at q = 1; the lee face is steeper (a lower power near the crest)
+      const p = cx > 0 ? 1.6 : 2.6;
+      let y = hgt * Math.pow(Math.max(0, 1 - Math.pow(q, p)), 1.6);
+      y *= 1 + 0.12 * n2(x * 0.9 + 7.3, z * 0.9);           // lumpy surface
+      if (r === RS) y = -0.06;                             // the rim sinks below the ground
+      pos.push(x, y, z);
+    }
   }
-  g = finalize(g, false);
+  for (let a = 0; a < AS; a++) idx.push(0, 1 + ((a + 1) % AS), 1 + a);
+  for (let r = 1; r < RS; r++) for (let a = 0; a < AS; a++) {
+    const i0 = 1 + (r - 1) * AS + a, i1 = 1 + (r - 1) * AS + (a + 1) % AS, j0 = i0 + AS, j1 = i1 + AS;
+    idx.push(i0, i1, j1, i0, j1, j0);
+  }
+  let g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  g = g.toNonIndexed();
+  g.computeBoundingSphere(); g.computeBoundingBox();
+  g.userData.shared = true;
+  // faintly brighter on the crest (wind-polished), the same as the ground at the rim
   const pc = g.attributes.position, col = new Float32Array(pc.count * 3);
-  for (let i = 0; i < pc.count; i++) { const k = 0.82 + 0.18 * smooth(-0.05, 0.4, pc.getY(i)); col[i * 3] = k; col[i * 3 + 1] = k; col[i * 3 + 2] = k; }
+  for (let i = 0; i < pc.count; i++) { const k = 0.94 + 0.08 * smooth(0, hgt, pc.getY(i)); col[i * 3] = k; col[i * 3 + 1] = k; col[i * 3 + 2] = k; }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
@@ -284,7 +311,7 @@ const NATURAL = {
   dead_tree: { kind: 'wood', radius: 0.35, height: 6.0, collider: 'circle', align: 0.05, sink: 0.03, castShadow: true, geo: (s) => treeGeo(s, true) },
   stump: { kind: 'wood', radius: 0.5, height: 0.8, collider: 'circle', align: 0.2, sink: 0.05, geo: stumpGeo },
   ice_shard: { kind: 'ice', radius: 0.4, height: 0.7, collider: null, align: 0.6, sink: 0.15, cover: true, maxDist: 120, geo: iceShardGeo },
-  snow_drift: { kind: 'snow', radius: 3.0, height: 0.6, collider: null, align: 1.0, sink: 0.2, geo: driftGeo },
+  snow_drift: { kind: 'snow', radius: 3.2, height: 0.45, collider: null, align: 1.0, sink: 0.05, geo: driftGeo },
 };
 export const NATURAL_PROPS = Object.keys(NATURAL);
 const VARIANTS = 3;
