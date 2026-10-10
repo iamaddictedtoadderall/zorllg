@@ -40,6 +40,8 @@ const MOVE_HOLD = 90;          // selections prefetching continues after the cam
 const _col = new THREE.Color(), _c2 = new THREE.Color();
 const _bk = { flow: 0, bed: 0, path: 0, sky: 1, sun: 1, slope: 0, curv: 0, inside: false };
 const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _sph = new THREE.Sphere(), _dc = new THREE.Vector3();
+/** build-queue order: holes first, then equal screen error; coarser levels first on ties (module level: no per-frame closure) */
+const byPriority = (a, b) => a._p - b._p || a.L - b.L;
 
 // ====================================================================== detail textures (AD §3.6), cached
 const TEX_CACHE = new Map();
@@ -644,7 +646,8 @@ export class TerrainRenderer {
   _canCover(n, depth = 0) {
     if (n.mesh) return true;
     if (!n.kids || depth > 3) return false;
-    for (const k of n.kids) if (!this._canCover(k, depth + 1)) return false;
+    const kids = n.kids;
+    for (let i = 0; i < kids.length; i++) if (!this._canCover(kids[i], depth + 1)) return false;
     return true;
   }
   _cover(n, cx, cz, covered = false) {
@@ -653,8 +656,7 @@ export class TerrainRenderer {
     const split = n.L < MAXL && d < this.K * n.size;
     if (split) {
       const kids = this._kids(n);
-      let all = true;
-      for (const k of kids) if (!this._canCover(k)) { all = false; break; }
+      const all = this._kidsCover(kids);
       // while settling, recurse straight to the leaves: they are all built before anything is drawn
       if (all || this._settling) { for (const k of kids) this._cover(k, cx, cz, covered || !!n.mesh); return true; }
       for (const k of kids) { k.used = this._frame; this._want(k, this._dist(k, cx, cz), covered || !!n.mesh); }
@@ -668,7 +670,7 @@ export class TerrainRenderer {
     // a split node without all its children is wanted as a fallback (drawn while they build); prewarm and settle skip
     // fallbacks, because they build the children right away
     this._want(n, d, covered, 0, split);
-    if (n.kids && n.kids.every(k => this._canCover(k))) { for (const k of n.kids) this._drawCovered(k, cx, cz); return true; }
+    if (n.kids && this._kidsCover(n.kids)) { for (const k of n.kids) this._drawCovered(k, cx, cz); return true; }
     return false;
   }
   /** wanted-but-not-drawn nodes for a root that is about to enter the view distance */
@@ -677,6 +679,10 @@ export class TerrainRenderer {
     const d = this._dist(n, cx, cz);
     if (!n.mesh) this._want(n, d, true, 2000);
     if (depth < 1 && n.L < MAXL && d < this.K * n.size) for (const k of this._kids(n)) this._prefetch(k, cx, cz, depth + 1);
+  }
+  _kidsCover(kids) {
+    for (let i = 0; i < kids.length; i++) if (!this._canCover(kids[i])) return false;
+    return true;
   }
   /** draw whatever covers a node that isn't wanted at this level (zooming out while the parent builds) */
   _drawCovered(n, cx, cz) {
@@ -718,7 +724,7 @@ export class TerrainRenderer {
       if (d > R) { if (this._moving) this._prefetch(n, cx, cz, 0); continue; }   // just outside the view: build ahead while moving
       if (!this._cover(n, cx, cz)) holes++;
     }
-    this._queue.sort((a, b2) => a._p - b2._p || a.L - b2.L);
+    this._queue.sort(byPriority);
     let pend = 0; for (const q of this._queue) if (!q._pre) pend++;
     this._stats.pending = pend;
     this._stats.prefetch = this._queue.length - pend;

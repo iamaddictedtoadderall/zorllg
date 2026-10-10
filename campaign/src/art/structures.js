@@ -1490,10 +1490,18 @@ export const CATALOG = {
       const lid = A.part('lid', [0, 1.58, 1.0]);
       lid.add(KIT.panelBox(2.9, 0.22, 2.1, { cols: 2, rows: 1, inset: 0.04 }), M.oxide, P(0, 0.11, -1.0));
       lid.add(KIT.bar(1.0, 0.1, 0.12), M.oxide, P(0, 0.3, -1.95));
-      B.add(KIT.cylinder(0.06, 0.06, 1.3, 6), M.ironBlack, P(1.15, 2.2, 0.8));
-      const bc = A.part('beacon', [1.15, 2.95, 0.8]);
-      bc.add(KIT.cylinder(0.16, 0.16, 0.3, 8), M.lightAmber, P(0, 0, 0));
-      A.lamps.push({ pos: [1.15, 3.05, 0.8], color: '#ffbf4a', size: 1.6, pulse: 'sparkle' });
+      // the beacon is a full lamp assembly (AD §4.5): mast, housing, a lens dome (dark once opened) inside a wire cage
+      const bx = 1.15, bz = 0.8, by = 2.8, br = 0.17;
+      B.add(KIT.cylinder(0.06, 0.07, 1.3, 6), M.ironBlack, P(bx, 2.2, bz));
+      B.add(KIT.lampHousing(br), M.ironBlack, P(bx, by, bz));
+      for (let k = 0; k < 3; k++) {
+        const a = k / 3 * PI * 2 + 0.4;
+        B.add(KIT.barBetween([bx + Math.cos(a) * br * 1.05, by + br * 1.3, bz + Math.sin(a) * br * 1.05], [bx + Math.cos(a) * br * 0.45, by + br * 3.1, bz + Math.sin(a) * br * 0.45], 0.03, 0.03), M.ironBlack);
+      }
+      B.add(KIT.disc(br * 0.6, 0.05), M.ironBlack, P(bx, by + br * 3.15, bz));
+      const bc = A.part('beacon', [bx, by + br * 1.2, bz]);
+      bc.add(KIT.dome(br * 0.86, br * 1.4, 12), M.lightAmber, P(0, 0, 0));
+      A.lamps.push({ pos: [bx, by + br * 2.0, bz], color: '#ffbf4a', size: 1.6, pulse: 'sparkle' });
     },
     stateHooks: {
       sealed: (inst, instant) => { partTo(inst, 'lid', { rx: 0 }, instant); setPartVisible(inst, 'beacon', true); },

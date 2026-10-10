@@ -82,15 +82,26 @@ vec3 cSkyClouds(vec3 d, vec3 fogC, vec3 c, out float cl) {
   float sp = max(dot(d, uFogSunDir), 0.0);
   vec2 cp = d.xz / (h + 0.12);
   vec2 w = vec2(0.012, 0.004) * uSkyTime * uSkyCloudSpeed;
-  float n1 = cFbm(cp * 1.6 + w, uSkyCloudOct);
+  // a gentle domain warp turns round fbm blobs into billows, folds and streaks
+  vec2 q = cp * 1.6 + w;
+  q += (vec2(cNoise(q * 0.55 + 3.1), cNoise(q * 0.55 + 8.3)) - 0.5) * 1.1;
+  float n1 = cFbm(q, uSkyCloudOct);
   float n2 = cFbm(cp * 4.3 + vec2(5.2, 1.3) - w * 1.7, max(uSkyCloudOct - 1.0, 1.0));
   float n = n1 * 0.72 + n2 * 0.28;
   float th = 1.0 - uSkyCover * 0.85;
   cl = smoothstep(th - 0.1, th + 0.2, n) * smoothstep(0.0, 0.14, h);
+  if (cl <= 0.001) return c;
+  // self-shadowing: the density one step toward the sun on the cloud plane. Thinner there = this is the sun-facing
+  // side (lit); denser = the far side, in the cloud's own shadow. Gives each cloud a lit flank and a shaded belly.
+  vec2 sd = uFogSunDir.xz; float sl = length(sd); sd = sl > 1e-3 ? sd / sl : vec2(0.0, -1.0);
+  float ns = cFbm(q + sd * 0.16, min(uSkyCloudOct, 3.0)) * 0.72 + n2 * 0.28;
+  float shade = clamp(0.5 + (n - ns) * 3.5, 0.0, 1.0);
+  float sunUp = smoothstep(-0.06, 0.12, uFogSunDir.y);
   float thick = smoothstep(th + 0.05, th + 0.45, n);
   float edgeLit = 1.0 - smoothstep(th - 0.05, th + 0.3, n);
-  vec3 lit = uSkyCloudCol * (0.85 + 0.6 * pow(sp, 2.0) + 0.35 * edgeLit) + uSkySunCol * pow(sp, 8.0) * 0.5 * (1.0 - thick);
-  vec3 cc = mix(lit, uSkyCloudCol * 0.42, thick * 0.72);
+  vec3 lit = uSkyCloudCol * (0.72 + 0.6 * pow(sp, 2.0) + 0.35 * edgeLit + 0.32 * shade)
+           + uSkySunCol * (pow(sp, 8.0) * 0.5 * (1.0 - thick) + 0.12 * shade * sunUp * (1.0 - thick * 0.5));
+  vec3 cc = mix(lit, uSkyCloudCol * 0.42, thick * 0.72 * (1.15 - 0.5 * shade));
   cc += uSkySunCol * pow(sp, 5.0) * cl * (1.0 - thick) * 1.6 * uSkySunGlow;
   cc = mix(cc, fogC, (1.0 - smoothstep(0.0, 0.3, h)) * 0.65);
   return mix(c, cc, cl * 0.88);

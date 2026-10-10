@@ -9,8 +9,8 @@ import { FOG_PARS } from './glsl.js';
 const TYPES = {
   //        size m       fall m/s  sway  streak  box xz/y   alpha  additive  colour            lit
   clear:     { size: [0.05, 0.1], fall: 0, sway: 0, streak: 0, box: [60, 30], alpha: 0, add: 0, color: '#ffffff' },
-  ash:       { size: [0.05, 0.13], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8' },
-  snow:      { size: [0.06, 0.15], fall: 1.4, sway: 0.6, streak: 0, box: [56, 34], alpha: 0.85, add: 0, color: '#f4f8ff' },
+  ash:       { size: [0.05, 0.13], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8', tumble: 1 },
+  snow:      { size: [0.06, 0.15], fall: 1.4, sway: 0.6, streak: 0, box: [56, 34], alpha: 0.85, add: 0, color: '#f4f8ff', tumble: 0.5 },
   rain:      { size: [0.014, 0.022], fall: 12, sway: 0, streak: 0.07, box: [26, 20], alpha: 0.55, add: 0, color: '#dfe8f2' },
   dust:      { size: [0.03, 0.08], fall: -0.05, sway: 0.4, streak: 0, box: [40, 24], alpha: 0.9, add: 1, color: '#fff0d8' },
   embers:    { size: [0.04, 0.07], fall: -1.8, sway: 0.8, streak: 0, box: [50, 30], alpha: 1, add: 1, color: '#ff8a3a' },
@@ -21,7 +21,7 @@ const VS = /* glsl */`
 ${FOG_PARS}
 attribute vec4 aSeed;
 uniform vec3 uBox, uOffset, uCam, uVel;
-uniform float uTime, uSway, uIntensity, uStreak, uSizeA, uSizeB, uMinPx, uAlpha;
+uniform float uTime, uSway, uIntensity, uStreak, uSizeA, uSizeB, uMinPx, uAlpha, uTumble;
 uniform vec2 uPx;
 uniform vec3 uColor, uSunC, uHemiC, uLightDir;
 varying vec4 vCol;
@@ -55,7 +55,14 @@ void main() {
     float sk = 0.55 + 0.9 * fract(aSeed.w * 13.71 + aSeed.x * 3.3);
     float len = ndcSize + projectionMatrix[1][1] * sl * uStreak * sk / max(-mv.z, 0.1);
     off = d * c.y * len + vec2(d.y, -d.x) * c.x * ndcSize;
-  } else off = c * ndcSize;
+  } else {
+    // flakes tumble: each one spins slowly and flips (its apparent width breathes), so ash reads as falling flecks
+    // and snow as flakes rather than a field of identical round dots
+    float ang = aSeed.x * 6.2832 + uTime * (0.4 + aSeed.z * 1.6) * uTumble;
+    float asp = mix(1.0, 0.28 + 0.72 * abs(sin(uTime * (0.9 + aSeed.y * 2.2) * uTumble + aSeed.w * 23.0)), uTumble);
+    vec2 cr = vec2(c.x * asp, c.y * (1.0 + 0.25 * uTumble));
+    off = vec2(cr.x * cos(ang) - cr.y * sin(ang), cr.x * sin(ang) + cr.y * cos(ang)) * ndcSize;
+  }
   clip.xy += off * vec2(projectionMatrix[0][0] / projectionMatrix[1][1], 1.0) * clip.w;
   // light: sky fill plus sun, brighter looking toward the sun (forward scatter)
   vec3 vd = normalize(wp - cameraPosition);
@@ -94,7 +101,7 @@ export function install(ctx) {
     uVel: { value: new THREE.Vector3() }, uTime: { value: 0 }, uSway: { value: 0 }, uIntensity: { value: 0 }, uStreak: { value: 0 },
     uSizeA: { value: 0.1 }, uSizeB: { value: 0.2 }, uMinPx: { value: 1.6 }, uAlpha: { value: 0 }, uPx: { value: new THREE.Vector2(1 / 640, 1 / 360) },
     uColor: { value: new THREE.Color() }, uSunC: { value: new THREE.Color() }, uHemiC: { value: new THREE.Color() },
-    uLightDir: { value: new THREE.Vector3(0, 1, 0) }, uAdd: { value: 0 },
+    uLightDir: { value: new THREE.Vector3(0, 1, 0) }, uAdd: { value: 0 }, uTumble: { value: 0 },
   };
   const mat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false });
   mat.userData.shared = true;
@@ -192,7 +199,7 @@ export function install(ctx) {
       }
       U.uTime.value = weatherTime;
       U.uBox.value.set(T.box[0], T.box[1], T.box[0]);
-      U.uSway.value = T.sway; U.uStreak.value = T.streak;
+      U.uSway.value = T.sway; U.uStreak.value = T.streak; U.uTumble.value = T.tumble || 0;
       U.uSizeA.value = T.size[0] * (ctx.tier.name === 'low' ? 1.3 : 1); U.uSizeB.value = T.size[1] * (ctx.tier.name === 'low' ? 1.3 : 1);
       U.uAlpha.value = T.alpha * shownK;
       U.uIntensity.value = shownType === 'clear' ? 0 : Math.max(0, Math.min(1, c.intensity)) * shownK;
