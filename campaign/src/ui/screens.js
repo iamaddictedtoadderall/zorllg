@@ -24,6 +24,8 @@ const SCREEN_CSS = `
   background:linear-gradient(rgba(18,16,19,0),rgba(18,16,19,.98) 14px)}
 #screen .pause-wrap .doc .actions{position:static;margin:22px 0 0;padding:0;background:none}
 #game.menu-up #hud :is(#zonecard,#hint,#warn,#checkpointToast,#killfeed,#markers,#lockbox,#prompt,#progress,#choice,#reticle,#bossbar){visibility:hidden}
+/* the pause menu (and its settings and notes) shows the comms log itself: the live box, frozen mid-line, stays out of sight behind it */
+#game[data-screen=pause] #comms,#game[data-screen=settings] #comms{visibility:hidden}
 .title-wrap h1{font-size:min(clamp(64px,13vw,150px),17vh)}
 .title-wrap .tag{font-size:clamp(13px,1.6vw,20px);letter-spacing:.3em;text-wrap:balance}
 .title-wrap .controls{grid-template-columns:repeat(3,minmax(0,1fr));gap:0 26px;max-width:720px;margin-top:28px}
@@ -31,6 +33,8 @@ const SCREEN_CSS = `
 .title-wrap .controls kbd{font-size:11px;color:var(--hud-dim)}
 @media (max-height:520px){.title-wrap h1{font-size:min(clamp(56px,10vw,96px),19vh)}.title-wrap .controls{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media (max-height:440px){.title-wrap .controls{display:none}.title-wrap .actions{margin-top:14px}}
+/* short landscape (phones): the menu reaches past the middle of the screen, so the scrim behind it reaches further too */
+@media (max-height:520px){#screen.title{background:linear-gradient(90deg,rgba(12,11,14,.86),rgba(12,11,14,.66) 50%,rgba(12,11,14,.22) 78%,rgba(12,11,14,0) 92%)}}
 @media (max-height:520px){
   .doc h2{font-size:clamp(30px,5.2vw,44px)}
   .doc .body{min-height:0;margin-top:12px;font-size:13px;line-height:1.55}
@@ -225,6 +229,7 @@ export function install(ctx) {
     seq++;
     api.current = name; api.page = null;
     game?.classList.add('menu-up');
+    if (game) game.dataset.screen = name;
     root.className = cls;
     root.innerHTML = html;
     root.hidden = false;
@@ -444,6 +449,7 @@ export function install(ctx) {
       close(null);
       api.current = null;
       game?.classList.remove('menu-up');
+      if (game) delete game.dataset.screen;
       root.innerHTML = ''; root.className = ''; root.hidden = true;
     },
     showTitle(m = {}) {

@@ -89,6 +89,8 @@ const HUD_CSS = `
 #markers .mk.edge span.l{display:none}
 #markers .mk .arw{position:absolute;left:50%;top:50%;width:0;height:0;margin:-24px 0 0 -6px;border:6px solid transparent;border-bottom:9px solid var(--accent);border-top:0;transform-origin:6px 24px;display:none}
 #markers .mk.edge .arw{display:block}
+#markers .mk.edge.eL .d{transform:translateX(16px)}
+#markers .mk.edge.eR .d{transform:translateX(-16px)}
 #markers .mk.threat .arw{border-bottom-color:var(--threat)}
 #markers .mk.ally .arw{border-bottom-color:var(--ally)}
 #markers .mk.poi .arw{border-bottom-color:var(--en)}
@@ -162,7 +164,13 @@ const HUD_CSS = `
 #game.touch #rack .rs{grid-template-columns:1fr;gap:3px;margin-top:4px}
 #game.touch #mname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (orientation:landscape){#game.touch #objpanel{max-width:calc(53vw - min(210px,18vw) - 34px)}}
-#game.touch #objs li{flex-wrap:wrap;column-gap:6px;row-gap:0;line-height:1.25}
+/* touch (narrow objectives column): inline flow with a hanging indent, so a long objective wraps under its own text
+   and its progress stays attached to the last word instead of dropping to a line of its own */
+#game.touch #objs li{display:block;padding-left:15px;text-indent:-15px;line-height:1.25}
+#game.touch #objs li::before{display:inline-block;margin-right:7px;vertical-align:1px}
+#game.touch #objs li .tg{display:inline-block;text-indent:0;margin-right:3px;transform:translateY(-1px)}
+#game.touch #objs li .pg{white-space:nowrap;margin-left:5px}
+#game.touch #warn div{letter-spacing:.24em}
 #game.touch #bossbar{top:var(--boss-top,64px)}
 #game.touch #bossbar .nm{font-size:12px}
 #game.touch #bossbar .stag{margin-top:2px;font-size:10px}
@@ -172,6 +180,9 @@ const HUD_CSS = `
 #game.touch #zonecard .s{font-size:11px}
 #game.touch #warn{top:37%}
 #game.touch #hud.zone-on.boss-on #warn{top:calc(var(--boss-top,64px) + 102px)}
+/* touch, boss bar up: a live warning outranks the zone card, which yields its place until the warning clears */
+#game.touch #hud.zone-on.boss-on.warn-on #zonecard{opacity:0;transition:opacity .25s}
+#game.touch #hud.zone-on.boss-on.warn-on #warn{top:calc(var(--boss-top,64px) + 56px)}
 #game.touch #checkpointToast{font-size:11px;letter-spacing:.16em;padding:5px 10px}
 #hud.zone-on.boss-on #warn{top:max(31%,calc(15.5% + 76px))}
 #markers .mk.nolabel span{visibility:hidden}
@@ -805,12 +816,17 @@ export function install(ctx) {
         const arw = e.firstChild; if (arw) arw.style.transform = `rotate(${a.toFixed(3)}rad)`;
       }
       toggle(e, 'edge', edge);
+      // on a side edge the arrow points outwards beside the diamond: the distance moves inwards, clear of the arrow
+      toggle(e, 'eL', edge && x <= mx + 1);
+      toggle(e, 'eR', edge && x >= W - mx - 1);
       // declutter: a label that would sit on an earlier marker's label, the lock box and its info, or the prompt is
       // dropped (the diamond stays); so is the label of the locked target's own marker (the lock box names it)
       // (labels are 11 px mono, about 6.6 px a character, two lines below the diamond: the label and the distance)
       const hw = edge ? 22 : Math.max(String(m.label ?? '').length, 6) * 3.3 + 3;
       const lx0 = x - hw, lx1 = x + hw, ly0 = y - 4, ly1 = y + 24;
-      const clash = !!(m.target && m.target === p?.lock && !edge) || occupied(lx0, ly0, lx1, ly1);
+      // a threat's label also keeps off the reticle brackets (an objective's label stays: it matters most when aimed at)
+      const onReticle = kind === 'threat' && !edge && lx0 < cx + 38 && lx1 > cx - 38 && ly0 < cy + 30 && ly1 > cy - 30;
+      const clash = !!(m.target && m.target === p?.lock && !edge) || onReticle || occupied(lx0, ly0, lx1, ly1);
       if (!clash) occupy(lx0, ly0, lx1, ly1);
       toggle(e, 'nolabel', clash);
       e.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px) translate(-50%,-50%)`;
@@ -1226,6 +1242,7 @@ export function install(ctx) {
       let wh = '';
       for (const [k, w] of warnings) { w.t -= dt; if (w.t <= 0) warnings.delete(k); else wh += `<div class="${w.soft ? 'soft' : ''}">${esc(k)}</div>`; }
       if (wh !== lastWarnHTML && el.warn) { el.warn.innerHTML = wh; lastWarnHTML = wh; }
+      toggle(el.hud, 'warn-on', wh !== '');
       if (el.hint) { const o = hintT > 0 ? '1' : '0'; if (el.hint.style.opacity !== o) el.hint.style.opacity = o; }
       if (el.killfeed) { const o = killT > 0 ? '1' : '0'; if (el.killfeed.style.opacity !== o) el.killfeed.style.opacity = o; }
       if (el.hitmark) { const o = hitT > 0 ? '1' : '0'; if (el.hitmark.style.opacity !== o) el.hitmark.style.opacity = o; }

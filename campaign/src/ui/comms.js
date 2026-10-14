@@ -59,6 +59,7 @@ const CSS = `
 #game.cine #comms:not(.overblack){left:50%;right:auto;top:auto;bottom:calc(11vh + 16px);transform:translateX(-50%);width:min(640px,72vw);
   background:linear-gradient(90deg,rgba(12,11,14,0),rgba(12,11,14,.62) 18%,rgba(12,11,14,.62) 82%,rgba(12,11,14,0));border-left-color:transparent;text-align:center}
 #game.cine #comms:not(.overblack) .who{justify-content:center}
+#game.cine #comms:not(.overblack) .who canvas{display:none}
 #comms.overblack{left:50%!important;right:auto!important;top:50%!important;bottom:auto!important;transform:translate(-50%,-50%)!important;
   width:min(620px,84vw)!important;background:none!important;border-left-color:transparent;text-align:center;padding:0}
 #comms.overblack .who{justify-content:center}
