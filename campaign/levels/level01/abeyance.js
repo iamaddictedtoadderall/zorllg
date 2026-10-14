@@ -92,8 +92,11 @@ function colliders() {
 
 const LOW = new WeakMap();   // ctx → the Low-tier single mesh geometry (shared, never disposed)
 const SEAM_GEO = new WeakMap();
-/** fills a Builder with the hull. lod = exterior silhouette only (LOD1, the skyline impostor). */
-function make(ctx, B, lod) {
+/**
+ * fills a Builder with the hull. lod = exterior silhouette only (LOD1, the skyline impostor). low = the Low tier's
+ * single mesh (L1 §11.8: "no interior props beyond floors and walls": no racks, hung lamps, cables, rungs or icicles).
+ */
+function make(ctx, B, lod, low = false) {
   const M = mats(ctx);
   const rng = rngFor('abeyance');
   // everything is built upright, then sheared by the lean
@@ -223,7 +226,7 @@ function make(ctx, B, lod) {
       const x = -10 + c * 10, z = -15 + r * 10;
       if (HOLES[f][0] === c && HOLES[f][1] === r) {
         for (let i = 0; i < 4; i++) add(slab(1.5 + rng() * 2, 0.3, 0.8 + rng(), 0.06), M.steel, x + (rng() - 0.5) * 9, y - 0.2, z + (rng() - 0.5) * 9, (rng() - 0.5) * 0.6, rng() * PI, (rng() - 0.5) * 0.5);
-        for (let i = 0; i < 5; i++) add(cyl(0.2, 0.02, 1.4 + rng() * 2, 5), M.ice, x + (rng() - 0.5) * 9, y - 1.6, z + (rng() < 0.5 ? -4.6 : 4.6));
+        for (let i = 0; i < 5; i++) { const h = 1.4 + rng() * 2, ix = x + (rng() - 0.5) * 9, iz = z + (rng() < 0.5 ? -4.6 : 4.6); if (!low) add(cyl(0.2, 0.02, h, 5), M.ice, ix, y - 1.6, iz); }
         continue;
       }
       add(slab(9.9, 1.5, 9.9, 0.15), (c + r + f) % 2 ? M.steel : M.iron, x, y, z);
@@ -232,6 +235,7 @@ function make(ctx, B, lod) {
     for (let k = 0; k < 5; k++) add(slab(W - 1, 0.8, 0.5, 0.08), M.steel, 0, y - 1.2, -20 + k * 10);
     // a cargo rack on every floor against the south wall (scale cue, cover)
     const rz = f % 2 ? 8 : -8;
+    if (low) return;
     add(slab(2.2, 3.2, 7, 0.12), M.iron, HX - 3, y + 2.4, rz);
     for (let i = 0; i < 3; i++) add(cyl(0.9, 0.9, 1.4, 10), M.iron, HX - 3, y + 1.6, rz - 2.4 + i * 2.4, PI / 2, 0, 0);
   });
@@ -244,10 +248,12 @@ function make(ctx, B, lod) {
   for (let i = 0; i < 3; i++) add(slab(4.6, 0.12, 1.4, 0.03), M.steel, 6, CROWN + 0.6 + i, 13);
   for (const [x, z] of [[-12, -14], [12, 14], [12, -14]]) { add(slab(0.9, 0.5, 0.6, 0.08), M.iron, x, CROWN + 10, z); add(slab(0.6, 0.12, 0.4, 0.03), M.sodium, x, CROWN + 9.75, z); }
   // ── the hold: sodium work lamps on the ceiling, cable runs ──
-  for (const z of [-12, 0, 12]) { add(slab(1.2, 0.5, 0.8, 0.08), M.iron, 0, 20.6, z); add(slab(0.9, 0.12, 0.5, 0.03), M.sodium, 0, 20.3, z); }
-  for (const s of [-1, 1]) add(cyl(0.12, 0.12, 40, 6), M.dark, s * 10.5, 17, 0, PI / 2, 0, 0);
-  // ── work lamps hung down the climb, one per floor ──
-  FLOORS.forEach((y, f) => { const x = f % 2 ? -12 : 12, z = f % 2 ? 16 : -16; add(cyl(0.05, 0.05, 6, 4), M.dark, x, y + 13, z); add(slab(0.8, 0.5, 0.8, 0.08), M.iron, x, y + 9.8, z); add(slab(0.5, 0.12, 0.5, 0.03), M.sodium, x, y + 9.5, z); });
+  if (!low) {
+    for (const z of [-12, 0, 12]) { add(slab(1.2, 0.5, 0.8, 0.08), M.iron, 0, 20.6, z); add(slab(0.9, 0.12, 0.5, 0.03), M.sodium, 0, 20.3, z); }
+    for (const s of [-1, 1]) add(cyl(0.12, 0.12, 40, 6), M.dark, s * 10.5, 17, 0, PI / 2, 0, 0);
+    // ── work lamps hung down the climb, one per floor ──
+    FLOORS.forEach((y, f) => { const x = f % 2 ? -12 : 12, z = f % 2 ? 16 : -16; add(cyl(0.05, 0.05, 6, 4), M.dark, x, y + 13, z); add(slab(0.8, 0.5, 0.8, 0.08), M.iron, x, y + 9.8, z); add(slab(0.5, 0.12, 0.5, 0.03), M.sodium, x, y + 9.5, z); });
+  }
   // ── scaffold landings on the east face, with rails, and ladders between them ──
   for (const y of [25, 50, 75, 100]) {
     add(slab(8, 0.5, 4, 0.1), M.iron, 0, y, -HZ - 2.6);
@@ -255,7 +261,7 @@ function make(ctx, B, lod) {
     for (const x of [-3.8, 3.8]) add(slab(0.12, 1.1, 0.12, 0.02), M.dark, x, y + 0.55, -HZ - 4.5);
     add(slab(0.5, 0.12, 0.4, 0.03), M.sodium, 3.5, y + 2.4, -HZ - 1.2);
     for (const x of [-3.2, -2.4]) add(cyl(0.05, 0.05, 25, 4), M.dark, x, y - 12.5, -HZ - 1.0);
-    for (let i = 1; i < 41; i++) add(cyl(0.035, 0.035, 0.8, 4), M.dark, -2.8, y - i * 0.6, -HZ - 1.0, 0, 0, PI / 2);
+    if (!low) for (let i = 1; i < 41; i++) add(cyl(0.035, 0.035, 0.8, 4), M.dark, -2.8, y - i * 0.6, -HZ - 1.0, 0, 0, PI / 2);
   }
   // ── the stencil wall: lattice-ring emblem (7 bevelled nodes, hexagonal lattice) on floor 3's north inner wall ──
   const sx = -HX + 1.3, sz = -1;
@@ -285,10 +291,11 @@ function build(ctx, p) {
   });
   const r = instance(ctx, built);
   let root = r.root;
-  // Low tier (A1.3, L1 §15.4): the whole hull, interior floors included, as ONE vertex-coloured mesh
+  // Low tier (A1.3, L1 §15.4): the whole hull, floors and walls included but no interior props, as ONE vertex-coloured
+  // mesh; beyond structureLodDist it drops to the exterior silhouette like the other tiers (1 call either way)
   if (ctx.tier?.name === 'low') {
     let g = LOW.get(ctx);
-    if (!g) { const B = new Builder(); make(ctx, B, false); g = B.single(); LOW.set(ctx, g); }
+    if (!g) { const B = new Builder(); make(ctx, B, false, true); g = B.single(); LOW.set(ctx, g); }
     root = new THREE.Group();
     const m = new THREE.Mesh(g, M.lod); m.castShadow = true; m.receiveShadow = true; m.name = 'abeyanceLow';
     root.add(m);
@@ -324,7 +331,6 @@ function build(ctx, p) {
   for (const [x, z] of [[-12, -14], [12, 14], [12, -14]]) g(x, CROWN + 9.6, z, '#ff9a2e', 2.4);
   for (const y of [25, 50, 75, 100]) g(3.5, y + 2.3, -HZ - 1.2, '#ff9a2e', 1.8);
   root.userData.l01 = { seam, seamOff: seamMatOff, seamOn: M.cyan };
-  if (ctx.tier?.name === 'low') return { root };
   return { root, lod: r.lod ? (() => { const grp = new THREE.Group(); grp.add(r.lod); return grp; })() : undefined };
 }
 

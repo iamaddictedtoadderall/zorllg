@@ -203,8 +203,8 @@ async function mechGallery(g) {
     }));
     window.__p3.rigs = rigs;
     S.light([0, 5, 0], 40);
-    // isolated budget per design (loadout 0 and the heaviest set), whole mech incl. thrust and blade FX
-    for (const k of [0, 3, 8, 11, 12, 15]) {
+    // isolated budget per design (loadout 0 and the heaviest set; all four designs incl. striker), whole mech incl. thrust and blade FX
+    for (const k of [0, 3, 4, 7, 8, 11, 12, 15]) {
       const rig = rigs[k];
       const idle = S.measure(rig.root);
       rig.flames.forEach(f => f.visible = true); rig.vents.forEach(f => f.visible = true); rig.blade.visible = true;
@@ -594,22 +594,45 @@ async function structureWorld(g) {
   g.assert(rs.states.join() === 'closed,intact,intact' && rs.door && rs.pyl && rs.bun && Math.abs(rs.bunkerY) < 1e-6 && !rs.rubble && !rs.rubbleCol && rs.pylonRot < 1e-6 && rs.doorY === 0,
     `reset(states) restores instantly (${rs.states.join(', ')}; solid ${rs.door}/${rs.pyl}/${rs.bun}; bunker dy ${rs.bunkerY}; rubble ${rs.rubble || rs.rubbleCol}; pylon tilt ${rs.pylonRot}; door y ${rs.doorY})`);
   g.assert(rs.alive.every(a => a === true), `reset revives the destructible targets (${rs.alive.join(', ')})`);
+  // reset(states) to 'destroyed' from intact (the Continue path: world.load places everything intact, then the checkpoint
+  // snapshot is restored) retires the combat target silently: dead, unregistered, never lockable, no killfeed/kill stat
+  const rd = await g.eval(() => {
+    const ctx = window.__game.ctx, ST = ctx.structures, C = ctx.combat, w = window.__p3w;
+    const kills0 = C?.stats?.kills ?? 0; let killedEv = 0;
+    const off = ctx.events.on('target:killed', () => killedEv++);
+    ST.reset({ p3_pylon: 'destroyed', p3_bunker: 'destroyed' });
+    if (typeof off === 'function') off();
+    const b = ST.get('p3_bunker'), pl = ST.get('p3_pylon'), ts = [b.target, pl.target];
+    const out = { states: [b.state, pl.state], alive: ts.map(t => t?.alive), registered: ts.map(t => !!C?.targets?.includes?.(t)),
+      queried: ts.map(t => !!(C?.query?.({ tag: 'structure' }) || []).includes(t)), bun: ctx.collision.pointInSolid(w.bun),
+      rubble: [b, pl].every(i => i.colliders.some(c => c.tag === 'rubble' && c.enabled)), kills: (C?.stats?.kills ?? 0) - kills0, killedEv };
+    ST.reset({ p3_pylon: 'intact', p3_bunker: 'intact' });
+    out.back = { alive: ts.map(t => t?.alive), ap: ts.map(t => t && t.ap === t.apMax), registered: ts.map(t => !!C?.targets?.includes?.(t)), bun: ctx.collision.pointInSolid(w.bun) };
+    return out;
+  });
+  g.assert(rd.states.join() === 'destroyed,destroyed' && rd.alive.every(a => a === false) && rd.registered.every(r => !r) && rd.queried.every(q => !q) && !rd.bun && rd.rubble && rd.kills === 0 && rd.killedEv === 0,
+    `reset(states) to destroyed retires the targets silently (alive ${rd.alive.join('/')}, registered ${rd.registered.join('/')}, queryable ${rd.queried.join('/')}, body solid ${rd.bun}, rubble ${rd.rubble}, kills +${rd.kills}, killed events ${rd.killedEv})`);
+  g.assert(rd.back.alive.every(a => a === true) && rd.back.ap.every(Boolean) && rd.back.registered.every(Boolean) && rd.back.bun,
+    `reset(states) back to intact revives them at full AP and re-registers (${rd.back.alive.join('/')}, ${rd.back.registered.join('/')}, solid ${rd.back.bun})`);
   await g.camera([bp[0] - 36, bp[1] + 20, bp[2] - 30], [bp[0], bp[1] + 3, bp[2]]);
   await shot(g, 'state-bunker-reset', { hud: false, settle: false });
 
   // lazy realise: 200 structures far away build nothing until near, then at most one realise per frame
   await g.freeCam(false);
+  // let the camera rig return to follow mode first: the 'structures' system (world phase) runs before the camera phase,
+  // so on the first frame after a free-camera shot the focus is still the free camera's position
+  await g.step(3);
   const lz = await g.eval(() => {
     const ctx = window.__game.ctx, ST = ctx.structures, V = ctx.THREE.Vector3;
     const types = ['container_stack', 'barricade', 'wall', 'bunker', 'watchtower', 'ruin_block', 'salvage_cache', 'checkpoint_beacon'];
-    const far = ctx.tier.viewDistance + 200, p = ctx.player.pos;
+    const far = ctx.tier.viewDistance + 200, p = ctx.player.pos, fo = ctx.cameraRig?.focus || p;
     // the field sits on real terrain past the route's end (inside the generated bounds), its nearest structure beyond
     // the realise distance; without a route (stub world) it goes 2.2 × that distance east
     const Rt = ctx.world?.route;
     let cx = p.x + far * 2.2, cz = p.z;
     if (Rt?.pointAt && Rt?.tangentAt) {
       const e = Rt.pointAt(Rt.length), tg = Rt.tangentAt(Rt.length);
-      let k = 600; while (k < 3000 && Math.hypot(e.x + tg.x * k - p.x, e.z + tg.z * k - p.z) < far + 560) k += 100;
+      let k = 600; while (k < 3400 && Math.min(Math.hypot(e.x + tg.x * k - p.x, e.z + tg.z * k - p.z), Math.hypot(e.x + tg.x * k - fo.x, e.z + tg.z * k - fo.z)) < far + 700) k += 100;
       cx = e.x + tg.x * k; cz = e.z + tg.z * k;
     }
     const list = [];
@@ -620,7 +643,7 @@ async function structureWorld(g) {
       list.push(ST.place({ id: 'lazy' + i, type: t, params: t === 'wall' ? { length: 30 + (i % 3) * 10 } : undefined }, new V(x, ctx.world?.groundHeight?.(x, z) ?? 0, z), a));
     }
     window.__p3w.lazy = list; window.__p3w.lazyAt = [cx, cz];
-    let near = Infinity; for (const st of list) near = Math.min(near, Math.hypot(st.pos.x - p.x, st.pos.z - p.z));
+    let near = Infinity; for (const st of list) near = Math.min(near, st.pos.distanceTo(p), st.pos.distanceTo(fo));
     return { placed: list.length, rooted: list.filter(s => s.root).length, far, dist: Math.round(near) };
   });
   await g.step(30);

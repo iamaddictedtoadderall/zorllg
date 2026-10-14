@@ -75,7 +75,7 @@ const ART_NIGHT = {
 };
 const ART_UNDER = {                              // Z2: blue ice-glow, no sky; the roof's underside catches the glow
   fog: { color: '#0b2a3c', density: 0.006, heightFalloff: 0, heightBase: -10, inscatter: 0.2, sunColor: '#4a7f8a' },
-  light: { sun: 0.2, sunColor: '#8fd8c8', hemiSky: '#2a6f9a', hemiGround: '#0d2433', hemi: 0.62, rim: 0.8,
+  light: { sun: 0.2, sunColor: '#8fd8c8', hemiSky: '#2a6f9a', hemiGround: '#183f58', hemi: 0.62, rim: 0.8,
            rimColor: '#6a7fb0', exposure: 1.3, env: 0.5 },
   grade: { contrast: 1.12, saturation: 0.8, lift: [0, 0.008, 0.02], gain: [0.96, 1.0, 1.04],
            shadowsTint: [0.9, 0.97, 1.1], highlightsTint: [1, 1, 1], vignette: 0.42, grain: 0.04 },
@@ -125,9 +125,11 @@ const DATA = {
                     [[930, 100], [1040, 60], [1180, 75], [1280, 110]],
                     [[960, 230], [1100, 300], [1250, 270]] ],
            guaranteed: [{ x: 856, z: 23, r: 26, raft: true }] },
+  // B6 moved off L1's (1340, -60), which sat on the shore-fast ice across the route: it walled the fast ice off from
+  // the camp (the walk in, the Bench's lamp, the kneel shot). It now stands in the water north of the last lead.
   bergs: [ { id: 'B1', x: 995, z: 30, r: 22, h: 24 }, { id: 'B2', x: 1075, z: 120, r: 25, h: 28 },
            { id: 'B3', x: 1150, z: 185, r: 22, h: 22 }, { id: 'B4', x: 1240, z: 130, r: 24, h: 26 },
-           { id: 'B5', x: 1300, z: 15, r: 22, h: 20 },  { id: 'B6', x: 1340, z: -60, r: 18, h: 18 },
+           { id: 'B5', x: 1300, z: 15, r: 22, h: 20 },  { id: 'B6', x: 1255, z: -140, r: 18, h: 18 },
            { id: 'B7', x: 920, z: -60, r: 16, h: 16 },  { id: 'B8', x: 1180, z: 260, r: 18, h: 20 },
            { id: 'B9', x: 1210, z: -40, r: 15, h: 16 } ],
   sunClock: { from: 5.5, to: 9, seconds: 180, azimuth: 95 },
@@ -140,7 +142,7 @@ const DATA = {
                   [[-640, 180], [-560, 120], [-500, 40]] ],
   abeyance: { floors: [22, 44, 66, 88, 108], crown: 122 },
   wakeLights: { x0: 1360, x1: 2150, z0: -1250, z1: 1250, count: 64, seed: 7301 },
-  shore: { hole: { s: 3185, l: -20 }, kneel: { s: 3180, l: -14 }, cradle: { s: 3282, l: 20 } },
+  shore: { hole: { s: 3185, l: -20 }, kneel: { s: 3180, l: -14 }, cradle: { s: 3282, l: 20 }, cradleIn: { s: 3289, l: 20 } },
   tick: { park0: { s: 90, l: 70 } },
 };
 
@@ -157,6 +159,26 @@ function edgeXAt(z) {
 function edgeDiscs() {
   const out = [];
   for (let z = -470; z <= 470; z += 20) out.push({ at: [Math.round(edgeXAt(z) + 2 + 25), z], r: 25, falloff: 6, mode: 'flatten', h: -70, noScatter: true });
+  return out;
+}
+
+/**
+ * The beach (L1 §2.4 "a stepped ramp up the beach"): the fast ice stays flat at -21 to s 3200, then a steady ramp of
+ * about 7° climbs 8 m to the camp's terrace (-13, from s 3268), where the Bench stands, so the frame walks up at walking
+ * speed and the Bench's lamp stays in view from the fast ice. On the route the heightfield's bed profile is carried by
+ * flatten stamps that sit on the route (each one anchors its chord), so the ramp is a row of small on-route treads
+ * every 8 m (1 m rise each; the bed smoothing turns them into an even slope). Either side, the bed blends into the
+ * natural shelf (about -5) across the carve shoulder, so the camp sits in a shallow cove between low snow banks.
+ */
+function beachStamps() {
+  const S0 = 3204, S1 = 3268, H0 = -21, H1 = -13;
+  const h = (s) => H0 + (H1 - H0) * Math.min(1, Math.max(0, (s - S0) / (S1 - S0)));
+  const out = [{ at: { s: 3300, l: 10 }, r: 40, falloff: 20, mode: 'flatten', h: H1 }];              // the camp terrace
+  // each tread anchors the bed over its chord (s ± R) and the later one wins where they overlap, so a tread centred at
+  // c sets the bed at about c - R: it carries the height wanted there. Its disc also flattens the ground ± R either
+  // side of the route, so the walk from the hole to the cradle (l -14 to +20) climbs one even slope.
+  const R = 30;
+  for (let c = S0; c <= S1 + R; c += 8) out.push({ at: { s: c, l: 0 }, r: R, falloff: 12, mode: 'flatten', h: h(c - R) });
   return out;
 }
 
@@ -180,13 +202,9 @@ const STAMPS = [
   // ...and right up to the sawn edge: a chain of small discs whose rim follows the cliff face, so the drop happens
   // inside the 10 m thick ice_cliff wall (no shelf strip or scalloped slope shows on the water side)
   ...edgeDiscs(),
-  // shore-fast ice (s 3130..~3200, where the hole is) and the stepped beach ramp east of it: the steps are small enough
-  // that none reaches back over the fast ice (the kneel, the hole, Tick and the flare road stay flat at -21)
-  { at: { s: 3165, l: -20 }, r: 70, falloff: 15, mode: 'flatten', h: -21, noScatter: true },
-  { at: { s: 3232, l: 5 }, r: 24, falloff: 14, mode: 'flatten', h: -15 },
-  { at: { s: 3258, l: 10 }, r: 26, falloff: 14, mode: 'flatten', h: -9 },
-  { at: { s: 3284, l: 15 }, r: 30, falloff: 15, mode: 'flatten', h: -3 },
-  { at: { s: 3316, l: 10 }, r: 42, falloff: 25, mode: 'flatten', h: 3 },
+  // shore-fast ice (s 3130..~3200, where the hole is) and the beach east of it: see BEACH (a walkable ramp up to the camp)
+  { at: { s: 3160, l: -10 }, r: 55, falloff: 15, mode: 'flatten', h: -21, noScatter: true },
+  ...beachStamps(),
   // past the camp the pack-ice belt (corridor walls) is cut down, so the Thornback fills the eastern sky over the Wake
   { at: [1840, -40], r: 280, falloff: 140, mode: 'flatten', h: 2 },
   // scatter keep-outs around set pieces (raise by 0 = no height change)
@@ -238,7 +256,9 @@ const ZONES = [
       ...Array.from({ length: 9 }, (_, i) => ({ type: 'ice_vault', at: { s: 345 + i * 30, h: 16 }, yaw: 'route',
                                                 params: { span: i < 3 ? 104 : 72, depth: 30, seed: 20 + i } })),
       { type: 'ice_vault', at: { s: 601, h: 16 }, yaw: 'route', params: { span: 72, depth: 16, seed: 29 } },
-      ...Array.from({ length: 10 }, (_, i) => [-1, 1].map(sd => ({ type: 'ice_wall', at: { s: 345 + i * 30, l: sd * (i < 3 ? 48 : 33) },
+      // the walls stand at the foot of the trench's stamp slopes, where the floor is still flat (y −18), so every wall's
+      // broken top meets the roof's haunches at the same height (L1 §2.6 Z2: |l| 28 to 50)
+      ...Array.from({ length: 10 }, (_, i) => [-1, 1].map(sd => ({ type: 'ice_wall', at: { s: 345 + i * 30, l: sd * (i < 3 ? 44 : 28) },
                                                                     yaw: 'route', params: { length: 32, h: 22, seed: 60 + i * 2 + (sd > 0 ? 1 : 0) } }))).flat(),
       // the trench ends at the shaft: cross walls close the gaps between the moulin and the side walls (the way on is up)
       ...[-1, 1].map(sd => ({ type: 'ice_wall', at: { s: 629, l: sd * 24 }, yaw: { face: { s: 629, l: sd * 80 } }, params: { length: 16, h: 22, seed: 84 + (sd > 0 ? 1 : 0) } })),
@@ -691,19 +711,19 @@ const def = {
     // the clarity pass: every objective says plainly what to do and where, and uses only words already met; `label` is the
     // short marker text (mission markers show the first 28 characters)
     { id: 'o_look', text: "Look up and find Kit's kite", kind: 'manual' },
-    { id: 'o_cut', text: 'Cut the flagged ice blocks', label: 'CUT MARK', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
+    { id: 'o_cut', text: 'Cut the ice blocks marked with orange flags', label: 'CUT MARK', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
     { id: 'o_gully', text: 'Run east into the gully', label: 'GULLY', kind: 'reach', at: { s: 320 }, r: 30, marker: true },
     { id: 'o_up', text: 'Find a way up: head for the light', label: 'WAY UP', kind: 'reach', at: { s: 625 }, r: 26, marker: true },
     { id: 'o_climb', text: 'Jump and hover up the shaft', kind: 'flag', flag: 'outOfShaft' },
     { id: 'o_kit', text: 'Reach Kit under the red flare', label: 'KIT', kind: 'reach', at: { s: 860, l: 40 }, r: 80, marker: { s: 900, l: 70, h: 6 } },
-    { id: 'o_skiffs', text: 'Destroy the skiffs at Tick', kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
+    { id: 'o_skiffs', text: "Destroy the skiffs attacking Kit's buggy", kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
     { id: 'o_sled1', text: 'Flag the sledge the skiff dropped', kind: 'flag', flag: 'sled1', optional: true },
     { id: 'o_wrecks', text: 'Destroy the Gleaners at the wrecks', kind: 'kill', target: { encounter: 'e_gleaners' }, marker: 'targets' },
     { id: 'o_abeyance', text: 'Head for the giant frozen ship', label: 'FROZEN SHIP', kind: 'reach', at: { s: 1370 }, r: 80, marker: true },
     { id: 'o_sexton', text: 'Destroy the Sexton, the green-lit frame', kind: 'kill', target: { tag: 'sexton' }, marker: 'targets' },
     { id: 'o_climb2', text: 'Climb up inside the Abeyance to the top', label: 'TOP', kind: 'flag', flag: 'crown', marker: abey(0, 124, 0) },
-    { id: 'o_sled2', text: 'Break the winch lock chaining the sledge', kind: 'flag', flag: 'sled2', optional: true },
-    { id: 'o_heads', text: 'Break the drill heads', kind: 'destroy', target: { tag: 'drillhead', count: 3 },
+    { id: 'o_sled2', text: "Break the winch lock in the ship's hold", kind: 'flag', flag: 'sled2', optional: true },
+    { id: 'o_heads', text: "Break the Icebreaker's three drill heads", kind: 'destroy', target: { tag: 'drillhead', count: 3 },
       showCount: true, marker: 'targets' },
     { id: 'o_surface', text: 'Rise to the light above you', kind: 'flag', flag: 'surfaced' },
     { id: 'o_shore', text: "Follow Kit's flares to the shore", label: 'SHORE', kind: 'reach', at: { s: 3130 }, r: 60, marker: { s: 3150, l: 0, h: 4 } },
@@ -791,7 +811,10 @@ const def = {
       { player: { freeze: true } },
       { parallel: [
         [{ cinematic: 'naming' }],
-        [{ call: 'turnNorth', args: { seconds: 4 } }, { wait: 3 }, { comms: 'c_naming_kit', wait: true },
+        // into the cradle under the work lamp (L1 c_naming_kit: "Moth reaches the Bench's cradle and idles"), then the
+        // slow turn north
+        [{ call: 'mothWalk', args: { to: DATA.shore.cradleIn, speed: 4 } },
+         { call: 'turnNorth', args: { seconds: 4 } }, { wait: 1.5 }, { comms: 'c_naming_kit', wait: true },
          { call: 'renameSpeaker', args: { id: 'MOTH', name: 'MOTH' } }, { comms: 'c_naming_moth', wait: true },
          { call: 'musicBox' }, { fade: 1, seconds: 3 }] ] },
       { complete: true },
@@ -823,9 +846,11 @@ const def = {
     shoreKneel: { skippable: false, keys: [
       { t: 0,  pos: { s: 3142, l: 2, h: 8 },  look: { x: 1440, z: -180, y: 4 }, fov: 42 },
       { t: 18, pos: { s: 3150, l: -2, h: 9 }, look: { x: 1440, z: -180, y: 6 }, fov: 36, ease: 'linear' } ] },
+    // side-on from the south-west: the frame walks into the cradle under the Bench's lamp and turns its back to us,
+    // north, while Kit names it
     naming: { skippable: false, keys: [
-      { t: 0,  pos: { s: 3262, l: 62, h: 8 }, look: { s: 3282, l: 20, h: 7 }, fov: 42 },
-      { t: 15, pos: { s: 3254, l: 42, h: 6 }, look: { s: 3282, l: 20, h: 8 }, fov: 38, ease: 'inOut' } ] },
+      { t: 0,  pos: { s: 3250, l: 52, h: 10 }, look: { s: 3287, l: 20, h: 7 }, fov: 44 },
+      { t: 22, pos: { s: 3258, l: 42, h: 8 }, look: { s: 3290, l: 19, h: 8 }, fov: 38, ease: 'inOut' } ] },
   },
 
   comms: {

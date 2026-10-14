@@ -8,6 +8,11 @@
 // view distance. Catalogue geometry is built once per `type + JSON(params)` (seeded by that key) and shared by clones.
 // States live on the instance; realising applies the current state instantly. destroy() plays the generic collapse
 // (sink + tilt + fx + rubble collider) unless the type overrides 'destroyed' (relay_pylon topples).
+// The destructible's combat target always follows the state (syncTarget): destroy() kills it through combat (killfeed,
+// 'target:killed'); reset(states), place() with state 'destroyed' and setState retire it silently (alive false, AP 0;
+// reset/place also unregister it, which is safe at load time) and leaving 'destroyed' revives it at full AP. This is
+// the Continue path: world.load places everything intact, then mission.start restores the snapshot via reset().
+// `targetable` is left alone (level scripts own it); every combat path already requires `alive`.
 import * as THREE from 'three';
 import * as KIT from './kit.js';
 import { registerProp } from '../world/scatter.js';
@@ -223,6 +228,27 @@ export function install(ctx) {
     const list = rc || (() => { const [w, d] = footprintWD(def, inst.params); return [{ type: 'box', minx: -w / 2 * 0.9, maxx: w / 2 * 0.9, minz: -d / 2 * 0.9, maxz: d / 2 * 0.9, top: 2.5, tag: 'rubble' }]; })();
     for (const cd of list) { const r = addCollider(inst, { ...cd, tag: 'rubble' }); if (r) inst.colliders.push(r); }
   }
+  function setStateRaw(inst, state, o = {}) {
+    inst.state = state;
+    applyState(inst, !!o.instant);
+    ctx.events.emit('structure:state', { id: inst.id, state });
+  }
+  /**
+   * Keep a destructible's combat target in step with its state without any kill side effects (no killfeed, no
+   * 'target:killed', no stats): 'destroyed' → dead and unregistered; any other state → alive at full AP and registered.
+   * destroy() kills through combat first, so a real destruction still reports normally.
+   */
+  function syncTarget(inst, keepRegistered = false) {
+    const t = inst.target;
+    if (!t) return;
+    if (inst.state === 'destroyed') {
+      if (t.alive) Object.assign(t, { alive: false, ap: 0, imp: 0, stagT: 0 });
+      if (!keepRegistered) ctx.combat?.unregister?.(t);
+    } else if (!t.alive) {
+      Object.assign(t, { alive: true, ap: t.apMax, imp: 0, stagT: 0, stagDur: 0 });
+      ctx.combat?.register?.(t);
+    }
+  }
   /** colliders and visuals for the current state */
   function applyState(inst, instant) {
     const def = defs.get(inst.type);
@@ -367,14 +393,15 @@ export function install(ctx) {
         state: entry.state || def.stateList?.[0] || 'intact', target: null, tag: entry.tag, collapse: null, rubble: null, anim: {},
         setState(state, o = {}) {
           if (inst.state === state) return;
-          inst.state = state;
-          applyState(inst, !!o.instant);
-          ctx.events.emit('structure:state', { id, state });
+          setStateRaw(inst, state, o);
+          syncTarget(inst, true);   // a scripted setState('destroyed') retires the target silently (kept registered, dead: may run in a combat loop); leaving 'destroyed' revives it
         },
         destroy(o = {}) {
           if (inst.state === 'destroyed') return;
-          inst.setState('destroyed', o);
+          setStateRaw(inst, 'destroyed', o);
           if (inst.target?.alive && ctx.combat?.kill) ctx.combat.kill(inst.target);
+          syncTarget(inst, true);   // no combat (or a stub kill): still never leave a live target on rubble. Stays
+                                    // registered (dead) as before: this can run inside a combat loop over combat.targets
         },
       };
       for (const cd of def.colliders(params)) { const c = addCollider(inst, cd); if (c) inst.colliders.push(c); }
@@ -403,6 +430,7 @@ export function install(ctx) {
         };
         inst.target = t;
         ctx.combat.register(t);
+        syncTarget(inst);   // placed already 'destroyed' (entry.state): no live target on the rubble
       }
       // prebuild the shared catalogue geometry while loading (realising then only clones meshes)
       if (def.builtin && def.prebuild !== false) template(ctx, type, def, params);
@@ -426,10 +454,9 @@ export function install(ctx) {
         inst.anim = {};
         if (st !== 'destroyed') uncollapse(inst);
         applyState(inst, true);
-        if (inst.target && st !== 'destroyed' && !inst.target.alive) {
-          Object.assign(inst.target, { alive: true, ap: inst.target.apMax, imp: 0 });
-          ctx.combat?.register(inst.target);
-        }
+        // the combat target follows the restored state both ways (Continue: world.load re-places every structure
+        // intact, then mission.start restores the checkpoint snapshot, so a destroyed destructible must lose its target)
+        syncTarget(inst);
         ctx.events.emit('structure:state', { id, state: st });
       }
     },

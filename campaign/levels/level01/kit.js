@@ -54,18 +54,26 @@ const q = (pts) => pts.map(([a, b]) => [r2(a), r2(b)]);
 // ── primitives (all centred unless stated) ────────────────────────────────────────────────────────────────────────
 /** bevelled slab w (x) × h (y) × d (z), centred */
 export function slab(w, h, d, bevel = 0.12, cham = null) {
+  if (LOD.on) return KIT.plateGeo(q(rect(w, h)), d, 'front', 0);
   const b = Math.min(bevel, w * 0.2, h * 0.2, d * 0.25);
   return KIT.plateGeo(q(chamferRect(w, h, cham ?? b * 1.2)), d, 'front', b);
 }
+/**
+ * LOD mode (LOD1 builds, arch §5.7: one mesh, ≤ 6k triangles): while on, slabs and plates drop their bevels and
+ * cylinders, balls and tori drop segments. Only `cached(…, { lod: true })` and `lodBuild()` turn it on.
+ */
+export const LOD = { on: false };
+export function withLod(fn) { const was = LOD.on; LOD.on = true; try { return fn(); } finally { LOD.on = was; } }
 /** extruded side profile (pts as [z, y] like the prototype's 'side' view; across x by `width`) */
-export const side = (pts, width, bevel = 0.1) => KIT.plateGeo(q(pts), width, 'side', bevel);
+export const side = (pts, width, bevel = 0.1) => KIT.plateGeo(q(pts), width, 'side', LOD.on ? 0 : bevel);
 /** extruded front profile (pts [x, y]; along z by `depth`) */
-export const front = (pts, depth, bevel = 0.1) => KIT.plateGeo(q(pts), depth, 'front', bevel);
+export const front = (pts, depth, bevel = 0.1) => KIT.plateGeo(q(pts), depth, 'front', LOD.on ? 0 : bevel);
 /** extruded top-view outline (pts [x, z]; up y by `height`, centred on y) */
-export const top = (pts, height, bevel = 0.1) => KIT.plateGeo(q(pts), height, 'top', bevel);
-export const cyl = (rt, rb, h, seg = 12) => KIT.cylinder(r2(rt), r2(rb), r2(h), seg);
+export const top = (pts, height, bevel = 0.1) => KIT.plateGeo(q(pts), height, 'top', LOD.on ? 0 : bevel);
+export const cyl = (rt, rb, h, seg = 12) => KIT.cylinder(r2(rt), r2(rb), r2(h), LOD.on ? Math.min(seg, 6) : seg);
 const sphereCache = new Map();
 export function ball(r, ws = 10, hs = 8) {
+  if (LOD.on) { ws = Math.min(ws, 6); hs = Math.min(hs, 4); }
   const k = `${r}|${ws}|${hs}`;
   let g = sphereCache.get(k);
   if (!g) { g = shared(new THREE.SphereGeometry(r, ws, hs)); sphereCache.set(k, g); }
@@ -73,6 +81,7 @@ export function ball(r, ws = 10, hs = 8) {
 }
 const torusCache = new Map();
 export function torus(r, tube, rs = 6, ts = 18, arc = Math.PI * 2) {
+  if (LOD.on) { rs = Math.min(rs, 3); ts = Math.min(ts, 8); }
   const k = `${r}|${tube}|${rs}|${ts}|${arc}`;
   let g = torusCache.get(k);
   if (!g) { g = shared(new THREE.TorusGeometry(r, tube, rs, ts, arc)); torusCache.set(k, g); }
@@ -126,6 +135,8 @@ export function mats(ctx) {
     iceClear: S({ color: '#b8e2f4', roughness: 0.08, metalness: 0, envMapIntensity: 1.2, emissive: '#1a5a7a', emissiveIntensity: 0.6 }),
     // translucent shelf ice lit from above by the stars: the cavern's roof and its thin windows glow faintly (L1 §2.6 Z2)
     iceGlow: S({ color: '#8fc3e0', roughness: 0.14, metalness: 0, envMapIntensity: 1.0, emissive: '#2a7fb4', emissiveIntensity: 0.55 }),
+    // a thin spot in the cavern roof: starlight through the shelf, a faint glow set into darker ice (L1 §2.6 Z2)
+    iceWindow: S({ color: '#4a7d9c', roughness: 0.25, metalness: 0, envMapIntensity: 0.6, emissive: '#1d6a96', emissiveIntensity: 0.42 }),
     frost: S({ color: '#dfeaf3', roughness: 0.6, metalness: 0, envMapIntensity: 0.6, emissive: '#16303f', emissiveIntensity: 0.25 }),
     snow: S({ color: '#e8eef5', roughness: 0.78, metalness: 0, envMapIntensity: 0.4 }),
     ceramic: S({ color: '#e9e6dc', roughness: 0.35, metalness: 0.05, envMapIntensity: 0.7, wear: 0.4 }),
@@ -189,11 +200,13 @@ export function compose(x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy 
 }
 
 export class Builder {
-  constructor() { this.groups = new Map(); this.tris = 0; }
+  /** o.remap: Map(material → material) applied on add (a type's draw-call palette, L1 §11.8: ≤ 6 calls at LOD0) */
+  constructor(o = {}) { this.groups = new Map(); this.tris = 0; this.remap = o.remap || null; }
   /** add(geometry, material, x, y, z, rx, ry, rz, sx, sy, sz) — Euler order YXZ (yaw, then pitch, then roll) */
   add(geo, mat, x, y, z, rx, ry, rz, sx, sy, sz) { return this.addM(geo, mat, compose(x, y, z, rx, ry, rz, sx, sy, sz)); }
   addM(geo, mat, m4) {
     if (!geo || !mat) return this;
+    if (this.remap) mat = this.remap.get(mat) || mat;
     let g = this.groups.get(mat);
     if (!g) { g = []; this.groups.set(mat, g); }
     g.push(normalise(geo, m4));
@@ -266,13 +279,13 @@ export function cached(ctx, key, make, o = {}) {
   const k = key;
   let e = cache.get(k);
   if (e) return e;
-  const B = new Builder();
-  const extra = make(B);
+  const B = new Builder({ remap: o.remap });
+  const extra = make(B, false);
   let lod = null;
   if (o.lod) {
-    // LOD1: rebuild with the lodFilter (big pieces only) into one vertex-coloured mesh
-    const L = new Builder();
-    (o.lodMake || make)(L, true);
+    // LOD1: rebuild with the lodFilter (big pieces only, no bevels) into one vertex-coloured mesh
+    const L = new Builder({ remap: o.remap });
+    withLod(() => (o.lodMake || make)(L, true));
     lod = L.single(o.lodColorOf);
   }
   const parts = B.merged();

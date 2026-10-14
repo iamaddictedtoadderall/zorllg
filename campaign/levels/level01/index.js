@@ -375,6 +375,21 @@ function scanGlows(L, root) {
   if (!G?.add || !root || L.scanned.has(root)) return;
   L.scanned.add(root);
   const hs = [];
+  // a THREE.LOD hides its level-0 group beyond structureLodDist: lamps on the level-0 build move up to the LOD itself,
+  // so the warm lights still read at range when the structure drops to its single-mesh LOD1 (L1 §11.8)
+  if (root.isLOD && root.levels?.[0]?.object) {
+    const lv0 = root.levels[0].object, move = [];
+    lv0.traverse(o => { if (o !== lv0 && o.userData?.l01glow && !o.isMesh) move.push(o); });
+    if (move.length) {
+      root.updateMatrixWorld(true);
+      for (const o of move) {
+        // keep the anchor in a part that a state toggles (e.g. a lamp on a hidden piece) where it is
+        let toggled = false; for (let p = o.parent; p && p !== lv0; p = p.parent) if (p.userData?.l01part) toggled = true;
+        if (toggled) continue;
+        root.attach(o); o.updateMatrix();
+      }
+    }
+  }
   root.traverse(o => { const g = o.userData?.l01glow; if (g) { const h = G.add(o, g); if (h) hs.push(h); } });
   if (hs.length) L.glow.set(root, hs);
 }

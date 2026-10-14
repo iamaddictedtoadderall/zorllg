@@ -198,6 +198,27 @@ export default async function (g) {
     g.log('static', { ...r, triggers: r.triggers.length });
     g.assert(r.validate.length === 0, `validateLevel(level01) returns [] (${r.validate.slice(0, 4).join('; ')})`);
     g.assert(r.length >= 3000 && r.length <= 5000, `route length ${r.length.toFixed(0)} m in 3..5 km`);
+    // L1 §11.8: every Level 1 structure type ≤ 6 draw calls at LOD0 (every mesh, whatever its state) and a 1-call LOD1;
+    // only the abeyance is exempt (set piece)
+    const lodr = await ev(() => {
+      const S = window.__game.ctx.structures, out = {};
+      for (const i of S.all()) if (!i.root) { try { S.settle(i.pos.clone()); } catch (e) { /* realised next pass */ } }
+      const count = (o) => { let n = 0; o?.traverse(c => { if ((c.isMesh || c.isInstancedMesh) && !c.isSprite) n++; }); return n; };
+      for (const i of S.all()) {
+        if (!i.root) continue;
+        const lod0 = i.root.isLOD ? i.root.levels[0]?.object : i.root, lod1 = i.root.isLOD ? i.root.levels[1]?.object : null;
+        const e = (out[i.type] ||= { n: 0, calls0: 0, lod1: 0, calls1: 0 });
+        e.n++; e.calls0 = Math.max(e.calls0, count(lod0));
+        if (lod1 && lod1.type !== 'Object3D') { e.lod1++; e.calls1 = Math.max(e.calls1, count(lod1)); }
+      }
+      return out;
+    });
+    const L1T = await ev(async () => (await import('/levels/level01/structures.js')).L1_STRUCTURE_TYPES);
+    const over = Object.entries(lodr).filter(([t, e]) => L1T.includes(t) && t !== 'abeyance' && e.calls0 > 6).map(([t, e]) => `${t} ${e.calls0}`);
+    const nolod = Object.entries(lodr).filter(([t, e]) => L1T.includes(t) && (e.lod1 < e.n || e.calls1 !== 1)).map(([t, e]) => `${t} ${e.lod1}/${e.n}`);
+    g.log('structure calls', lodr);
+    g.assert(over.length === 0, `L1 §11.8: every Level 1 type ≤ 6 draw calls at LOD0 (${over.join(', ') || 'max ' + Math.max(...Object.entries(lodr).filter(([t]) => t !== 'abeyance' && L1T.includes(t)).map(([, e]) => e.calls0))})`);
+    g.assert(nolod.length === 0, `L1 §11.8: every Level 1 type has a single-mesh LOD1 (${nolod.join(', ') || Object.keys(lodr).filter(t => L1T.includes(t)).length + ' types'})`);
     g.assert(r.hwMin >= 300 && r.hwMax <= 750, `half-width ${r.hwMin}..${r.hwMax} within 300..750`);
     g.assert(r.zones >= 4, `${r.zones} zones ≥ 4`);
     g.assert(r.zonesWithArtAndCard >= 4, `${r.zonesWithArtAndCard} zones with their own art and card (Z2 has art, no card by design)`);
@@ -916,9 +937,16 @@ export default async function (g) {
       }
       if (best < 0) return { ok: false };
       const f = fl[best];
+      // the rule under test is the ice, not the fight: clear the sprint's skiffs and the Gleaner hunt for these 20 s (a
+      // Gaffer's tow or a latching Gleaner pulling the frame into a lead would read as the floe failing)
+      await ctx.mission.run([{ call: 'gleanerHunt', args: { on: false } }]);
+      ctx.enemies.killAll?.({ kind: 'gleaner' });
+      for (const u of ctx.enemies.alive({ kind: 'skiff' })) { u.blindT = Math.max(u.blindT || 0, 22); u.cancelTele?.(); }   // blinded: no fire, no harpoons
       p.teleport(new p.pos.constructor(f.x, f.top + 0.5, f.z));
-      for (let k = 0; k < 20 * 60; k += 10) G.step(10);
-      return { ok: true, i: best, state: F.state[best], y: p.pos.y, top: f.top, onGround: p.onGround };
+      for (let k = 0; k < 20 * 60; k += 10) { ctx.input.injectMove?.(0, 0); G.step(10); }
+      const out = { ok: true, i: best, state: F.state[best], y: p.pos.y, top: f.top, onGround: p.onGround };
+      await ctx.mission.run([{ call: 'gleanerHunt', args: { on: true } }]);
+      return out;
     });
     g.log('shade', hold);
     g.assert(hold.ok && hold.state === 0 && Math.abs(hold.y - hold.top) < 1, `a shaded floe holds for 20 s (state ${hold.state}, y ${hold.y?.toFixed(1)})`);
@@ -959,15 +987,22 @@ export default async function (g) {
     g.assert(ab.move === 0.33 && !ab.fire, 'weapons stowed: a slow walk into camp');
     if (SHOTS) {
       await shot('z7-shore-gameplay');
-      const a = await routePos(3240, 70, 14), b = await routePos(3296, 20, 8);
+      const a = await routePos(3200, -12, 12), b = await routePos(3296, 20, 6);   // up the beach from the fast ice
       await vista('z7-bench-camp', a, b, 50);
     }
-    r = await walkTo(3282, 20, 60, 0, 10);
+    // o_bench completes 18 m out; the naming then walks the frame into the cradle itself
+    r = await walkTo(3282, 20, 60, 0, 17);
     g.log('walk to the Bench', r);
+    g.assert(r.ok, `the beach ramp walks up to the Bench at walking speed (${r.t?.toFixed(1)} s, stuck ${r.stuck})`);
     r = await until((ctx) => window.__l01fired.has('t_bench'), null, 4);
     g.assert(r.ok, 't_bench: the cradle reached, the naming');
+    r = await until((ctx) => window.__l01lines.some(l => /I'm calling it Moth/.test(l.text)), null, 30, 5);
+    const cr = await ev(() => { const ctx = window.__game.ctx, p = ctx.player, c = ctx.world.route.closest(p.pos.x, p.pos.z);
+                                const q = ctx.world.resolve({ s: 3289, l: 20 });
+                                return { d: Math.hypot(p.pos.x - q.x, p.pos.z - q.z), s: c.s, yaw: p.bodyYaw ?? p.yaw }; });
+    g.assert(r.ok && cr.d < 3 && Math.abs(Math.atan2(Math.sin(cr.yaw), Math.cos(cr.yaw))) < 0.35,
+             `the frame stands in the cradle and faces north when Kit names it (${cr.d.toFixed(1)} m off, yaw ${cr.yaw.toFixed(2)})`);
     if (SHOTS) {   // mid-cinematic: the frame at the cradle turning north, Kit's line on the comms
-      await until((ctx) => window.__l01lines.some(l => /I'm calling it Moth/.test(l.text)), null, 12, 5);
       await step(1.2, 4);
       await shot('z7-naming', { hud: false, settle: false });
     }
@@ -1185,7 +1220,7 @@ export default async function (g) {
       const delivered = [...new Set(C.dlv.map(e => e.id))];
       const gl = new Set(cr.glossary.map(e => e.id));
       const lost = delivered.filter(id => !gl.has(id));
-      const need = only.size === ALL.length ? 25 : 1;
+      const need = only.size === ALL.length ? 25 : [...only].every(k => k === 'static' || k === 'determinism') ? 0 : 1;   // static-only runs play nothing
       g.assert(delivered.length >= need && lost.length === 0, `explainer cards reach hud.explain and the Field notes (${delivered.length} cards handed over, ${gl.size} notes${lost.length ? '; missing ' + lost.join(', ') : ''})`);
       // (e) spoilers: no note or tag says "Moth" before the naming
       g.assert(!cr.glossary.some(e => /moth/i.test(e.term + ' ' + e.text)) && !before.some(l => /moth/i.test(l.tag || '')), 'no "Moth" in the Field notes or in speaker tags before the naming');

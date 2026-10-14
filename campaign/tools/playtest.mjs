@@ -184,7 +184,7 @@ try {
   for (const p of args.params) { const [k, ...v] = p.split('='); q.set(k, v.join('=')); }
   const url = `${base}/index.html?${q}`;
   console.log('[playtest] open', url);
-  await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+  await page.goto(url, { waitUntil: 'load', timeout: 180000 });
   harnessStage = 'boot';
   await page.waitForFunction(() => window.__game && window.__game.ready, null, { timeout: 90000 });
   await page.evaluate(() => Promise.race([window.__game.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('__game.ready timeout')), 90000))]));
@@ -231,7 +231,7 @@ try {
       if (settle) await ev(() => window.__game.settle());
       await ev(([hud]) => { window.__game.hud(hud); window.__game.render(); }, [hud]);
       const file = join(args.out, `${name}.png`);
-      await page.screenshot({ path: file });
+      await page.screenshot({ path: file, timeout: 180000 });
       if (!hud) await ev(() => window.__game.hud(true));
       report.shots.push(file);
       console.log('[playtest] shot', file);

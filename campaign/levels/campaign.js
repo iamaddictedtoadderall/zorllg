@@ -7,14 +7,14 @@
 
 const SPEAKERS = {
   // the Bench's comms panel (A3.6). Same typography as the level speakers (L1 §17, A2 #21 and #24); after the naming
-  // the frame's label is MOTH.
-  OMA:  { name: 'OMA · BENCH', color: '#f2e6d0', voice: { base: 180, wave: 'sawtooth' }, style: 'radio',
+  // the frame's label is MOTH. `tag` (the clarity pass) is who the voice is to the player, as in levels/level01.js.
+  OMA:  { name: 'OMA · BENCH', tag: "the convoy's elder and mechanic", color: '#f2e6d0', voice: { base: 180, wave: 'sawtooth' }, style: 'radio',
           channel: 'WAKE', speed: 0.8, static: 0.25, weight: 600 },
-  MOTH: { name: 'MOTH', color: '#7fe9ff', voice: { base: 330, wave: 'sine' }, style: 'internal',
+  MOTH: { name: 'MOTH', tag: 'your frame', color: '#7fe9ff', voice: { base: 330, wave: 'sine' }, style: 'internal',
           channel: 'LOCAL', font: 'monoCaps', speed: 1 },
-  JUNO: { name: 'JUNO', color: '#ffb547', voice: { base: 220, wave: 'triangle' }, style: 'internal',
+  JUNO: { name: 'JUNO', tag: 'you', color: '#ffb547', voice: { base: 220, wave: 'triangle' }, style: 'internal',
           channel: 'LOCAL', font: 'sans', speed: 1 },
-  KIT:  { name: 'KIT · TICK', color: '#c6e86a', voice: { base: 520, wave: 'square', jitter: 0.15 }, style: 'radio',
+  KIT:  { name: 'KIT · TICK', tag: 'your brother, the scout', color: '#c6e86a', voice: { base: 520, wave: 'square', jitter: 0.15 }, style: 'radio',
           channel: 'WAKE', speed: 1.4, static: 0.25 },
 };
 
