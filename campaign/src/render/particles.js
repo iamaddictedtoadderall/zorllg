@@ -711,7 +711,9 @@ export function install(ctx) {
               clear: () => debris.clear() },
     decals: { spawn: (pos, normal, sz, kind) => decals.spawn(pos, normal, sz, kind), clear: () => decals.clear(),
               get count() { return decals.count; } },
-    glows: { add: (at, o) => glows.add(at, o), clear: () => glows.clear(), get count() { return glows.count; } },
+    glows: { add: (at, o) => glows.add(at, o), clear: () => glows.clear(), get count() { return glows.count; },
+             /** extra (tests, debug): the live glow records (read-only use) */
+             get live() { return glows.live; } },
     clear() { add.clear(); smoke.clear(); debris.clear(); decals.clear(); lights.clear(); },
     update(dt) { add.update(dt); smoke.update(dt); debris.update(dt); lights.update(dt); },
     /** extra (pipeline): refresh shading uniforms and glow positions for the scene about to render. */
