@@ -1199,15 +1199,17 @@ export class Heightfield {
     const cx = (fx0 + fx1) / 2, cz = (fz0 + fz1) / 2;
     const X0 = cx - sc * W / 2, Z0 = cz - sc * Ht / 2;
     const img = g.createImageData(W, Ht), D = img.data;
-    const lo = this.hMin ?? -50, hi = this.hMax ?? 200, built = this.built;
-    const hAt = (x, z) => built ? this._sampleGrid(this.H, x, z) : this._relief(x, z);
+    const lo = this.hMin ?? -50, hi = this.hMax ?? 200, built = this.built, bb = this.bounds;
+    // the macro grid inside the bounds, the far field outside (a clamped lookup would smear the edge rows into streaks)
+    const inB = (x, z) => x >= bb.x0 && x <= bb.x1 && z >= bb.z0 && z <= bb.z1;
+    const hAt = (x, z) => !built ? this._relief(x, z) : inB(x, z) ? this._sampleGrid(this.H, x, z) : this._outerAt(x, z);
     for (let j = 0; j < Ht; j++) for (let i = 0; i < W; i++) {
       const x = X0 + (i + 0.5) * sc, z = Z0 + (j + 0.5) * sc;
       const h = hAt(x, z), e = Math.max(2, sc);
       const dx = (hAt(x + e, z) - hAt(x - e, z)) / (2 * e), dz = (hAt(x, z + e) - hAt(x, z - e)) / (2 * e);
       const shade = clamp(0.62 + (-dx * 0.7 - dz * 0.7) * 0.9, 0.08, 1.15);
       const t = clamp((h - lo) / Math.max(1, hi - lo), 0, 1);
-      const fl = built ? this._sampleGrid(this.flow, x, z) / 255 : 0;
+      const fl = built && inB(x, z) ? this._sampleGrid(this.flow, x, z) / 255 : 0;
       const contour = Math.abs(((h / 20) % 1 + 1) % 1 - 0.5) > 0.47 ? 0.82 : 1;
       let r = 34 + 70 * t, gg = 44 + 74 * t, b = 50 + 70 * t;
       r *= shade * contour; gg *= shade * contour; b *= shade * contour;

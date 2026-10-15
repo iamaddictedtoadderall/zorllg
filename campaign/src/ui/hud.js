@@ -139,7 +139,7 @@ const HUD_CSS = `
 #rack .rh{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.24em;color:var(--hud-dim);border-bottom:1px solid var(--hud-faint);padding-bottom:4px}
 #rack .rh b{font-family:var(--f-mono);font-weight:500;letter-spacing:.04em;color:var(--accent)}
 #rack .rs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
-#rack .rc{display:flex;align-items:center;gap:6px;min-width:0;height:24px;padding:0 6px;border:1px solid var(--hud-faint);background:rgba(12,11,14,.35);font-size:12px;letter-spacing:.02em;text-transform:uppercase;white-space:nowrap}
+#rack .rc{display:flex;align-items:center;gap:5px;min-width:0;height:24px;padding:0 5px;border:1px solid var(--hud-faint);background:rgba(12,11,14,.35);font-size:11px;letter-spacing:0;text-transform:uppercase;white-space:nowrap}
 #rack .rc i{flex:none;width:7px;height:7px;border-radius:50%;background:#ffbf4a;box-shadow:0 0 8px #ffbf4a}
 #rack .rc span{overflow:hidden;text-overflow:ellipsis}
 #rack .rc.empty{color:var(--hud-faint)}

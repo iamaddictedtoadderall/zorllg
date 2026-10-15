@@ -49,6 +49,18 @@ function hash1(n) {
   n = (n ^ 61) ^ (n >>> 16); n = (n + (n << 3)) | 0; n = n ^ (n >>> 4); n = Math.imul(n, 0x27d4eb2d); n = n ^ (n >>> 15);
   return (n >>> 0) / 4294967296;
 }
+/** periodic value noise with separate periods along x and y (stretched features that still tile: sastrugi) */
+function tileAniso(seed, px, py) {
+  const r = mulberry32((seed | 0) ^ 0x2c1b3c6d), lat = new Float32Array(px * py);
+  for (let i = 0; i < lat.length; i++) lat[i] = r();
+  const at = (i, j) => lat[(((j % py) + py) % py) * px + (((i % px) + px) % px)];
+  return (x, y) => {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = at(xi, yi), b = at(xi + 1, yi), c = at(xi, yi + 1), d = at(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  };
+}
 /** periodic Worley noise on a cx × cz grid over [0,1)²: f1, f2 and the nearest cell id */
 function worley(seed, cx, cz = cx) {
   const r = mulberry32(seed), pts = new Float32Array(cx * cz * 2);
@@ -136,14 +148,17 @@ function detailTextures(style, size, aniso) {
   const _st = { edge: 0, pale: 0, hard: 0, round: 1, joint: 0 };
   let soil, rock;
   if (style === 'snow') {
+    // wind sastrugi: value noise stretched 6:1 along u on its own anisotropic lattice (a square-period lattice sampled at
+    // v × 24 repeats every few decimetres and reads as corduroy), with the rows warped so the ridges wander and fork
+    const S1 = tileAniso(s + 41, 4, 24), S2 = tileAniso(s + 42, 8, 48);
     soil = makeData(size, (u, v, o) => {
-      // wind sastrugi: noise stretched 6:1 along u, plus sparse glassy ice pebbles
-      const st = 0.55 * E(u * 4, v * 24) + 0.3 * A(u * 8, v * 48) + 0.15 * C(u * 64, v * 64);
+      const wv = v + 0.045 * (F(u * 16, v * 16) - 0.5) + 0.03 * (E(u * 4 + 0.43, v * 4 + 0.17) - 0.5);
+      const st = 0.55 * S1(u * 4, wv * 24) + 0.3 * S2(u * 8, wv * 48) + 0.15 * C(u * 64, v * 64);
       const w = Wi(u, v, _wo), pq = w.f1 / (0.14 + 0.16 * hash1(w.id + 9));
       const peb = pq < 1 && hash1(w.id + 3) > 0.82 ? Math.sqrt(1 - pq * pq) : 0;
-      o[0] = 0.52 + (st - 0.5) * 0.3 - peb * 0.1;
+      o[0] = 0.52 + (st - 0.5) * 0.22 - peb * 0.1;
       o[1] = 0.25 + st * 0.6 + peb * 0.15;
-      o[2] = 1 - smooth(0.32, 0.15, st) * 0.35;
+      o[2] = 1 - smooth(0.32, 0.15, st) * 0.2;
       o[3] = 0.8 - peb * 0.65 + (st - 0.5) * 0.12;
     });
     rock = makeData(size, (u, v, o) => {
@@ -372,24 +387,38 @@ const F_ALBEDO = /* glsl */`
   tRill = 0.0; tRillG = vec2( 0.0 );
 #ifndef TERRAIN_LITE
   {
-    // slope rills: fine gullies a few metres apart running straight downhill on soil and scree slopes (the vertex
-    // lattice carries erosion only down to ≈ 16 m). The across-slope coordinate is warped by the patch and macro noise,
-    // so the rills wander, fan out round spurs and merge. They are filtered by their own footprint (they fade once a
-    // period covers fewer than about eight pixels; derivatives taken outside any branch), and their normal comes from
-    // the analytic gradient of the rill profile, not from screen derivatives: a derivative bump of a signal this fine
-    // breaks into 2 × 2 pixel speckle on distant slopes
+    // slope rills: fine gullies a few metres apart running down the fall line on soil and scree slopes (the vertex
+    // lattice carries erosion only down to ≈ 16 m), warped by the patch and macro noise so they wander, fan out and
+    // merge. The stripes come from eight fixed orientations (22.5° apart) blended by how well each follows the fall
+    // line: a phase measured across the local downhill direction itself (dot(worldXZ, perp(fall line))) rotates with the
+    // normal about the world origin, so kilometres from it the slightest turn of the slope shears the stripes into
+    // straight dark lines along the lattice. A fixed orientation's phase is linear in world space and never shears.
+    // They fade by their own footprint (fewer than about eight pixels per period; derivatives taken outside any branch)
+    // and their normal is the analytic gradient of the rill profile (a derivative bump of a signal this fine breaks into
+    // 2 × 2 pixel speckle on distant slopes).
     float tSl = 1.0 - wn.y;
-    vec2 tSd = wn.xz / max( length( wn.xz ), 1e-3 ), tPd = vec2( -tSd.y, tSd.x );
-    float tPh = dot( vTW.xz, tPd ) / 6.5 + tPatch * 1.1 + macro * 4.0;
-    float tAA = 1.0 - smoothstep( 0.06, 0.14, fwidth( tPh ) );
+    vec2 tSd = wn.xz / max( length( wn.xz ), 1e-3 );
+    float tWp = tPatch * 1.1 + macro * 4.0;
+    float tAA = 1.0 - smoothstep( 0.06, 0.14, length( fwidth( vTW.xz ) ) / 6.5 + fwidth( tWp ) );
     float tRw = smoothstep( 0.05, 0.16, tSl ) * ( 1.0 - smoothstep( 0.4, 0.62, tSl ) ) * ( 1.0 - vSurf.a )
               * tAA * ( 1.0 - 0.85 * tSnowW );
-    float tF = fract( tPh ) - 0.5, tT = clamp( ( 0.38 - abs( tF ) * 2.0 ) / 0.38, 0.0, 1.0 );
     float tAmp = tRw * ( 0.55 + 0.45 * tPatch );
-    tRill = tT * tT * ( 3.0 - 2.0 * tT ) * tAmp;
-    // h = −0.55 m × tRill: dh/dxz = −0.55 · dRill/dphase · tPd / 6.5
-    float tDr = 6.0 * tT * ( 1.0 - tT ) / 0.38 * ( -2.0 * sign( tF ) );
-    tRillG = tPd * ( -0.55 * tDr * tAmp / 6.5 );
+    float tWsum = 1e-4;
+    for ( int k = 0; k < 8; k ++ ) {
+      float tA = float( k ) * 0.3926991;
+      vec2 tDir = vec2( cos( tA ), sin( tA ) ), tPd = vec2( - tDir.y, tDir.x );
+      float tW = max( abs( dot( tDir, tSd ) ) - 0.92, 0.0 );
+      tW *= tW;
+      float tF = fract( dot( vTW.xz, tPd ) / 6.5 + tWp + float( k ) * 0.37 ) - 0.5;
+      float tT = clamp( ( 0.38 - abs( tF ) * 2.0 ) / 0.38, 0.0, 1.0 );
+      // h = −0.55 m × rill: dh/dxz = −0.55 · dRill/dphase · tPd / 6.5
+      float tDr = 6.0 * tT * ( 1.0 - tT ) / 0.38 * ( -2.0 * sign( tF ) );
+      tRill += tW * tT * tT * ( 3.0 - 2.0 * tT );
+      tRillG += tW * tPd * ( -0.55 * tDr / 6.5 );
+      tWsum += tW;
+    }
+    tRill *= tAmp / tWsum;
+    tRillG *= tAmp / tWsum;
     col *= 1.0 - 0.14 * tRill;
   }
 #endif
@@ -438,8 +467,14 @@ const F_NORMAL = /* glsl */`
 #else
   vec3 tPert = vec3( tGrad.x, 0.0, tGrad.y ) * 0.07 * uBump * ( 1.0 - tRockW ) * ( 1.0 - smoothstep( 40.0, 160.0, tDist ) );
   normal = normalize( normal - mat3( viewMatrix ) * tPert );
-  normal = tPerturbH( - vViewPosition, normal, tHr, uBump * 0.6 * tRockW * ( 1.0 - smoothstep( 0.04, 0.14, tPx ) ) );
-  normal = tPerturbH( - vViewPosition, normal, tLedge, uBump * 0.5 * uStrata.z * tSteep * tRockW * ( 1.0 - 0.6 * tSnowW )
+  // rock relief and ledges belong to faces that read as rock: their joints and risers are near-discontinuities, so even
+  // a small share of them draws thin dotted creases (2 × 2 derivative quads) across soil and snow slopes; the weights
+  // cut off below about a third
+  float tRockB = smoothstep( 0.3, 0.8, tRockW );
+  // the rock map's joints and bed lines are ≈ 0.12 to 0.2 m wide: their bump needs about three pixels across them, or it
+  // breaks into dotted lines (pixel footprint tPx ≤ 0.04 m)
+  normal = tPerturbH( - vViewPosition, normal, tHr, uBump * 0.6 * tRockB * ( 1.0 - smoothstep( 0.02, 0.05, tPx ) ) );
+  normal = tPerturbH( - vViewPosition, normal, tLedge, uBump * 0.5 * uStrata.z * smoothstep( 0.2, 0.6, tSteep * tRockW ) * ( 1.0 - 0.6 * tSnowW )
                       * ( 1.0 - smoothstep( 380.0, 1100.0, tDist ) ) );
 #endif
 }

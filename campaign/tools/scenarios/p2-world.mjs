@@ -20,7 +20,8 @@
 //      on the settled 2 m mesh within 0.02 m on 200 points
 //   4. at |l| = 1.1 × halfWidth the ground is ≥ 100 m above the route bed for ≥ 90 % of samples; bed grade ≤ 10 %
 //   5. a free camera flown s 0 → end → 0 at 80 m/s with step(): terrain pending ≤ 64; geometries back within 10 %
-//      (both counts taken in the same steady state: settled at s 0, then 300 idle frames)
+//      (both counts taken in the same steady state: settled at s 0, 300 idle frames, every mesh drawn once; the start
+//      count follows one warm-up lap, so one-time shared caches filled on first view don't read as a leak)
 //   6. collision unit tests (box, obox, circle resolve; supportHeight; ceilings; segment vs boxes and ground; LOS)
 //   7. scatter: visible instances > 0; two loads give an identical prop-collider hash
 //   8. High budget at the 10 points: terrain triangles ≤ 0.7 M; terrain + scatter draw calls ≤ 120 (main pass)
@@ -376,11 +377,35 @@ export default async function (g) {
       rr.setPixelRatio(1); rr.setSize(320, 180, false);
       // steady state at the start: settle, then idle long enough for the terrain cache to drop what this view doesn't use
       F.at(0); c.cameraRig.setFree(true, { pos: F.pos, look: F.look });
-      // three uploads a geometry the first time it is drawn inside the frustum, so a node built behind the camera isn't
-      // counted yet: both snapshots draw every built node once with culling off, so they count the same kind of set
-      F.uploadAll = () => { const ms = w.terrain.drawnMeshes(); for (const m of ms) m.frustumCulled = false; G.render(); for (const m of ms) m.frustumCulled = true; };
+      // three uploads a geometry the first time it is drawn inside the frustum, so a mesh behind the camera isn't counted
+      // yet: both snapshots draw every mesh in the scene once with culling off, so they count the same kind of set
+      F.uploadAll = () => {
+        const ms = [];
+        c.scene.traverse(o => { if ((o.isMesh || o.isPoints || o.isLine) && o.frustumCulled) { o.frustumCulled = false; ms.push(o); } });
+        G.render();
+        for (const m of ms) m.frustumCulled = true;
+      };
+      // the steady state is measured after one warm-up lap (P2 decision): shared caches that other packages fill once
+      // and keep for the level (structure templates realised the first time the camera passes them, P3; terrain pool
+      // slots) are uploaded on first view, and that one-time growth is not a leak. The 80 m/s round trip that follows
+      // must then bring the count back: any per-trip leak shows there.
+      const R = r.length;
+      for (let s = 0; s <= R + 1; s += 200) {
+        F.at(Math.min(s, R)); c.cameraRig.setFree(true, { pos: F.pos, look: F.look });
+        G.step(4); w.terrain.settle(c.camera.position); F.uploadAll();
+      }
+      F.at(0); c.cameraRig.setFree(true, { pos: F.pos, look: F.look });
       G.step(1); w.terrain.settle(c.camera.position); G.step(300); F.uploadAll();
       F.geo0 = c.renderer.info.memory.geometries; F.built0 = w.terrain.stats().built;
+      // unique geometries in the scene by owner (the log explains any difference)
+      F.census = () => {
+        const seen = new Set(), by = {};
+        const owner = (o) => { let p = o; while (p.parent && p.parent !== c.levelRoot && p.parent !== c.scene) p = p.parent;
+                               return p === w.terrain.root ? 'terrain' : p === w.scatter.root ? 'scatter' : p.parent === c.levelRoot ? 'level' : 'scene'; };
+        c.scene.traverse(o => { if (o.geometry && !seen.has(o.geometry)) { seen.add(o.geometry); const k = owner(o); by[k] = (by[k] || 0) + 1; } });
+        return { info: c.renderer.info.memory.geometries, unique: seen.size, by, pool: w.terrain._pool.length };
+      };
+      F.census0 = F.census();
     });
     for (let chunk = 0; chunk < 40; chunk++) {
       const pr = await g.eval(() => {
@@ -406,7 +431,8 @@ export default async function (g) {
       const geo1 = c.renderer.info.memory.geometries;
       c.renderer.setPixelRatio(F.pr); c.renderer.setSize(F.size.x, F.size.y, false);
       delete window.__p2fly;
-      return { maxPend: F.maxPend, frames: F.frames, geo0: F.geo0, geo1, built0: F.built0, built1: w.terrain.stats().built, st: w.terrain.stats() };
+      return { maxPend: F.maxPend, frames: F.frames, geo0: F.geo0, geo1, built0: F.built0, built1: w.terrain.stats().built, st: w.terrain.stats(),
+               census0: F.census0, census1: F.census() };
     });
     g.log('streaming round trip:', fly);
     g.assert(fly.maxPend <= 64, `80 m/s flight s 0 → ${Math.round(length)} → 0: terrain pending ≤ 64 (max ${fly.maxPend} over ${fly.frames} frames)`);

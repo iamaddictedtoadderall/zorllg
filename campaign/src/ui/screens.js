@@ -126,7 +126,7 @@ const SCREEN_CSS = `
 .debrief-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:nowrap}
 .debrief-top>div:first-child{min-width:0}
 .debrief-top .rank{flex:none}
-.debrief-top h2.long{font-size:clamp(30px,3.7vw,46px);line-height:1.02;text-wrap:balance}.rank{display:grid;place-items:center;width:84px;height:84px;border:2px solid var(--accent);font:700 54px/1 var(--f-display);color:var(--accent);clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)}
+.debrief-top h2.long{font-size:clamp(30px,3.7vw,46px);line-height:1.02;text-wrap:balance}.debrief-top h2.long .seg{display:block}.debrief-top h2.long .sep{display:none}.rank{display:grid;place-items:center;width:84px;height:84px;border:2px solid var(--accent);font:700 54px/1 var(--f-display);color:var(--accent);clip-path:polygon(14px 0,100% 0,100% calc(100% - 14px),calc(100% - 14px) 100%,0 100%,0 14px)}
 .rank small{display:block;font:500 9px var(--f-mono);letter-spacing:.2em;color:var(--hud-dim);text-align:center;margin-top:-4px}
 .list-item .nm{display:flex;flex-direction:column;gap:2px}
 .list-item .nm small{font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--hud-dim)}
@@ -644,7 +644,7 @@ export function install(ctx) {
         : [{ key: 'next', label: 'Continue' }, { key: 'garage', label: 'Garage' }, { key: 'quit', label: 'Title' }];
       const p = open('debrief', `<div class="doc">
           <div class="hdr"><span>DEBRIEF</span><span>${esc(L.title || '')}</span></div>
-          <div class="debrief-top"><div><h2${String(m.title || L.title || '').length > 18 ? ' class="long"' : ''}>${esc(m.title || L.title || 'Complete')}</h2>
+          <div class="debrief-top"><div><h2${String(m.title || L.title || '').length > 18 ? ' class="long"' : ''}>${String(m.title || L.title || 'Complete').split(' · ').map(t => `<span class="seg">${esc(t)}</span>`).join('<span class="sep"> · </span>')}</h2>
             <div class="sub">Complete · ${formatTime(r.time)}</div></div>
             <div class="rank">${esc(r.rank || '-')}<small>${esc(RANK_TEXT[r.rank] || '')}</small></div></div>
           <table class="ledger">${rows}</table>
