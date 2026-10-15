@@ -109,10 +109,30 @@ const HUD_CSS = `
 #prompt.tear .pb i{background:var(--accent);box-shadow:0 0 8px var(--accent)}
 #prompt.tear span:not(.hold){color:var(--accent);font-weight:700;letter-spacing:.3em}
 #choice{pointer-events:none;width:min(780px,94vw);top:56%}
-#hud.choosing #prompt,#hud.choosing #killfeed,#hud.choosing #progress,#hud.choosing #hint{visibility:hidden}
+#hud.choosing #prompt,#hud.choosing #killfeed,#hud.choosing #progress,#hud.choosing #hint,#hud.choosing #zonecard{visibility:hidden}
 #choice .opts{flex-wrap:nowrap}
 #choice .opt{white-space:nowrap}
 #game.touch #choice .opts{flex-wrap:wrap}
+#choice.lay{width:max-content;max-width:calc(100vw - 16px)}
+#choice.lay .opts{flex-wrap:nowrap}
+#choice.c-grid .opts,#choice.c-stack .opts{display:inline-grid;gap:10px;vertical-align:top}
+#choice.c-grid .opts{grid-template-columns:repeat(2,minmax(0,1fr))}
+#choice.c-stack .opts{grid-template-columns:minmax(0,1fr);gap:6px}
+#choice.c-grid .opt,#choice.c-stack .opt{justify-content:flex-start;text-align:left}
+#choice.c-stack .opt{padding:6px 18px}
+#choice.c-stack .t{letter-spacing:.24em}
+#choice.c-sm{padding:10px 16px 12px}
+#choice.c-sm .t{font-size:13px;letter-spacing:.24em}
+#choice.c-sm .bar{margin:7px 0 10px;height:4px}
+#choice.c-sm .opts{gap:8px}
+#choice.c-sm .opt{font-size:13px;letter-spacing:.12em;padding:9px 14px}
+#choice.c-sm .opt kbd{font-size:11px;margin-right:8px}
+#choice.c-xs{padding:8px 10px 10px}
+#choice.c-xs .t{font-size:12px;letter-spacing:.16em}
+#choice.c-xs .bar{margin:5px 0 8px;height:3px}
+#choice.c-xs .opts{gap:5px}
+#choice.c-xs .opt{font-size:12px;letter-spacing:.08em;padding:7px 11px}
+#choice.c-xs .opt kbd{font-size:10px;margin-right:6px;padding:0 4px}
 #choice .opt{display:flex;align-items:center;gap:0;font-family:var(--f-display);color:var(--hud);text-transform:uppercase;font-size:16px;letter-spacing:.18em;transition:border-color .15s,background .15s}
 #choice .opt:hover,#choice .opt.pick{border-color:var(--accent);background:rgba(224,145,60,.18)}
 #choice .opt.pick{color:var(--accent)}
@@ -944,6 +964,95 @@ export function install(ctx) {
     setW(root.querySelector('.bar i'), 1);
     show(root, true);
     toggle(el.hud, 'choosing', true);
+    layoutChoice();
+  }
+  /** Places the open choice where it collides with nothing: the HUD panels (AP bar and vitals, weapons, the Haul rack,
+   *  comms, objectives, radar, compass, boss bar, hint card) and, on touch, the stick and the buttons. Tries a row, a
+   *  2 x 2 grid (3 or 4 options) and a stacked list, in the normal, compact and extra-compact sizes (touch: the compact
+   *  two), at every height from 14 % (touch) or 30 % (desktop) to 74 % of the screen, centred and, only when nothing
+   *  fits centred, off-centre by up to a quarter of the screen; it keeps the overlap-free one closest to the
+   *  preferred spot (56 % desktop, 50 % touch) and form (row, then grid, then list; a row much wider than 640 px costs
+   *  extra). The hint card and the lock box are soft: avoided when cheap. One reflow per form and size; the heights
+   *  are tried on the measured rectangles. With no overlap-free fit it keeps the least overlap. */
+  const CH_HARD = '#status,#vitals,#weapons,#rack,#comms,#objpanel,#radar,#compass,#bossbar,#frameTag,#touch #stickHome,#touch .tb,#letterbox.on > div';
+  const CH_SOFT = '#explain,#lockbox';
+  const CH_FORMS = ['c-row', 'c-grid', 'c-stack', 'c-sm', 'c-xs'];
+  function layoutChoice() {
+    const root = el.choice;
+    if (!root || !CH.def || root.hidden) return;
+    try {
+      const vw = innerWidth, vh = innerHeight, touch = !!ctx.input?.isTouch, n = CH.def.options.length;
+      const live = (e) => {
+        if (!e || e.closest('[hidden]')) return null;
+        const r = e.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return null;
+        const cs = getComputedStyle(e);
+        if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity < 0.05) return null;
+        for (let p = e.parentElement; p && p !== document.body; p = p.parentElement) {
+          const ps = getComputedStyle(p);
+          if (+ps.opacity < 0.05 || ps.display === 'none') return null;
+        }
+        const m = 6;
+        return { l: r.left - m, t: r.top - m, r: r.right + m, b: r.bottom + m };
+      };
+      const obs = [];
+      for (const e of document.querySelectorAll(CH_HARD)) { const r = live(e); if (r) obs.push([r, 1]); }
+      for (const e of document.querySelectorAll(CH_SOFT)) { const r = live(e); if (r) obs.push([r, 0.3]); }
+      const hudTop = el.hud.getBoundingClientRect().top;
+      const pref = (touch ? 0.5 : 0.56) * vh, lo = (touch ? 0.14 : 0.3) * vh, hi = 0.74 * vh;
+      const forms = [['c-row', 0]];
+      if (n >= 3) forms.push(['c-grid', 40]);
+      if (n >= 2) forms.push(['c-stack', n >= 3 ? 60 : 80]);
+      const sizes = touch ? [['c-sm', 0], ['c-xs', 120]] : [['', 0], ['c-sm', 140], ['c-xs', 260]];
+      const tEl = root.querySelector('.t'), bar = root.querySelector('.bar');
+      const rg = document.createRange();
+      root.classList.add('lay');
+      root.style.top = Math.round(pref - hudTop) + 'px';
+      root.style.left = '';
+      // measure every form and size once at the preferred spot
+      const cands = [];
+      for (const [size, sp] of sizes) for (const [form, fp] of forms) {
+        root.classList.remove(...CH_FORMS);
+        root.classList.add(form); if (size) root.classList.add(size);
+        const rects = [];
+        if (tEl.textContent) { rg.selectNodeContents(tEl); const r = rg.getBoundingClientRect(); if (r.width > 0) rects.push(r); }
+        rects.push(bar.getBoundingClientRect());
+        for (const o of root.querySelectorAll('.opt')) rects.push(o.getBoundingClientRect());
+        // a long row reads as a wall across the screen: options spread wider than min(640 px, half the screen) cost
+        let wl = Infinity, wr = -Infinity;
+        for (const r of rects) { wl = Math.min(wl, r.left); wr = Math.max(wr, r.right); }
+        cands.push({ size, form, rects, top0: root.getBoundingClientRect().top, base: sp + fp + Math.max(0, wr - wl - Math.min(640, vw * 0.5)) * 0.4 });
+      }
+      let best = null;
+      const tryAt = (dxs) => {
+        for (const c of cands) for (const dx of dxs) for (let top = lo; top <= hi; top += 4) {
+          const dy = top - c.top0;
+          let ov = 0, soft = 0;
+          for (const r of c.rects) {
+            const t = r.top + dy, b = r.bottom + dy, L = r.left + dx, R = r.right + dx;
+            ov += 2 * (Math.max(0, 8 - L) + Math.max(0, R - (vw - 8))) * r.height + 2 * (Math.max(0, 8 - t) + Math.max(0, b - (vh - 8))) * r.width;
+            for (const [o, w] of obs) {
+              const x = Math.min(R, o.r) - Math.max(L, o.l), y = Math.min(b, o.b) - Math.max(t, o.t);
+              if (x > 0 && y > 0) { if (w >= 1) ov += x * y; else soft += x * y * w; }
+            }
+          }
+          const cost = (ov > 0 ? 1e6 + ov : 0) + soft * 0.05 + c.base + Math.abs(top - pref) + Math.abs(dx) * 1.5;
+          if (!best || cost < best.cost) best = { cost, c, top, dx };
+        }
+      };
+      tryAt([0]);
+      // centred, nothing fits: off-centre (a small screen with the stick on one side and the buttons on the other)
+      if (best.cost >= 1e6) { const dxs = []; for (let dx = 8; dx <= vw * 0.25; dx += 8) dxs.push(-dx, dx); tryAt(dxs); }
+      const c = best.c;
+      root.classList.remove(...CH_FORMS);
+      root.classList.add(c.form); if (c.size) root.classList.add(c.size);
+      root.style.top = Math.round(best.top - hudTop) + 'px';
+      root.style.left = best.dx ? `calc(50% + ${Math.round(best.dx)}px)` : '';
+      CH.layout = { form: c.form.slice(2), size: c.size ? c.size.slice(2) : 'normal', top: Math.round(best.top), dx: Math.round(best.dx), clear: best.cost < 1e6 };
+    } catch (e) {
+      root.classList.remove('lay', ...CH_FORMS); root.style.top = ''; root.style.left = '';
+      CH.layout = null;
+    }
   }
   function endChoice(key) {
     const r = CH.resolve;
@@ -999,6 +1108,8 @@ export function install(ctx) {
     get promptState() { return shownPrompt ? { text: pr.text?.textContent, key: pr.kbd?.textContent, hold: !!pr.hold?.textContent, tear: el.prompt?.classList.contains('tear') } : null; },
     /** extra: true while a choice is open */
     get choosing() { return !!CH.def; },
+    /** extra (tests): where the open choice was placed: { form: 'row'|'grid'|'stack', size, top, clear } */
+    get choiceLayout() { return CH.def && CH.layout ? { ...CH.layout } : null; },
     show(on) { show(el.hud, on); if (!on) { show(el.prompt, false); shownPrompt = ''; } },
     setMission(title, sub) { setText(el.mname, sub ? `${title} · ${sub}` : String(title ?? '')); },
     setObjectives(list = []) { objList = (list || []).map(o => ({ ...o })); renderObjectives(); },
@@ -1281,6 +1392,7 @@ export function install(ctx) {
     if (r.height > 0) rackEl.style.bottom = Math.round((ctx.canvas.clientHeight || innerHeight) - r.top + 12) + 'px';
   }
   ctx.events.on('resize', placeRack);
+  ctx.events.on('resize', () => { if (CH.def) requestAnimationFrame(layoutChoice); });
   ctx.events.on('player:damaged', (e) => { if (e?.blocked) blockT = 0.35; });
   ctx.events.on('level:start', () => { levelStartAt = ctx.clock.realTime; callsignFrame = null; lastFrameAuto = ''; for (const s of SLOT4) slotGated[s] = false; });
   ctx.events.on('level:cleared', () => {

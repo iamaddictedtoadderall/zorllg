@@ -168,6 +168,12 @@ export function install(ctx) {
       } else if (r == null) return;   // replaced by something else (tests, direct start)
     }
   }
+  /** New game: reset what belongs to one playthrough (see briefing) */
+  async function newPlaythrough() {
+    ctx.save.setFlag('commsMet', {});
+    putCampaign(defaultCampaign(await campaignData()));
+    if (ctx.save.data.progress.current) { ctx.save.data.progress.current = null; ctx.save.write(); }
+  }
   /** briefing for a level; resolves true when the level was started (or the menu was taken over) */
   async function briefing(id, token, o = {}) {
     const def = typeof id === 'string' ? await loadLevel(id) : id;
@@ -176,9 +182,12 @@ export function install(ctx) {
       const r = await S().showBriefing({ level: def, canFit: !def.campaign });
       if (token !== menuToken) return true;
       if (r === 'start') {
-        // a New game is a new playthrough: the radio voices introduce themselves again (comms speaker tags). The
-        // glossary (Field notes) is the player's own knowledge and stays.
-        if (o.newGame) ctx.save.setFlag('commsMet', {});
+        // a New game is a new playthrough: the radio voices introduce themselves again (comms speaker tags), the
+        // campaign state (A3.4: day, water, lost rigs, fitted parts, arms, tears, any pending haul) starts from the
+        // default, and an old run's checkpoint is dropped so the level starts fresh and Continue cannot resume it. The
+        // glossary (Field notes), level unlocks, best times and the Garage are the player's own and stay.
+        if (o.newGame) await newPlaythrough();
+        if (token !== menuToken) return true;
         await flow.startLevel(def); return true;
       }
       if (r === 'garage' && !def.campaign) {

@@ -397,7 +397,8 @@ function naturalFactory(name, variant) {
     return { geometry, material: natMaterial(ctx, spec.kind), castShadow: !!spec.castShadow, receiveShadow: true,
              radius: spec.radius, height: spec.height, collider: spec.collider, maxInstances: undefined,
              // extras used by Scatter
-             align: spec.align, sink: spec.sink, rock: !!spec.rock, cover: !!spec.cover, maxDist: spec.maxDist };
+             align: spec.align, sink: spec.sink, rock: !!spec.rock, cover: !!spec.cover, maxDist: spec.maxDist,
+             kind: spec.kind, surface: spec.kind === 'wood' ? 'wood' : undefined };
   };
 }
 for (const name of Object.keys(NATURAL)) {
@@ -553,7 +554,11 @@ export class Scatter {
     B.count++;
     if (collides && this.ctx.collision) {
       const col = this.ctx.collision, top = gy + spec.height * sz * 0.7;
-      const surface = LC.isRock ? 'rock' : (spec.kind === 'wood' ? 'wood' : 'concrete');
+      // the collider's SegmentHit.surface: the prop type's own `surface` if it names one (natural props carry it: 'wood'
+      // for trees and stumps; A5 lets ColliderOpts.surface be any string, unknown fx surfaces render as 'ground'),
+      // 'rock' for rocks, else 'concrete' (registered P3/P6 man-made props)
+      const surface = LC.isRock ? 'rock' : (typeof spec.surface === 'string' && spec.surface) ? spec.surface
+        : (spec.kind === 'wood' ? 'wood' : 'concrete');
       const c = spec.collider === 'box'
         ? col.obox(x, z, r * 1.7, r * 1.7, r2 * TAU, top, undefined, { surface, tag: 'prop', owner: this })
         : col.circle(x, z, r * 0.85, top, undefined, { surface, tag: 'prop', owner: this });

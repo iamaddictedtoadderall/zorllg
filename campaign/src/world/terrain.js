@@ -24,6 +24,8 @@
 // neighbours agree exactly), colour (Uint16 linear: the AD §3.3 palette blend × patchiness), `surf` (Uint8×4: flow,
 // baked sun visibility, sky AO, route-bed mask; the sun term multiplies the final albedo per pixel, which is arch §5.4's
 // "× baked lighting" applied after the shader's strata/path/snow colours) and `morph` (target y, target normal xz, size).
+// The same baked sun visibility also gates the key light's direct term wherever the camera-following shadow map does
+// not reach (F_SUNGATE), so distant shadowed walls stay shadowed (no lit ribs on far cliffs).
 // Material: AD §3.5 (two-scale soil, triplanar rock with strata ramp, macro noise, derivative bump, wetness, snow mask,
 // optional snow sparkle), TERRAIN_LITE on Low, then ctx.atmosphere.patchMaterial. The detail textures are this
 // module's own packed data maps (AD §3.6: R albedo variation, G height, B cavity, A roughness), generated per
@@ -34,6 +36,7 @@ import { createValueNoise2D, tileable2 } from '../core/noise.js';
 
 const ROOT = 1024, MIN = 128, MAXL = 3;
 const SPLIT_CAP = 1.8;
+const ROCK_SLOPE = [0.28, 0.5];   // AD §3.5 default uRockSlope (1 − n.y)
 const POOL_SPARE = 12;
 const RETAIN = 240;            // selections a node stays built after it was last drawn (update() selects once or twice per frame)
 const MOVE_HOLD = 90;          // selections prefetching continues after the camera last moved
@@ -299,7 +302,8 @@ uniform vec2 uRockSlope;
 uniform vec3 uStrata, uSnow, uSnowColor, uPath;
 uniform vec2 uStrataDip;
 uniform float uWet, uGloss, uBump, uSparkle, uSoilTexel;
-uniform vec3 uSunCol, uSunDirT;
+uniform vec3 uSunCol, uSunDirT, uKeyDirW;
+uniform float uSunGate;
 varying vec4 vSurf;
 varying vec3 vTW, vTN;
 float tH, tR, tSnowW, tRockW, tHr, tLedge, tSteep, tRill, tPx;
@@ -487,6 +491,37 @@ const F_SPARKLE = /* glsl */`
   }
 `;
 
+// direct sunlight gated by the baked sun visibility (arch §5.4 bake, surf.g) wherever the shadow map does not reach.
+// Beyond the camera-following shadow box (≈ ±160 m) nothing else shades the sun on the terrain, so a narrow sun-facing
+// rib of a shadowed canyon wall 1 km away caught full direct light and read as a pale vertical streak. Only the key
+// light (the one whose direction matches the sun's, uKeyDirW) is gated, not the rim; inside the box the shadow map
+// decides, with the bake fading in over the box's outer 15 % so there is no seam. uSunGate fades the gate out when the
+// current sun has moved away from the direction the bake used (a mid-level sun change would leave a stale bake).
+const F_SUNGATE = /* glsl */`
+		{
+			float tKeyW = uSunGate * smoothstep( 0.96, 0.995, dot( directLight.direction, tKeyV ) );
+			float tOut = 1.0;
+			#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS )
+			if ( receiveShadow ) {
+				vec3 tSc = vDirectionalShadowCoord[ i ].xyz / vDirectionalShadowCoord[ i ].w;
+				vec2 tEd = min( tSc.xy, 1.0 - tSc.xy );
+				tOut = 1.0 - smoothstep( 0.0, 0.15, min( tEd.x, tEd.y ) ) * step( tSc.z, 1.0 );
+			}
+			#endif
+			directLight.color *= mix( 1.0, tSunVis, tKeyW * tOut );
+		}
+`;
+function litChunk() {
+  const src = THREE.ShaderChunk.lights_fragment_begin;
+  const at = 'getDirectionalLightInfo( directionalLight, directLight );';
+  if (!src || src.indexOf(at) < 0) return null;       // a three.js whose chunk differs: no gate (the old look), never a broken shader
+  return src.replace(at, at + '\n' + F_SUNGATE);
+}
+const F_SUNGATE_PRE = /* glsl */`
+	vec3 tKeyV = normalize( ( viewMatrix * vec4( uKeyDirW, 0.0 ) ).xyz );
+	float tSunVis = smoothstep( 0.0, 0.85, vSurf.g );
+`;
+
 // ====================================================================== renderer
 export class TerrainRenderer {
   constructor(ctx, hf, art = {}) {
@@ -524,8 +559,9 @@ export class TerrainRenderer {
     this.palKey = JSON.stringify(pal);
     this.palRaw = pal;
     // the vertex bake's coarse rock blend follows the art's per-pixel rock slope band (AD §3.5 uRockSlope)
+    // (AD §3.5's default band [0.28, 0.5], ≈ 44° to 60°, when the art names none; addendum A5.5 "with AD's defaults")
     const rs = this._art().surface?.rockSlope || this.art.surface?.rockSlope;
-    this.rockSlope = Array.isArray(rs) && rs.length === 2 ? [Number(rs[0]) || 0.16, Number(rs[1]) || 0.4] : [0.16, 0.4];
+    this.rockSlope = Array.isArray(rs) && rs.length === 2 ? [Number(rs[0]) || ROCK_SLOPE[0], Number(rs[1]) || ROCK_SLOPE[1]] : [...ROCK_SLOPE];
   }
   _makeMaterial() {
     const art = this._art(), S = art.surface || {}, pal = this.palRaw;
@@ -544,7 +580,7 @@ export class TerrainRenderer {
     const sunCol = new THREE.Color(1, 1, 1);
     const U = this.uniforms = {
       tSoil: { value: T.soil }, tRock: { value: T.rock }, tNoise: { value: T.noise }, tStrata: { value: this._strataTex },
-      uRockSlope: { value: new THREE.Vector2(...(S.rockSlope ?? [0.16, 0.36])) },
+      uRockSlope: { value: new THREE.Vector2(...this.rockSlope) },
       uStrata: { value: new THREE.Vector3(S.strataHeight ?? 9, S.strataWarp ?? 1.5, S.strataStrength ?? 0.8) },
       uStrataDip: { value: (() => { const r = mulberry32(this.hf.seed ^ 0xd1b5), a = r() * Math.PI * 2, g = 0.035 + 0.035 * r();
                                     return new THREE.Vector2(Math.cos(a) * g, Math.sin(a) * g); })() },
@@ -558,6 +594,7 @@ export class TerrainRenderer {
       uIceCrack: { value: new THREE.Color('#9fd3ec').lerp(new THREE.Color(pal.snow ?? '#e8eef5'), 0.3) },
       uSunCol: { value: sunCol }, uSunDirT: { value: new THREE.Vector3(0, 1, 0) },
       uLodCenter: { value: new THREE.Vector3() }, uSplitK: { value: 2 },
+      uKeyDirW: { value: new THREE.Vector3(0, 1, 0) }, uSunGate: { value: 0 },
     };
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
     mat.name = 'terrain';
@@ -575,6 +612,8 @@ export class TerrainRenderer {
         .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n' + F_ROUGH)
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + F_NORMAL)
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + F_SPARKLE);
+      const lit = litChunk();
+      if (lit) sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_begin>', F_SUNGATE_PRE + lit);
     };
     mat.customProgramCacheKey = () => 'terrain:' + (mat.defines.TERRAIN_LITE !== undefined ? 'lite' : 'full');
     const patched = this.ctx.atmosphere?.patchMaterial ? this.ctx.atmosphere.patchMaterial(mat) : mat;
@@ -587,7 +626,8 @@ export class TerrainRenderer {
   }
   _syncUniforms() {
     const art = this._art(), S = art.surface || {}, pal = art.palette || {}, U = this.uniforms;
-    if (S.rockSlope) U.uRockSlope.value.set(S.rockSlope[0], S.rockSlope[1]);
+    if (Array.isArray(S.rockSlope) && S.rockSlope.length === 2) U.uRockSlope.value.set(S.rockSlope[0], S.rockSlope[1]);
+    else U.uRockSlope.value.set(this.rockSlope[0], this.rockSlope[1]);
     U.uStrata.value.set(S.strataHeight ?? 9, S.strataWarp ?? 1.5, S.strataStrength ?? 0.8);
     U.uSnow.value.set(S.snow ?? 0, S.snowSlope?.[0] ?? 0.75, S.snowSlope?.[1] ?? 0.92);
     if (pal.snow) U.uSnowColor.value.set(pal.snow);
@@ -602,6 +642,15 @@ export class TerrainRenderer {
     const at = this.ctx.atmosphere;
     if (at?.sun) U.uSunCol.value.copy(at.sun.color).multiplyScalar(at.sun.intensity / Math.PI);
     if (at?.sunDir) U.uSunDirT.value.copy(at.sunDir);
+    // the key light's own direction (shadowMinElevation may lift it above the true sun) identifies it in the shader;
+    // the gate weakens as it turns away from the direction the sun bake used
+    const sun = at?.sun;
+    if (sun?.isDirectionalLight && sun.target) {
+      const k = U.uKeyDirW.value.subVectors(sun.position, sun.target.position);
+      if (k.lengthSq() > 1e-8) k.normalize(); else if (at.sunDir) k.copy(at.sunDir);
+    } else if (at?.sunDir) U.uKeyDirW.value.copy(at.sunDir);
+    const bd = this.hf.sunDir;
+    U.uSunGate.value = bd ? smooth(0.86, 0.97, U.uKeyDirW.value.dot(bd)) : 0;
   }
 
   // ------------------------------------------------------------------ tiers

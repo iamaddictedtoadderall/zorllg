@@ -21,7 +21,8 @@
 //    when fewer than target.count are alive after they first appeared. 'collect': collectibles picked up (target.tag
 //    filters by collectible kind), max = target.count or every matching collectible. 'kill'/'destroy' count tagged
 //    targets killed during the mission (encounter targets use the tag enc:<id>; without a count, done when none of the
-//    tag is left alive, or when the encounter is cleared).
+//    tag is left alive and no active encounter has a wave or a dropship of the tag still to come, or when the
+//    encounter is cleared).
 //  · Triggers with `once: false` fire on each rising edge of their condition. `{ trigger: id }` fires regardless of
 //    `enabled` and `after`.
 //  · Encounters with `persist: false` are stored as 'pending' in snapshots. Kill tallies of an encounter that is
@@ -470,6 +471,26 @@ export function install(ctx) {
     const n = (gs) => (gs || []).reduce((a, g) => a + Math.max(1, Math.floor(g?.count ?? 1)), 0);
     return n(e.units) + (e.waves || []).reduce((a, w) => a + n(w.units), 0);
   }
+  const validWhen = (w) => w === 'cleared' || (!!w && typeof w === 'object' && (Number.isFinite(w.delay) || Number.isFinite(w.remaining)));
+  /** units carrying `tag` that active encounters have still to field: their waves not yet spawned (in order, up to a
+   *  wave that can never start) plus dropship groups still in the air. A tag objective or `killed` condition without a
+   *  count is not met while this is above 0: every live unit of the tag can die in one 0.1 s window before the next
+   *  wave spawns (checkObjectives runs before updateEncounters), e.g. L1's o_skiffs over e_pin's { remaining: 1 } wave. */
+  function upcomingTagged(tag) {
+    let n = 0;
+    for (const rec of encounters.values()) {
+      if (rec.state !== 'active') continue;
+      const e = rec.def, waves = e.waves || [], base = encTags(e);
+      for (let i = rec.wave; i < waves.length; i++) {
+        if (!validWhen(waves[i]?.when)) break;
+        for (const g of waves[i].units || []) {
+          if (base.includes(tag) || (g?.opts?.tags || []).includes(tag)) n += Math.max(1, Math.floor(g?.count ?? 1));
+        }
+      }
+      n += rec.late?.get(tag) || 0;
+    }
+    return n;
+  }
   function checkObjectives() {
     const p = player();
     for (const o of objectives.values()) {
@@ -486,10 +507,12 @@ export function install(ctx) {
           const dead = kills.get(tag) || 0;
           const live = (ctx.combat?.query({ tag }) || []).filter(x => x !== ctx.player).length;
           const enc = t.encounter && !t.tag ? encounters.get(t.encounter) : null;
-          // an encounter's count is known up front (its units and every wave), so "0 / 6" shows before it spawns
-          const max = t.count ?? Math.max(dead + live + (enc ? enc.pending : 0), enc ? plannedUnits(enc.def) : 0);
+          const coming = enc ? 0 : upcomingTagged(tag);
+          // an encounter's count is known up front (its units and every wave), so "0 / 6" shows before it spawns; a
+          // tag's count includes the units its active encounters' later waves will bring
+          const max = t.count ?? Math.max(dead + live + coming + (enc ? enc.pending : 0), enc ? plannedUnits(enc.def) : 0);
           prog = { cur: Math.min(dead, max), max };
-          const done = t.count != null ? dead >= t.count : enc ? enc.state === 'cleared' : (max > 0 && live === 0 && dead > 0);
+          const done = t.count != null ? dead >= t.count : enc ? enc.state === 'cleared' : (max > 0 && live === 0 && dead > 0 && coming === 0);
           if (done) { o.progress = d.showCount ? { cur: max, max } : o.progress; setObjective(o.id, 'done'); continue; }
           break;
         }
@@ -606,7 +629,12 @@ export function install(ctx) {
   function spawnGroup(g, tags, encId) {
     if (g.via?.dropship && ctx.cinematics?.flyby) {
       const enc = encId ? encounters.get(encId) : null;
-      if (enc) enc.pending++;
+      const lateN = Math.max(1, Math.floor(g.count ?? 1)), lateTags = [...new Set([...(g.opts?.tags || []), ...tags])];
+      if (enc) {
+        enc.pending++;
+        enc.late = enc.late || new Map();
+        for (const t of lateTags) enc.late.set(t, (enc.late.get(t) || 0) + lateN);
+      }
       const to = res(g.at, new THREE.Vector3());
       const from = g.via.dropship.from, h = g.via.dropship.h ?? 60;
       const fromP = Array.isArray(from) ? { x: from[0], z: from[1], h } : { ...from, h: from.h ?? h };
@@ -616,7 +644,10 @@ export function install(ctx) {
       ctx.cinematics.flyby({ model: 'dropship', faction: g.opts?.faction, path: [fromP, landing, exit], speed: 55, sound: 'dropship',
         deploy: { at: 1 } }, { onDeploy: () => {
           if (myGen !== gen) return;
-          if (enc) enc.pending = Math.max(0, enc.pending - 1);
+          if (enc) {
+            enc.pending = Math.max(0, enc.pending - 1);
+            for (const t of lateTags) enc.late?.set(t, Math.max(0, (enc.late.get(t) || 0) - lateN));
+          }
           spawnGroup({ ...g, via: undefined }, tags, encId);
         } });
       return [];
@@ -1198,7 +1229,7 @@ export function install(ctx) {
         const tag = c.killed.tag, dead = kills.get(tag) || 0;
         if (c.killed.count != null) return dead >= c.killed.count;
         const live = (ctx.combat?.query({ tag }) || []).filter(t => t !== ctx.player).length;
-        return dead > 0 && live === 0;
+        return dead > 0 && live === 0 && upcomingTagged(tag) === 0;
       }
       if ('alive' in c) return ((ctx.combat?.query({ tag: c.alive.tag }) || []).filter(t => t !== ctx.player).length) <= c.alive.lte;
       if ('health' in c) {

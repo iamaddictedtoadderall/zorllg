@@ -21,7 +21,7 @@ export default async function (g) {
   const touch = !!g.args.touch;
   const page = g.page;
   // --param p5only=1,2,3 runs only those sections (1 validate · 2 scripted run · 3 checkpoints · 5 comms + addendum HUD ·
-  // 6 screens and HUD shots · 7 flow loop · 8 campaign flow · 9 clarity pass)
+  // 6 screens and HUD shots · 7 flow loop · 8 campaign flow · 9 clarity pass · 10 tag objective over waves)
   const onlyP = (g.args.params || []).find(p => p.startsWith('p5only='));
   const only = onlyP ? new Set(onlyP.split('=')[1].split(',').map(Number)) : null;
   const S = (n) => !only || only.has(n);
@@ -600,6 +600,7 @@ export default async function (g) {
     g.assert(pc.p?.text === 'Test prompt' && pc.p?.key === 'G' && pc.p?.hold && Math.abs(parseFloat(pc.bar) - 50) < 0.6 && pc.gone, `prompt with key, hold and progress (${JSON.stringify(pc.p)})`);
     g.assert(pc.opts === 4 && pc.picked === 'k4', `choice with 4 options; Digit4 picks the fourth (${pc.picked})`);
     g.assert(pc.blocked, 'a blocked hit gives the short flash');
+    await rackFullChoice('hud-choice-rackfull');
     // TEAR prompt and rack: a stand-in ctx.haul with a candidate (the real service, if landed, is put back afterwards)
     const tear = await g.eval(() => {
       const G = window.__game, c = G.ctx;
@@ -627,12 +628,39 @@ export default async function (g) {
   // ============================================================ 9. clarity pass (docs/todo.md): explain cards, Field notes,
   // speaker tags, plain weapon type labels (desktop and touch)
   async function shotHUD(name) { await g.shot(name, { settle: false }); }
+  /** the L1 rack-swap choice (real part names, rack shown): placed clear of every HUD panel and touch control */
+  async function rackFullChoice(shotName) {
+    await g.eval(() => window.__game.ctx.hud.setPanels({ rack: true }));
+    await g.eval(() => { window.__p5rf = window.__game.ctx.hud.choice({ title: 'RACK FULL. Drop which part?', seconds: 30,
+      options: [{ key: 'd0', label: 'Drop Gaff Harpoon' }, { key: 'd1', label: 'Drop Sleet Gun' }, { key: 'd2', label: 'Drop Flare Pod' }, { key: 'leave', label: 'Leave it' }] }); });
+    await g.step(2);
+    const rf = await g.eval(() => {
+      const sel = '#status,#vitals,#weapons,#rack,#comms,#objpanel,#radar,#compass,#frameTag,#touch #stickHome,#touch .tb';
+      const vis = (e) => { if (e.closest('[hidden]')) return false; const cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+        for (let p = e; p && p !== document.body; p = p.parentElement) if (+getComputedStyle(p).opacity < 0.05) return false;
+        const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
+      const obs = [...document.querySelectorAll(sel)].filter(vis).map(e => ({ id: e.id || e.dataset.act || e.className, r: e.getBoundingClientRect() }));
+      const rg = document.createRange(); rg.selectNodeContents(document.querySelector('#choice .t'));
+      const items = [['title', rg.getBoundingClientRect()], ['bar', document.querySelector('#choice .bar').getBoundingClientRect()],
+        ...[...document.querySelectorAll('#choice .opt')].map(o => [o.textContent, o.getBoundingClientRect()])];
+      const hits = [];
+      for (const [n, a] of items) for (const o of obs) { const b = o.r; if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) hits.push(n + ' × ' + o.id); }
+      const off = items.filter(([, a]) => a.left < 0 || a.top < 0 || a.right > innerWidth || a.bottom > innerHeight).map(([n]) => n);
+      return { layout: window.__game.ctx.hud.choiceLayout, hits, off, rack: !document.getElementById('rack').hidden };
+    });
+    g.log('rack-full choice layout:', JSON.stringify(rf));
+    await shotHUD(shotName);
+    g.assert(rf.rack && rf.hits.length === 0 && rf.off.length === 0 && rf.layout?.clear,
+      `the 4-option rack-full choice collides with no HUD panel or touch control (${rf.layout?.form}/${rf.layout?.size}; ${[...rf.hits, ...rf.off].join('; ') || 'clear'})`);
+    await g.eval(() => window.__game.ctx.hud.choice(null)); await g.step(1);
+  }
   const nm = (n) => (touch ? 'touch-' : '') + n;
   if (S(9)) {
     await g.eval(() => window.__game.save.reset());
     if (await state() !== 'playing') { await recorder(); await g.startLevel('test', 'cp_start'); }
     await g.setGod(true);
     await g.step(4);
+    if (touch) await rackFullChoice(nm('hud-choice-rackfull'));
     // (c) speaker tags: the first line a speaker says in a playthrough carries its tag; later lines don't
     await g.eval(() => { const c = window.__game.ctx; c.comms.clear(); c.hud.setPanels({ rack: false }); c.save.setFlag('commsMet', {});
                          c.comms.say('OPS', 'Drones on the flats. Keep your spacing.'); window.__game.step(50); });
@@ -1035,7 +1063,69 @@ export default async function (g) {
   if (!benchMode) g.assert(cnt.flag.parts?.harpoon_gaff === undefined || cnt.flag.parts?.harpoon_gaff === 'locker', 'fallback arrival rule applied to the pending haul');
   await click('#bWalk');
   g.assert(await waitState(['title', 'briefing'], 20000), 'count → title (or the next briefing)');
+
+  // ------------------------------------------------------------ 8c. New game resets the playthrough (campaign state,
+  // the old run's checkpoint, commsMet); Back from its briefing keeps the old run
+  const stale = { v: 1, day: 3, water: 9, arms: 2, parts: { harpoon_gaff: 'fitted' }, spares: ['msl_vm4'], fitted: { R: 'rifle_r30', L: 'harpoon_gaff', S: 'msl_vm4' },
+                  lost: [40, 39], fragments: {}, kernel: 4, benchVisits: 3, tearCount: 5, pending: { levelId: 'l01', haul: ['sleet_gun'], tears: 1, sledges: 2 }, ledger: null };
+  await g.eval((st) => { const sv = window.__game.ctx.save; sv.setFlag('campaign', st); sv.setFlag('commsMet', { kit: 1 }); sv.setCheckpoint('l01', { checkpoint: 'cp_old', flags: { stale: true } }); }, stale);
+  await g.eval(() => window.__game.ctx.flow.toTitle());
+  g.assert(await waitState('title', 20000), 'title for New game');
+  await click('#bNew');
+  g.assert(await waitState('briefing', 30000), 'New game → briefing');
+  await click('#bBack');
+  g.assert(await waitState('title', 20000), 'New game briefing → Back → title');
+  const kept = await g.eval(() => ({ c: window.__game.save.get().flags.campaign, cur: window.__game.save.get().progress.current }));
+  g.assert(kept.c?.day === 3 && kept.cur?.levelId === 'l01', 'Back from a New game briefing keeps the old run (campaign state and Continue)');
+  await click('#bNew');
+  g.assert(await waitState('briefing', 30000), 'New game → briefing (again)');
+  await click('#bStart');
+  g.assert(await waitState(['interstitial', 'playing'], 90000), 'New game → Start → the first level');
+  const ng = await g.eval(() => ({ c: window.__game.save.get().flags.campaign, met: window.__game.save.get().flags.commsMet, cur: window.__game.save.get().progress.current,
+                                   lo: JSON.stringify(window.__game.ctx.player.loadout || {}), lv: window.__game.ctx.flow.levelId }));
+  g.log('after New game:', JSON.stringify(ng.c), ng.cur, ng.lv);
+  g.assert(ng.c && ng.c.day === 0 && ng.c.water === 4 && ng.c.lost.length === 0 && ng.c.fitted.L === 'blade_pb2' && !Object.keys(ng.c.parts).length
+           && ng.c.tearCount === 0 && ng.c.pending === null && ng.c.arms === 0 && !ng.lo.includes('harpoon_gaff'),
+           `New game starts the campaign state fresh (day ${ng.c?.day}, water ${ng.c?.water}, fitted L ${ng.c?.fitted?.L}, lost ${JSON.stringify(ng.c?.lost)}, pending ${JSON.stringify(ng.c?.pending)})`);
+  g.assert(!ng.cur || ng.cur.checkpoint?.checkpoint !== 'cp_old', `New game drops the old run's checkpoint (${JSON.stringify(ng.cur)})`);
+  g.assert(ng.met && !ng.met.kit, 'New game clears commsMet');
+  await g.eval(() => window.__game.ctx.flow.quitToTitle());
+  await waitState('title', 20000);
   await g.eval(() => window.__game.save.reset());
+  }
+
+  if (!touch && S(10)) {
+  // ============================================================ 10. a tag kill objective over an encounter with waves
+  // (L1's o_skiffs over e_pin): every live unit of the tag dying in one tick must not complete it while a wave is to come
+  await g.eval(() => window.__game.save.reset());
+  await g.eval(async () => {
+    const T = (await import(new URL('levels/test.js', location.href).href)).default;
+    window.__tw = { ...T, id: 'test_tagwaves', start: [{ objective: { add: 'o_reach' } }],
+      objectives: [...T.objectives, { id: 'o_tagwaves', text: 'Destroy the wave units', kind: 'kill', target: { tag: 'wave' }, showCount: true }],
+      triggers: [...(T.triggers || []), { id: 't_tagwaves', when: { killed: { tag: 'wave' } }, do: [{ flag: ['p5.tagwaves', true] }] }] };
+  });
+  await g.eval(() => window.__game.startLevel(window.__tw, 'cp_start'));
+  await g.setGod(true);
+  await tp({ s: 1450 }); await g.step(12);
+  await g.eval(() => window.__game.ctx.mission.run([{ objective: { add: 'o_tagwaves' } }, { spawn: 'e_waves' }]));
+  await g.step(12);
+  const tw = [];
+  for (let i = 0; i < 24; i++) {   // the second wave comes on { remaining: 1 }, the third 3 s later, the last on 'cleared'
+    const r = await g.eval(() => { const c = window.__game.ctx, m = c.mission;
+      return { alive: c.enemies.count({ tag: 'wave' }), o: m.objective('o_tagwaves'), enc: m.encounterState('e_waves'), flag: !!m.flags['p5.tagwaves'] }; });
+    tw.push(r);
+    if (r.o.state !== 'active' || (r.alive === 0 && r.enc.state === 'cleared')) break;
+    await g.eval(() => { const c = window.__game.ctx; for (const u of c.enemies.alive({ tag: 'wave' })) c.combat.kill(u, { team: 'player' }); });   // all at once
+    await g.step(r.alive ? 12 : 30);
+  }
+  g.log('tag waves [alive, state, progress, encounter, wave, killed-condition]:', JSON.stringify(tw.map(r => [r.alive, r.o.state, r.o.progress, r.enc.state, r.enc.wave, r.flag])));
+  const early = tw.find(r => (r.o.state === 'done' || r.flag) && (r.alive > 0 || r.enc.state !== 'cleared'));
+  g.assert(!early, `a tag kill objective (and a { killed: { tag } } condition) waits for the encounter's waves still to come (${early ? JSON.stringify(early) : 'never early'})`);
+  const last = tw.at(-1), first = tw[0];
+  g.assert(last.o.state === 'done' && last.flag && last.o.progress?.cur === last.o.progress?.max && first.o.progress?.max === last.o.progress?.max,
+    `…and completes once the last wave is down, the count known from the start (${JSON.stringify(first.o.progress)} → ${JSON.stringify(last.o.progress)})`);
+  await g.eval(() => window.__game.ctx.flow.quitToTitle());
+  await waitState('title', 20000);
   }
 
   const errs = await g.eval(() => window.__game.errors());
