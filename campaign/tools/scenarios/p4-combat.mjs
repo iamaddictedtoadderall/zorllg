@@ -50,15 +50,16 @@ export default async function (g) {
     const G = window.__game, c = G.ctx, T = c.THREE;
     const U = await import(new URL('src/core/util.js', location.href).href);
     const LO = await import(new URL('src/combat/loadout.js', location.href).href);
+    const WP = await import(new URL('src/combat/weapons.js', location.href).href);
     const H = window.__p4 = {
-      G, c, T, U, LO,
+      G, c, T, U, LO, WP,
       V: (x, y, z) => new T.Vector3(x, y, z),
       at(s, l = 0, h = 0) { return c.world.resolve({ s, l, h }, new T.Vector3()); },
       ev: [], dmg: [], kinds: new Set(),
       clean(o = {}) {
         for (const u of c.enemies.all().slice()) c.enemies.despawn(u);
         c.projectiles.clear(); c.input.clearInjected();
-        c.haul?.clear?.();
+        c.haul?.clear?.(); WP.clearShared?.(c);   // burning flares and reels outlive projectiles.clear()
         const p = c.player;
         p.abilities = { move: 1, jump: true, hover: true, boost: true, fire: true, lock: true, blade: true, missile: true, kit: true, interact: true, tear: true };
         p.hoverCostScale = 1; p.enRegenScale = 1; p.gravityScale = 1; p.hidden = false; p.idleFacing = null; p.animOverride = null;
@@ -593,6 +594,22 @@ export default async function (g) {
       return { blindMax, fired, blindNow: t.blindT };
     });
     g.assert(blind.blindMax > 3 && blind.fired === 0, `a flare that hits sticks and blinds (blindT ${blind.blindMax.toFixed(2)}), blinded units hold fire`);
+    const drift = await g.eval(() => {
+      const H = window.__p4, G = H.G, c = H.c, out = {};
+      for (const k of ['artillery', 'apc', 'tank', 'walker']) {
+        H.clean(); H.place(170, 0); G.step(2);
+        const u = H.spawn(k, H.fwd(300, 0, 40));
+        G.step(10); u.vel.set(0, 0, 0); u.blindT = 4; u.cd = 0;
+        const p0 = u.pos.clone(); let n0 = c.projectiles.count, fired = 0;
+        for (let i = 0; i < 180; i++) { G.step(1); if (c.projectiles.count > n0) fired++; n0 = c.projectiles.count; }
+        out[k] = { moved: +H.dist(p0, u.pos).toFixed(2), fired };
+        c.enemies.despawn(u);
+      }
+      return out;
+    });
+    g.log('blind drift', JSON.stringify(drift));
+    g.assert(Object.values(drift).every(d => d.moved > 2 && d.fired === 0),
+      `blinded artillery, apc, tank and walker drift and hold fire (A5.1): ${Object.entries(drift).map(([k, d]) => `${k} ${d.moved} m`).join(', ')}`);
 
     const kinds = await g.eval(() => [...window.__p4.kinds]);
     g.log('player damage kinds seen', kinds.join(','));
@@ -604,13 +621,24 @@ export default async function (g) {
   // ---------------------------------------------------------------------------------------------- 5 haul / TEAR
   await sec('haul', async () => {
     // the haul glint on a live target (before the TEAR)
-    await g.eval(() => {
-      const H = window.__p4, G = H.G, c = H.c;
+    const gl = await g.eval(() => {
+      const H = window.__p4, G = H.G, c = H.c, p = c.player;
       H.clean(); H.place(180, 0); G.step(5);
-      const s = H.spawn('tank', H.fwd(28, 0, 6), { behavior: 'hold', config: { haul: 'shotgun_s8' } });
-      s.yaw = c.player.yaw + 2.4; G.step(30);
+      const g0 = c.particles?.glows?.count ?? 0;
+      const s = H.spawn('tank', H.fwd(40, 0, 0), { behavior: 'hold', config: { haul: 'shotgun_s8' } });
+      s.yaw = p.yaw + 2.4; G.step(30);
+      const m = s.pos, y = p.yaw;
+      // side camera: the glint must not hide behind the player's own mech
+      const root = s.root || s.rig?.root;
+      return { g0, g1: c.particles?.glows?.count ?? 0, haul: s.haul?.part ?? null, api: !!c.particles?.glows?.add,
+               mesh: !!root?.getObjectByName?.('haulGlint'),
+               cam: [m.x + Math.cos(y) * 22, m.y + 8, m.z - Math.sin(y) * 22], look: [m.x, m.y + 3, m.z] };
     });
-    await shot('haul-glint');
+    g.log('haul glint', JSON.stringify(gl));
+    g.assert(gl.haul === 'shotgun_s8' && (gl.api ? gl.g1 > gl.g0 : gl.mesh), `a haul carrier wears a glint (glows ${gl.g0} → ${gl.g1}, stand-in mesh ${gl.mesh})`);
+    await g.camera(gl.cam, gl.look, 50);
+    await shot('haul-glint', { hud: false });
+    await g.freeCam(false);
     const tear = await g.eval(async () => {
       const H = window.__p4, G = H.G, c = H.c, p = c.player;
       H.clean(); H.place(180, 0); G.step(5);

@@ -468,13 +468,15 @@ export function install(ctx) {
     emitters.push(h);
     return h;
   }
+  // particles per second at rate 1, per emitter kind (hoisted: runEmitter runs every frame, arch §1.6)
+  const EMIT_RATE = { smoke: 9, fire: 34, sparks: 14, steam: 12, dustDevil: 34 };
   function runEmitter(h, dt) {
     const ps = P(); if (!ps || !(h.rate > 0)) return;
     const d = ctx.camera.position.distanceTo(h.pos);
     if (d > (ctx.tier.viewDistance || 1800)) return;
     const k = d > 600 ? 0.35 : d > 300 ? 0.6 : 1;
     const s = h.scale, p = h.pos, c = h.color;
-    const base = { smoke: 9, fire: 34, sparks: 14, steam: 12, dustDevil: 16 }[h.kind];
+    const base = EMIT_RATE[h.kind] ?? 9;
     h.acc += base * h.rate * k * dt;
     let n = Math.floor(h.acc); h.acc -= n;
     n = Math.min(n, 12);
@@ -510,8 +512,9 @@ export function install(ctx) {
           break;
         }
         case 'sparks': {
+          // showers (AD §6.9): the emitter fires in bursts (see the burst clock below), so a trickle between bursts
           const cr = c ? c[0] : 1, cg = c ? c[1] : 0.75, cb = c ? c[2] : 0.4;
-          add.spawn(p.x, p.y, p.z, R(-5, 5) * s, R(0, 6) * s, R(-5, 5) * s, R(0.4, 1), R(0.1, 0.22), 0.03, cr * 3, cg * 3, cb * 3, 1, 1, 30, 1);
+          add.spawn(p.x, p.y, p.z, R(-3, 3) * s, R(0, 4) * s, R(-3, 3) * s, R(0.3, 0.7), R(0.12, 0.2) * s, 0.03, cr * 3, cg * 3, cb * 3, 1, 1, 30, 1);
           break;
         }
         case 'steam': {
@@ -520,11 +523,22 @@ export function install(ctx) {
           break;
         }
         case 'dustDevil': {
+          // a funnel: billows are placed on a helix whose radius widens with height, live briefly and are held by
+          // strong drag, so the column keeps its shape (the particles can't orbit; the rotating spawn helix reads as spin)
           paletteColors();
-          const a = h.phase * 3 + i;
-          const r = R(1, 4) * s;
-          sm.spawn(p.x + Math.cos(a) * r, groundAt(p.x, p.z) + R(0, 10) * s, p.z + Math.sin(a) * r, -Math.sin(a) * 9 * s, R(3, 7) * s, Math.cos(a) * 9 * s,
-                   R(1.5, 3), 1.5 * s, R(4, 7) * s, dustCol.r, dustCol.g, dustCol.b, 0.4, 0.8, -1.5, 5);
+          const gy = groundAt(p.x, p.z), u = Math.random(), y = u * u * 16 * s;
+          const r = (0.5 + y * 0.2 + R(-0.3, 0.3)) * s, a = h.phase * 4 + y * 0.45 + (i & 1) * Math.PI;
+          const ca = Math.cos(a), sa = Math.sin(a), wx = windX(), wz = windZ();
+          // a little darker than the palette dust, so the column separates from the dust-coloured ground it stands on
+          sm.spawn(p.x + ca * r, gy + y, p.z + sa * r, -sa * 4 * s + wx, R(1.5, 3.5) * s, ca * 4 * s + wz,
+                   R(1.0, 1.8), (1.4 + y * 0.14) * s, (2.8 + y * 0.24) * s, dustCol.r * 0.8, dustCol.g * 0.78, dustCol.b * 0.76,
+                   0.8 - u * 0.3, 2.2, -1, Math.random() < 0.5 ? 3 : 5);
+          // the skirt: dust kicked low around the foot
+          if (Math.random() < 0.35) {
+            const b = R(0, 6.283), rr = R(1.5, 3.5) * s;
+            sm.spawn(p.x + Math.cos(b) * rr, gy + 0.4, p.z + Math.sin(b) * rr, Math.cos(b) * 3 * s + wx, R(0.3, 1.2), Math.sin(b) * 3 * s + wz,
+                     R(1.2, 2.2), 1.6 * s, R(4, 6) * s, dustCol.r, dustCol.g, dustCol.b, 0.35, 1.5, 0, 5);
+          }
           break;
         }
       }
@@ -534,6 +548,20 @@ export function install(ctx) {
       if (h.light <= 0 && d < 90) { h.light = 0.09; ps.lights?.flash(_v.set(p.x, p.y + 1.5 * s, p.z), 0xff8a3c, R(450, 700) * s, 18 * s, 0.14); }
     }
     if (h.kind === 'dustDevil') h.phase += dt * 1.7;
+    if (h.kind === 'sparks') {
+      // a shower every 0.2 to 0.7 s: a white-hot flare at the source, then 8 to 16 streaks that fall, bounce once
+      // (the drag) and cool; between showers only the trickle above
+      h.light -= dt;
+      if (h.light <= 0) {
+        h.light = R(0.2, 0.7) / Math.max(0.2, h.rate);
+        const cr = c ? c[0] : 1, cg = c ? c[1] : 0.75, cb = c ? c[2] : 0.4, m = Math.round(R(12, 22) * k);
+        add.spawn(p.x, p.y, p.z, 0, 0, 0, 0.09, 0.9 * s, 0.3 * s, 3, 2.6, 2.2, 1, 0, 0, 2);
+        for (let j = 0; j < m; j++) {
+          add.spawn(p.x, p.y, p.z, R(-7, 7) * s, R(-1, 8) * s, R(-7, 7) * s, R(0.5, 1.2), R(0.18, 0.32) * s, 0.05, cr * 4, cg * 4, cb * 4, 1, 0.9, 28, 1);
+        }
+        if (d < 60) ps.lights?.flash(_v.set(p.x, p.y, p.z), 0xffc070, 260 * s, 10 * s, 0.08);
+      }
+    }
   }
   const windX = () => (ctx.weather?.current?.wind?.[0] ?? 0) * 0.6;
   const windZ = () => (ctx.weather?.current?.wind?.[1] ?? 0) * 0.6;

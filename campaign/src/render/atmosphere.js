@@ -92,7 +92,8 @@ vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth, vec2
   float u = tan(clamp(th, -1.4, 1.4));            // position along the curtain, in units of D
   float edge = smoothstep(-0.05, 0.0, z);
   float zp = max(z, 0.0);
-  float prof = edge * (exp(-zp * 3.0) + 0.3 * exp(-pow((z - 0.45) / 0.3, 2.0)) + 0.7 * exp(-zp * 26.0));
+  float body = exp(-zp * 3.0) + 0.3 * exp(-pow((z - 0.45) / 0.3, 2.0));
+  float line = 0.5 * exp(-zp * 26.0);              // the sharp lower edge: a continuous line, only half-broken by the rays
   // rays: vertical on the sheet, drifting slowly; the finest set fades where the curtain recedes (no shimmer)
   float r1 = cNoise(vec2(u * 30.0, t * 0.22 + ph));
   float r2 = cNoise(vec2(u * 85.0 + 3.7, t * 0.5 + ph));
@@ -104,7 +105,8 @@ vec3 cAurCurtain(vec2 dh, float h, float D, float ph, float t, float depth, vec2
   float g = dm / (1.0 + m) + u;
   float graze = 1.0 + (pow(min(sqrt(1.0 + g * g), 5.0), 0.6) - 1.0) * ends;
   vec3 col = mix(uAurA, uAurB * 0.85, smoothstep(0.3, 1.05, z)) + uAurA * 0.45 * exp(-zp * 22.0);
-  return col * prof * rays * seg * ends * graze * 0.42;
+  float prof = edge * (body * rays + line * (0.45 + 0.55 * rays));
+  return col * prof * seg * ends * graze * 0.42;
 }
 void main() {
   vec3 d = normalize(vDir);

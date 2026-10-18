@@ -302,6 +302,7 @@ export function install(ctx) {
     voices[i] = e;
   }
 
+  const BED_W = { vol: 0, rate: 1 }, BED_R = { vol: 0 };   // reused set() arguments: the bed updates per frame (arch §1.6)
   const api = {
     ready: false,
     bus: null,
@@ -356,8 +357,8 @@ export function install(ctx) {
         const wv = on ? clamp(0.06 + ws * 0.025 * storm, 0, 0.35) : 0, wr = 0.8 + Math.min(1.2, ws * 0.06);
         const rv = on && w?.type === 'rain' ? clamp(w.intensity, 0, 1) * 0.6 : 0;
         // only touch the AudioParams when the bed really changes (every set() schedules automation events)
-        if (Math.abs(wv - bed.wv) > 0.002 || Math.abs(wr - bed.wr) > 0.01) { bed.wv = wv; bed.wr = wr; bed.wind.set({ vol: wv, rate: wr }); }
-        if (Math.abs(rv - bed.rv) > 0.002) { bed.rv = rv; bed.rain.set({ vol: rv }); }
+        if (Math.abs(wv - bed.wv) > 0.002 || Math.abs(wr - bed.wr) > 0.01) { bed.wv = wv; bed.wr = wr; BED_W.vol = wv; BED_W.rate = wr; bed.wind.set(BED_W); }
+        if (Math.abs(rv - bed.rv) > 0.002) { bed.rv = rv; BED_R.vol = rv; bed.rain.set(BED_R); }
       }
     },
     /** extra (tests): render one SFX offline and report its level; also proves the recipe runs without throwing */

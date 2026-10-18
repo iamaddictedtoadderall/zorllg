@@ -35,11 +35,18 @@ function shared(ctx) {
     for (const f of s.flares) killFlare(f);
     s.flares.length = 0;
   };
+  s.reset = reset;
   ctx.events.on('level:cleared', reset);
   ctx.events.on('player:spawned', reset);
   SHARED.set(ctx, s);
   return s;
 }
+
+/**
+ * Ends every live harpoon reel and burning flare in `ctx` (they otherwise outlive projectiles.clear(): a flare burns
+ * 30 s). Level resets do this already (level:cleared, player:spawned); tests and level scripts can call it directly.
+ */
+export function clearShared(ctx) { SHARED.get(ctx)?.reset(); }
 
 function flareVisual(ctx, s) {
   let v = s.flareFx.find(x => !x.used);

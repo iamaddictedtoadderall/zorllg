@@ -478,8 +478,9 @@ class Artillery extends Unit {
     const T = this.acquire(dt, Math.max(this.aggroRange, 900));
     let mvx = 0, mvz = 0, dist = Infinity, dx = 0, dz = 0;
     if (T) { dx = T.pos.x - this.pos.x; dz = T.pos.z - this.pos.z; dist = Math.hypot(dx, dz) || 1; }
-    if (this.stagT <= 0 && !T && !(this.blindT > 0)) { this.idleWish(6, _iw); mvx = _iw.x; mvz = _iw.z; }
-    else if (this.stagT <= 0 && T && this.behavior !== 'hold' && !(this.blindT > 0)) {
+    if (this.stagT <= 0 && this.blindT > 0) { this.drift(dt); mvx = Math.cos(ai.driftA) * 3; mvz = Math.sin(ai.driftA) * 3; }   // A5.1: blinded units drift
+    else if (this.stagT <= 0 && !T) { this.idleWish(6, _iw); mvx = _iw.x; mvz = _iw.z; }
+    else if (this.stagT <= 0 && T && this.behavior !== 'hold') {
       if (dist < 160) { mvx = -dx / dist * 8; mvz = -dz / dist * 8; }        // too close: pull back
       else if (dist > 850) { mvx = dx / dist * 7; mvz = dz / dist * 7; }   // out of range: close in
     }
@@ -530,8 +531,9 @@ class Apc extends Unit {
     const T = this.acquire(dt, Math.max(this.aggroRange, 800));
     let mvx = 0, mvz = 0, dist = Infinity, dx = 0, dz = 0;
     if (T) { dx = T.pos.x - this.pos.x; dz = T.pos.z - this.pos.z; dist = Math.hypot(dx, dz) || 1; }
-    if (this.stagT <= 0 && !(this.blindT > 0) && !T) { this.idleWish(10, _iw); mvx = _iw.x; mvz = _iw.z; }
-    else if (this.stagT <= 0 && !(this.blindT > 0) && T && this.behavior !== 'hold') {
+    if (this.stagT <= 0 && this.blindT > 0) { this.drift(dt); mvx = Math.cos(ai.driftA) * 4; mvz = Math.sin(ai.driftA) * 4; }   // A5.1: blinded units drift
+    else if (this.stagT <= 0 && !T) { this.idleWish(10, _iw); mvx = _iw.x; mvz = _iw.z; }
+    else if (this.stagT <= 0 && T && this.behavior !== 'hold') {
       if (!ai.deployed && dist > 180) { mvx = dx / dist * 12; mvz = dz / dist * 12; }
       else if (ai.deployed && dist < 120) { mvx = -dx / dist * 6; mvz = -dz / dist * 6; }
     }
@@ -539,7 +541,7 @@ class Apc extends Unit {
     const sp = Math.hypot(this.vel.x, this.vel.z);
     if (sp > 0.5) this.yaw = dampAng(this.yaw, yawTo(this.vel.x, this.vel.z), 1.6, dt);
     // deploy 3 drones once within 200 m: stop, drop the ramp, launch them one by one
-    if (!ai.deployed && T && dist < 200 && this.stagT <= 0) { ai.deployed = true; ai.deployT = 0; this.sfx('door'); }
+    if (!ai.deployed && T && dist < 200 && this.stagT <= 0 && !(this.blindT > 0)) { ai.deployed = true; ai.deployT = 0; this.sfx('door'); }
     if (ai.deployed && ai.deployT < 2) {
       ai.deployT += dt;
       for (let k = 0; k < 3; k++) {

@@ -27,6 +27,10 @@ export const THEMES = {
 };
 const LAYER_OCT = { pad: 1, bass: 0, pulse: 1, arp: 3, lead: 3 };
 const STINGERS = ['objective', 'checkpoint', 'discovery', 'dread', 'victory', 'death', 'boss'];
+// note tables (flat [degree, detune] pairs for the pad), hoisted so scheduling never builds arrays
+const PAD_DRONE = [0, 0, 0, 0.12, 4, -0.07, 7, 0.05], PAD_CHORD = [0, 0, 2, 0.08, 4, -0.06, 7, 0];
+const NO_MAP = Object.freeze({}), NO_PROG = Object.freeze([0]);
+const LEAD_STEPS = [0, 2, 4, 7, 4, 2, 5, 9], PULSE_STEPS = [0, 2, 4], ARP_STEPS = [0, 2, 4, 7, 9, 7, 4, 2];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const smooth = (e0, e1, x) => { const t = clamp((x - e0) / ((e1 - e0) || 1e-6), 0, 1); return t * t * (3 - 2 * t); };
@@ -107,18 +111,20 @@ export function install(ctx) {
       this.padNodes = [];
     }
     layerLevel(k, I) {
-      const map = this.def.intensity || {};
+      const map = this.def.intensity || NO_MAP;
       const r = map[k];
       if (!r) return 1;
       return smooth(r[0], Math.max(r[0] + 1e-3, r[1]), I);
     }
     chordDegree(barIndex) {
-      const p = this.def.progression && this.def.progression.length ? this.def.progression : [0];
+      const p = this.def.progression && this.def.progression.length ? this.def.progression : NO_PROG;
       return p[((barIndex % p.length) + p.length) % p.length] | 0;
     }
     schedule(until, I) {
       const ac = this.ac;
-      for (const [k, s] of Object.entries(this.layers)) {
+      // arch §1.6: runs every frame for the current theme and every fading one, so no Object.entries (allocates)
+      for (const k in this.layers) {
+        const s = this.layers[k];
         const target = s.L.vol * this.layerLevel(k, I);
         s.g.gain.setTargetAtTime(Math.max(0, target), ac.currentTime, 0.4);
         const L = s.L, oct = L.octave ?? LAYER_OCT[k] ?? 1;
@@ -128,8 +134,9 @@ export function install(ctx) {
             const bi = Math.round((s.next - this.t0) / this.bar);
             const deg = this.chordDegree(bi);
             const dur = this.bar * 1.25;
-            const tones = L.drone ? [[0, 0], [0, 0.12], [4, -0.07], [7, 0.05]] : [[deg, 0], [deg + 2, 0.08], [deg + 4, -0.06], [deg + 7, 0]];
-            for (const [d, det] of tones) {
+            const tones = L.drone ? PAD_DRONE : PAD_CHORD;
+            for (let ti = 0; ti < tones.length; ti += 2) {
+              const d = L.drone ? tones[ti] : deg + tones[ti], det = tones[ti + 1];
               const f = L.drone ? (this.def.root || 55) * Math.pow(2, oct + (d === 0 ? 0 : d === 4 ? 7 / 12 : 1)) : note(this.def, d, oct);
               voice(ac, s.g, s.next, { type: L.wave || 'sawtooth', f, dur, vol: L.drone ? 1 : 0.8, att: this.bar * 0.35, rel: this.bar * 0.4,
                                        cutoff: L.cutoff ?? 600, detune: det * 100, q: 1.6 });
@@ -148,13 +155,13 @@ export function install(ctx) {
           if (k === 'drums') this.drum(s, t, si, hit, ch === 'X', I, stepDur);
           else if (k === 'lead') {
             if (si % 2 === 0 && this.rng() < 0.55) {
-              const d = deg + [0, 2, 4, 7, 4, 2, 5, 9][Math.floor(this.rng() * 8)];
+              const d = deg + LEAD_STEPS[Math.floor(this.rng() * 8)];
               voice(ac, s.g, t, { type: L.wave || 'triangle', f: note(this.def, d, oct), dur: stepDur * (this.rng() < 0.3 ? 4 : 2), vol: 0.5, att: 0.03, cutoff: L.cutoff ?? 2600 });
             }
           } else if (hit) {
             if (k === 'bass') voice(ac, s.g, t, { type: L.wave || 'sine', f: note(this.def, deg, oct), dur: stepDur * 0.9, vol: 0.9, att: 0.006, cutoff: L.cutoff ?? 700, q: 2 });
-            else if (k === 'pulse') voice(ac, s.g, t, { type: L.wave || 'square', f: note(this.def, deg + [0, 2, 4][s.step % 3], oct), dur: stepDur * 0.6, vol: 0.6, att: 0.004, cutoff: L.cutoff ?? 1200 });
-            else if (k === 'arp') voice(ac, s.g, t, { type: L.wave || 'triangle', f: note(this.def, deg + [0, 2, 4, 7, 9, 7, 4, 2][s.step % 8], oct), dur: stepDur * 1.6, vol: 0.6, att: 0.004, cutoff: L.cutoff ?? 3000 });
+            else if (k === 'pulse') voice(ac, s.g, t, { type: L.wave || 'square', f: note(this.def, deg + PULSE_STEPS[s.step % 3], oct), dur: stepDur * 0.6, vol: 0.6, att: 0.004, cutoff: L.cutoff ?? 1200 });
+            else if (k === 'arp') voice(ac, s.g, t, { type: L.wave || 'triangle', f: note(this.def, deg + ARP_STEPS[s.step % 8], oct), dur: stepDur * 1.6, vol: 0.6, att: 0.004, cutoff: L.cutoff ?? 3000 });
           }
           s.next += stepDur; s.step++;
         }

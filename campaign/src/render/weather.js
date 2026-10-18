@@ -9,12 +9,12 @@ import { FOG_PARS } from './glsl.js';
 const TYPES = {
   //        size m       fall m/s  sway  streak  box xz/y   alpha  additive  colour            lit
   clear:     { size: [0.05, 0.1], fall: 0, sway: 0, streak: 0, box: [60, 30], alpha: 0, add: 0, color: '#ffffff' },
-  ash:       { size: [0.05, 0.13], fall: 2.0, sway: 1.0, streak: 0, box: [60, 36], alpha: 0.6, add: 0, color: '#cfc3b8', tumble: 1 },
+  ash:       { size: [0.08, 0.2], fall: 1.8, sway: 1.0, streak: 0, box: [44, 30], alpha: 0.75, add: 0, color: '#aaa29b', tumble: 1 },
   snow:      { size: [0.06, 0.15], fall: 1.4, sway: 0.6, streak: 0, box: [56, 34], alpha: 0.85, add: 0, color: '#f4f8ff', tumble: 0.5 },
   rain:      { size: [0.014, 0.022], fall: 12, sway: 0, streak: 0.07, box: [26, 20], alpha: 0.55, add: 0, color: '#dfe8f2' },
   // dust motes only show where the sun catches them (strong forward scatter, faint otherwise); embers glow by themselves
   dust:      { size: [0.03, 0.08], fall: -0.05, sway: 0.4, streak: 0, box: [40, 24], alpha: 0.9, add: 1, color: '#fff0d8', lit: [0.1, 2.4, 0.3] },
-  embers:    { size: [0.04, 0.07], fall: -1.8, sway: 0.8, streak: 0, box: [50, 30], alpha: 1, add: 1, color: '#ff8a3a', emit: 2.6 },
+  embers:    { size: [0.05, 0.1], fall: -1.8, sway: 0.8, streak: 0, box: [40, 26], alpha: 1, add: 1, color: '#ff8a3a', emit: 3.4 },
   sandstorm: { size: [0.02, 0.06], fall: 0.6, sway: 0.3, streak: 0.016, box: [30, 18], alpha: 0.4, add: 0, color: '#d8c7a8' },
 };
 
@@ -225,6 +225,7 @@ export function install(ctx) {
     },
   };
   const dustC = new THREE.Color();
+  let dustKey = null;   // the palette string dustC was parsed from: parse only when it changes (arch §1.6)
   function dustSheet(c) {
     const sm = ctx.particles?.smoke; if (!sm) return;
     const cam = ctx.camera.position, v = U.uVel.value;
@@ -232,7 +233,8 @@ export function install(ctx) {
     const a = Math.random() * Math.PI * 2, r = 12 + Math.random() * 70;
     const x = cam.x + Math.cos(a) * r - ux * 35, z = cam.z + Math.sin(a) * r - uz * 35;
     const gy = ctx.world?.groundHeight ? ctx.world.groundHeight(x, z) : cam.y - 8;
-    dustC.set(ctx.atmosphere?.art?.palette?.dust || '#8a7a6a');
+    const dk = ctx.atmosphere?.art?.palette?.dust || '#8a7a6a';
+    if (dk !== dustKey) { dustKey = dk; dustC.set(dk); }
     const k = 0.85 + Math.random() * 0.3;
     sm.spawn(x, gy + 1 + Math.random() * 16, z, v.x * 0.9, 0.2 + Math.random() * 0.6, v.z * 0.9, 4 + Math.random() * 3,
              8 + Math.random() * 4, 20 + Math.random() * 12, dustC.r * k, dustC.g * k, dustC.b * k,

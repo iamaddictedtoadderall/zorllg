@@ -44,6 +44,10 @@ void main() {
   float r2 = dot(d, d);
   vec2 ca = d * r2 * (uChroma + uHurt * 0.02);
   vec3 c = vec3(texture2D(tDiffuse, vUv + ca).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - ca).b);
+  // HDR guard: a value past half-float range (a pooled flash light right on an emissive surface: three caps the
+  // falloff at 100 × intensity) is stored as +Inf, and ACES turns Inf into NaN, which renders as a black dot in the
+  // middle of the brightest light. clamp() maps +Inf to a large finite white (GLSL ES 1.00 here: no isinf).
+  c = clamp(c, 0.0, 6e4);
   // 2. exposure and tone mapping (the renderer's operator and toneMappingExposure)
   c *= uExposure;
   #if defined( ACES_FILMIC_TONE_MAPPING )
@@ -100,7 +104,7 @@ uniform sampler2D tDiffuse;
 uniform vec2 uTexel;
 uniform float uThreshold, uKnee, uExposure;
 varying vec2 vUv;
-vec3 S(vec2 o) { return min(texture2D(tDiffuse, vUv + uTexel * o).rgb, vec3(48.0)); }
+vec3 S(vec2 o) { vec3 t = texture2D(tDiffuse, vUv + uTexel * o).rgb; return clamp(mix(t, vec3(48.0), vec3(isnan(t)) + vec3(isinf(t))), 0.0, 48.0); }
 // Karis-style firefly weight, kept gentle: it only tames extreme sub-pixel sparkles, so a small but genuinely bright
 // lamp or ghost beacon (a few pixels at 1 km) still blooms into a readable halo
 float W(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b)) * uExposure * 0.07); }

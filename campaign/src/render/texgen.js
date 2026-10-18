@@ -105,6 +105,7 @@ function scratches(buf, S, seed, count, lenMin, lenMax, val) {
 function field(S, seed, px, py, octaves = 1, gain = 0.5) {
   const out = new Float32Array(S * S);
   const xi0 = new Int32Array(S), xi1 = new Int32Array(S), ux = new Float32Array(S);
+  const rowv = new Float32Array(Math.max(1, px << Math.max(0, octaves - 1)));
   let amp = 1, sum = 0;
   for (let o = 0; o < octaves; o++) {
     const P = px << o, Q = py << o, r = mulberry32(seed + o * 101), lat = new Float32Array(P * Q);
@@ -116,9 +117,11 @@ function field(S, seed, px, py, octaves = 1, gain = 0.5) {
     for (let y = 0; y < S; y++) {
       const f = (y + 0.5) / S * Q, j = Math.floor(f), t = f - j, vy = t * t * (3 - 2 * t);
       const r0 = (j % Q) * P, r1 = ((j + 1) % Q) * P, row = y * S;
+      // lerp the two lattice rows once per texture row (scaled by amp), then each texel is one 1D lerp
+      for (let i = 0; i < P; i++) { const A = lat[r0 + i]; rowv[i] = amp * (A + (lat[r1 + i] - A) * vy); }
       for (let x = 0; x < S; x++) {
-        const A = lat[r0 + xi0[x]], B = lat[r0 + xi1[x]], C = lat[r1 + xi0[x]], D = lat[r1 + xi1[x]], u = ux[x];
-        out[row + x] += amp * (A + (B - A) * u + (C - A) * vy + (A - B - C + D) * u * vy);
+        const a = rowv[xi0[x]];
+        out[row + x] += a + (rowv[xi1[x]] - a) * ux[x];
       }
     }
     sum += amp; amp *= gain;

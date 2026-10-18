@@ -63,7 +63,7 @@ varying float vEdge;
 varying vec3 vObjP;
 varying vec3 vObjN;`;
 const WEAR_VERT = /* glsl */`
-vEdge = edge; vObjP = position; vObjN = normal;
+vEdge = edge; vObjP = position; vObjN = dot(normal, normal) > 1e-12 ? normal : vec3(0.0, 1.0, 0.0);
 #ifdef USE_INSTANCING
   vObjP += instanceMatrix[3].xyz * 0.173;
 #endif`;
@@ -150,6 +150,9 @@ function wearPatch(shader) {
   Object.assign(shader.uniforms, SHARED_U, cu);
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\n' + WEAR_VERT_PARS)
+    // geometry without a normal attribute (a ribbon updated in place, say) reads (0, 0, 0): normalize() of that is
+    // NaN, every light term goes NaN and the pixel renders black (and blooms). Light it as facing up instead.
+    .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nif (dot(objectNormal, objectNormal) < 1e-12) objectNormal = vec3(0.0, 1.0, 0.0);')
     .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WEAR_VERT);
   let fs = shader.fragmentShader
     .replace('#include <common>', '#include <common>\n' + WEAR_FRAG_PARS)
@@ -205,16 +208,16 @@ export function install(ctx) {
     const t0 = performance.now();
     texSize = S;
     const D = THREE.NoColorSpace, C = THREE.SRGBColorSpace;
-    setTex('panel', TG.genPanel(Math.min(S, 256)), C);
-    // grain and rock serve StdOpts.map and the rock/concrete detail here (the terrain bakes its own detail maps), so
-    // 512² is plenty and keeps install inside the AD §4.6 budget on High
-    setTex('grain', TG.genGrain(Math.min(S, 512), style), D);
-    setTex('rock', TG.genRock(Math.min(S, 512), style), D);
-    setTex('concrete', TG.genConcrete(Math.min(S, 512)), D);
-    setTex('metal', TG.genMetal(Math.min(S, 512)), D);
-    setTex('grime', TG.genGrime(Math.min(S, 512)), D);
-    setTex('noise', TG.genNoise(Math.min(S, 512)), D);
-    const cw = Math.max(64, Math.min(128, S / 8)) | 0;
+    // arch §4.1 / §7.6: every TexName is generated at exactly tier.textureSize (High 1024, Medium 512, Low 256).
+    // The sprite atlases are 4 × 2 cells, so their width is textureSize and a cell is textureSize / 4.
+    setTex('panel', TG.genPanel(S), C);
+    setTex('grain', TG.genGrain(S, style), D);
+    setTex('rock', TG.genRock(S, style), D);
+    setTex('concrete', TG.genConcrete(S), D);
+    setTex('metal', TG.genMetal(S), D);
+    setTex('grime', TG.genGrime(S), D);
+    setTex('noise', TG.genNoise(S), D);
+    const cw = Math.max(16, S / 4) | 0;
     setTex('smokeSprite', TG.genSmokeAtlas(cw), D);
     setTex('sparkSprite', TG.genSparkAtlas(cw), D);
     setTex('_decals', TG.genDecalAtlas(Math.max(96, Math.min(192, S / 4)) | 0), C);
@@ -468,8 +471,8 @@ export function install(ctx) {
       const want = s === 'snow' || s === 'ash' ? s : 'grit';
       if (want === style) return false;
       style = want;
-      setTex('grain', TG.genGrain(Math.min(texSize, 512), style), THREE.NoColorSpace);
-      setTex('rock', TG.genRock(Math.min(texSize, 512), style), THREE.NoColorSpace);
+      setTex('grain', TG.genGrain(texSize, style), THREE.NoColorSpace);
+      setTex('rock', TG.genRock(texSize, style), THREE.NoColorSpace);
       ctx.events.emit('materials:textures', { size: texSize, style });
       return true;
     },

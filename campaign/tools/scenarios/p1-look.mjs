@@ -494,12 +494,20 @@ export default async function (g) {
         for (let y = 0; y < t.height; y += 2) for (let x = x0; x < x0 + strip; x++) { const i = (y * t.width + x) * 4; s += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; n++; }
         cols.push(s / n);
       }
-      let worst = 0, at = 0, peak = 0;
-      for (let i = 1; i < cols.length; i++) { const j = Math.abs(cols[i] - cols[i - 1]); if (j > worst) { worst = j; at = i * 8; } peak = Math.max(peak, cols[i]); }
-      return { worst, at, peak };
+      // A single bright ray (AD §5.2's vertical rays, sharpest at the curtain's lower edge) is one strip brighter than
+      // its neighbours inside the curtain; an end cut is a step that stays on both sides. A median over 5 strips
+      // (40 px) removes isolated ray spikes and keeps a step edge intact, so a cut still shows at its full height.
+      const med = cols.map((_, i) => { const w = cols.slice(Math.max(0, i - 2), i + 3).sort((p, q) => p - q); return w[w.length >> 1]; });
+      let worst = 0, at = 0, peak = 0, raw = 0, rawAt = 0;
+      for (let i = 1; i < cols.length; i++) {
+        const j = Math.abs(med[i] - med[i - 1]); if (j > worst) { worst = j; at = i * 8; }
+        const r = Math.abs(cols[i] - cols[i - 1]); if (r > raw) { raw = r; rawAt = i * 8; }
+        peak = Math.max(peak, cols[i]);
+      }
+      return { worst, at, peak, raw, rawAt };
     });
     g.log(`night rim ${tier}: aurora column step`, JSON.stringify(cut));
-    g.assert(cut.worst < 0.03, `${tier}: the aurora fades out at its ends, no hard vertical cut (largest step between 8 px column strips ${cut.worst.toFixed(3)} at x ${cut.at}, peak ${cut.peak.toFixed(3)})`);
+    g.assert(cut.worst < 0.03, `${tier}: the aurora fades out at its ends, no hard vertical cut (largest step between 40 px median column strips ${cut.worst.toFixed(3)} at x ${cut.at}; raw 8 px step ${cut.raw.toFixed(3)} at x ${cut.rawAt} is ray texture; peak ${cut.peak.toFixed(3)})`);
   }
   // ghost glow at 1 km: ≥ 4 px
   async function ghostGlow(tier) {
@@ -509,8 +517,9 @@ export default async function (g) {
       const dir = new T.Vector3(...P.dir(350, 3));
       G.setCamera(camP.toArray(), camP.clone().addScaledVector(dir, 100).toArray(), 66);
       const at = camP.clone().addScaledVector(dir, 1000);
-      // the beat pulse at its peak: phase cancels the shared clock
-      const phase = -(c.materials.uniforms.uBeat.value % 1);
+      // the beat pulse at its peak: phase cancels the shared clock. Aim 0.01 past the peak (94% of it): exactly on it,
+      // float32 rounding in the shader can land fract() just below 1, which is the pulse's trough
+      const phase = 0.01 - (c.materials.uniforms.uBeat.value % 1);
       const h = c.particles.glows.add(at, { color: '#a8ff9e', size: 0.6, intensity: 8, minPx: 4, pulse: 'beat', phase });
       G.render();
       const q = P.project(at.toArray());
@@ -536,6 +545,31 @@ export default async function (g) {
   if (on('night')) {
   await nightShots('high');
   await ghostGlow('high');
+  // HDR sanity: no non-finite pixel in the linear frame, even with geometry that has no normal attribute (a ribbon
+  // updated in place) under a library material. Such a pixel renders black and used to bloom into a bright disc.
+  const hdr = await g.eval(() => {
+    const c = window.__game.ctx, T = c.THREE, R = c.renderer, G = window.__game, P = window.__p1;
+    const camP = new T.Vector3(c.player.pos.x, c.player.pos.y + 40, c.player.pos.z), dir = new T.Vector3(...P.dir(350, 20));
+    G.setCamera(camP.toArray(), camP.clone().addScaledVector(dir, 100).toArray(), 66);
+    const geo = new T.BufferGeometry(), at = camP.clone().addScaledVector(dir, 60), pos = [];
+    for (let i = 0; i < 11; i++) pos.push(at.x - 6 + i * 1.2, at.y + Math.sin(i) * 1.5, at.z, at.x - 6 + i * 1.2, at.y + Math.sin(i) * 1.5 - 1.2, at.z);
+    const idx = []; for (let i = 0; i < 10; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    geo.setAttribute('position', new T.BufferAttribute(new Float32Array(pos), 3)); geo.setIndex(idx);
+    const ribbon = new T.Mesh(geo, c.materials.get('paintWakeRed')); ribbon.frustumCulled = false; c.levelRoot.add(ribbon);
+    G.render();
+    const sz = R.getDrawingBufferSize(new T.Vector2()), rt = new T.WebGLRenderTarget(sz.x, sz.y, { type: T.FloatType });
+    const tm = R.toneMapping; R.toneMapping = T.NoToneMapping;
+    R.setRenderTarget(rt); R.clear(); R.render(c.scene, c.camera); R.setRenderTarget(null); R.toneMapping = tm;
+    const buf = new Float32Array(sz.x * sz.y * 4); R.readRenderTargetPixels(rt, 0, 0, sz.x, sz.y, buf); rt.dispose();
+    let bad = 0, ribbonPx = 0; const q = P.project(at.toArray());
+    for (let i = 0; i < buf.length; i += 4) if (!Number.isFinite(buf[i]) || !Number.isFinite(buf[i + 1]) || !Number.isFinite(buf[i + 2])) bad++;
+    const qi = (Math.round(sz.y - 1 - q[1] * sz.y / c.canvas.clientHeight) * sz.x + Math.round(q[0] * sz.x / c.canvas.clientWidth)) * 4;
+    const v = [buf[qi], buf[qi + 1], buf[qi + 2]];
+    c.levelRoot.remove(ribbon); geo.dispose();
+    return { bad, px: sz.x * sz.y, ribbon: v.map(x => +(+x).toFixed(4)) };
+  });
+  g.log('hdr frame', JSON.stringify(hdr));
+  g.assert(hdr.bad === 0 && hdr.ribbon.every(Number.isFinite), `High: the linear HDR frame has no NaN/Inf pixel, a normal-less ribbon under a library material included (${hdr.bad} bad of ${hdr.px}; ribbon ${JSON.stringify(hdr.ribbon)})`);
 
   // night → dawn blend: shortest-arc azimuth (350° → 95° through north)
   const blendLog = [];
