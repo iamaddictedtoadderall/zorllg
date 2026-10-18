@@ -296,6 +296,13 @@ export class Skiff extends L1Unit {
       this.ctx.fx?.sparks?.(this.pos, 14, [1, 0.8, 0.4], 18);
       this.ctx.audio?.play?.('stagger', this.pos);
     }
+    // integration: the guarantee Gaffer (1,000 AP, ×1.6 while staggered) died to the rifle in under half a second after
+    // its scripted stagger, before a player could close to TEAR range, so the "guarantee" rarely held. Until its part is
+    // torn, a killing player hit leaves it at 1 AP and staggered again; the TEAR (combat.kill, kind 'tear') still ends it.
+    if (this.config?.staggerOnFirstHit && info?.killed && this.haul && !this.haul.taken && info.source?.team === 'player' && info.source?.kind !== 'tear') {
+      info.killed = false; this.ap = 1; this.alive = true;
+      this.stagT = Math.max(this.stagT || 0, this.stagDur); this.imp = 0;
+    }
     super.onDamage?.(info);
   }
   cleanup() { this.endHarpoon(); disposeGlow(this.tele); if (this.L.tow?.by === this) this.L.breakTow('dead'); }

@@ -36,7 +36,7 @@ export default async function (g) {
     IP.sleep = sleep;
     /** the spoiler watch: visible text naming the frame before the naming */
     IP.spoilCheck = () => {
-      if (ctx.l01?.named) return;
+      if (ctx.l01?.named || IP.fired.has('t_bench')) return;   // the naming begins at t_bench (Kit's line names it)
       const t = document.body.innerText || '';
       const m = t.match(/[^\n]{0,40}\bmoth\b[^\n]{0,40}/i);
       if (m && IP.spoil.length < 20) IP.spoil.push({ state: ctx.flow.state, text: m[0], cp: ctx.mission?.checkpoint ?? null });
@@ -50,9 +50,10 @@ export default async function (g) {
         await sleep(120); IP.spoilCheck(); return 'interstitial';
       }
       if (st === 'dead') {
-        await sleep(300);
+        // the death beat runs on sim time before the death screen shows: step until Retry appears
         const b = document.querySelector('#screen #bRetry');
-        if (b) { IP.deaths++; b.click(); await sleep(400); }
+        if (!b) { G.step(n); await sleep(0); return 'dead'; }
+        IP.deaths++; b.click(); await sleep(400);
         // the retry reloads the checkpoint (async); wait for 'playing'
         for (let i = 0; i < 600 && ctx.flow.state !== 'playing'; i++) {
           if (ctx.flow.state === 'interstitial') { document.querySelector('#screen #bNext')?.click(); }
@@ -159,13 +160,16 @@ export default async function (g) {
     };
     /** walk straight at a world point (short distances) */
     IP.walkAt = async (x, z, maxSec, r = 6) => {
-      const p = ctx.player; let steps = 0;
+      const p = ctx.player; let steps = 0, last = p.pos.clone(), lastT = 0;
       while (steps < maxSec * 60) {
         if (ctx.flow.state !== 'playing') { await IP.tick(10); steps += 2; continue; }
         const d = Math.hypot(x - p.pos.x, z - p.pos.z);
         if (d < r) { G.input.clear(); return { ok: true, t: steps / 60 }; }
         p.yaw = Math.atan2(-(x - p.pos.x), -(z - p.pos.z)); p.pitch = -0.1;
         G.input.clear(); G.input.move(0, 1);
+        // blocked by a ridge: jump and hover over it (when those systems are back)
+        if (steps - lastT >= 60) { if (p.pos.distanceTo(last) < 6 && p.abilities?.jump && p.onGround) G.input.press('jump'); last.copy(p.pos); lastT = steps; }
+        if (!p.onGround && p.vel.y < 0 && p.abilities?.hover && p.en > 200) G.input.hold('jump', true);
         await IP.tick(10); steps += 10;
       }
       G.input.clear();
@@ -394,7 +398,10 @@ export default async function (g) {
       g.assert(r.ok, 'sled 1 flagged (hold F)');
     }
   } else note('Z3: t_sled1 never fired (the tow skiff survived?)');
-  r = await walkTo(1012, -160, 60, 1, 14);   // cache A: the old wreck in the side lead
+  {   // cache A: the old wreck frozen into a side lead
+    const ca = await routePos(1012, -160);
+    r = await walkAt(ca[0], ca[2], 60, 4);
+  }
   if (!r.ok) { note('Z3: walk to cache A failed; teleported'); const ca = await routePos(1012, -160); await g.teleport([ca[0], ca[2]]); }
   await step(1);
   g.log('rack after cache A', await ev(() => [...(window.__game.ctx.haul?.rack || [])]));
@@ -559,22 +566,39 @@ export default async function (g) {
       if (!res.ok) { log.invalid = (log.invalid || 0) + 1; break; }
       const here = F.floeAt(p.pos.x, p.pos.z);
       let path = res.path; const k = path.indexOf(here); if (k >= 0) path = path.slice(k + 1);
+      path = path.filter(i => F.state[i] < 2);   // skip ice that has already sunk
       log.path = path.length;
       let fellOff = false;
       for (const i of path) {
-        const f = F.field.floes[i];
+        const f = F.field.floes[i], cr = m.colR(f);
         if (!f || F.state[i] >= 2) { fellOff = true; break; }
-        let ok = false;
-        for (let s = 0; s < 6 * 60; s += 10) {
-          if (ctx.flow.state !== 'playing') { await IP.tick(10); s += 2; continue; }
-          if (F.floeAt(p.pos.x, p.pos.z) === i && p.onGround) { ok = true; break; }
-          const d = Math.hypot(f.x - p.pos.x, f.z - p.pos.z);
+        let ok = false, boosts = 0;
+        for (let s = 0; s < 8 * 60; s += 5) {
+          if (ctx.flow.state !== 'playing') { await IP.tick(5); s += 2; continue; }
+          const cur = F.floeAt(p.pos.x, p.pos.z), d = Math.hypot(f.x - p.pos.x, f.z - p.pos.z);
+          if (cur === i && Math.abs(p.pos.y - f.top) < 0.6 && p.onGround) { ok = true; break; }
+          if (p.pos.y < (L.DATA.sea ?? -24) - 1) {   // in the water
+            log.fails = log.fails || []; if (log.fails.length < 8) log.fails.push({ i, from: F.floeAt(p.pos.x, p.pos.z), gap: Math.round(d - cr), en: Math.round(p.en), stag: +(p.stagT || 0).toFixed(1), tow: !!p.tow,
+              lat: L.latchCount?.() ?? 0, ist: F.state[i], t: +ctx.clock.time.toFixed(1), x: Math.round(p.pos.x), z: Math.round(p.pos.z) });
+            break;
+          }
           p.yaw = Math.atan2(-(f.x - p.pos.x), -(f.z - p.pos.z)); p.pitch = -0.1;
-          G.input.clear(); G.input.move(0, 1);
-          if (d > (f.r || 10) * 0.6 && p.onGround) G.input.press('jump');
-          if (!p.onGround && p.vel.y < 2) G.input.hold('jump', true);
-          if (p.tow) G.input.press('boost');
-          await IP.tick(10);
+          G.input.clear();
+          // read the ice: on blue (shaded) ice that holds, let EN recover before the next jump
+          if (p.onGround && cur >= 0 && cur !== i && F.shaded[cur] && F.state[cur] === 0 && p.en < 850) { await IP.tick(5); continue; }
+          if ((L.latchCount?.() ?? 0) > 0 && p.en > 200 && (s % 30) === 0) G.input.press('boost');   // shake latched Gleaners off
+          G.input.move(0, 1);
+          const gap = d - cr, cf = cur >= 0 ? F.field.floes[cur] : null;
+          const edge = cf ? Math.hypot(cf.x - p.pos.x, cf.z - p.pos.z) > m.colR(cf) - 1.5 : true;
+          // a running jump from the very edge clears about 22 m; quick boost at takeoff only for longer gaps; hover only
+          // when about to land short (hover costs double on iced vents)
+          if (p.onGround && cur !== i && (gap < 8 || edge)) G.input.press('jump');
+          else if (!p.onGround && gap > 1) {
+            if (p.en > 260 && gap > 20 && boosts < 1 && p.vel.y > 0) { G.input.press('boost'); boosts++; }
+            else if (p.vel.y < 0 && p.pos.y < f.top + 3 && p.en > 40) G.input.hold('jump', true);
+          }
+          if (p.tow && p.en >= 60) G.input.press('boost');   // snap a harpoon cable
+          await IP.tick(5);
         }
         if (!ok) { fellOff = true; break; }
         log.hops++;
@@ -593,21 +617,33 @@ export default async function (g) {
   g.log('floe hops', hop, { sled3: sl });
   if (hop.teleports) note(`Z6: fell in the water ${hop.teleports}× while hopping the floes (teleported back onto a floe)`);
   await zone('Z6 after the hop');
+  const crossed = await ev(() => { const p = window.__game.ctx.player; return [p.pos.x, p.pos.y, p.pos.z]; });
   if (sl && !(await ev(() => window.__game.ctx.mission.flags.sled3))) {
-    note('Z6: sled 3 is off the hop path; teleported to it');
+    note('Z6: sled 3 is off the hop path; teleported to it and back');
     await g.teleport([sl[0] - 5, sl[1] + 0.4, sl[2] + 2]);
     await g.input({ clear: true, hold: { interact: true } });
     r = await until((ctx) => ctx.mission.flags.sled3, null, 4, 5);
     await g.input({ clear: true });
     g.log('sled 3', r);
+    await g.teleport([crossed[0], crossed[1] + 0.4, crossed[2]]);
   }
   await shot('61-z6-sprint');
   const shore = await ev(() => window.__game.ctx.mission.flags['p:shore']);
   if (!shore) {
-    r = await walkTo(3065, 0, 60, 1);
-    if (!r.ok) { note(`Z6: could not reach the fast ice at s 3065 on foot (${JSON.stringify(r)}); teleported`); const lb = await routePos(3065, 0); await g.teleport([lb[0], lb[2]]); }
-    r = await walkTo(3140, 10, 40, 1);
-    if (!r.ok) { const fi = await routePos(3140, 10); await g.teleport([fi[0], fi[2]]); }
+    // from the last floe onto the fast ice and up to the shore (hop the last gap if there is one)
+    r = await ev(async () => { const IP = window.__ip, G = window.__game, ctx = G.ctx, p = ctx.player, goal = ctx.world.resolve({ s: 3140, l: 10 });
+      for (let k = 0; k < 60 * 6 && !ctx.mission.flags['p:shore']; k++) {
+        if (ctx.flow.state === 'playing' && !p.frozen) {
+          p.yaw = Math.atan2(-(goal.x - p.pos.x), -(goal.z - p.pos.z)); G.input.clear(); G.input.move(0, 1);
+          if (p.onGround && (k % 12) === 0) G.input.press('jump'); else if (!p.onGround && p.vel.y < 0 && p.en > 150) G.input.hold('jump', true);
+        }
+        await IP.tick(10);
+      }
+      G.input.clear();
+      return { ok: !!ctx.mission.flags['p:shore'], s: ctx.world.route.closest(p.pos.x, p.pos.z).s, y: p.pos.y };
+    });
+    g.log('onto the fast ice', r);
+    if (!r.ok) { note(`Z6: could not reach the shore from the last floe (${JSON.stringify(r)}); teleported`); const fi = await routePos(3140, 10); await g.teleport([fi[0], fi[2]]); }
   }
   r = await until((ctx) => ctx.mission.flags['p:shore'], null, 10);
   g.assert(r.ok, 'the shore');
@@ -623,8 +659,15 @@ export default async function (g) {
   g.assert(r.ok, 'o_bench: "Walk to the Bench, under the work lamp"');
   await step(1.5);
   await shot('71-z7-shore');
-  r = await walkTo(3282, 20, 90, 0, 17);
-  g.assert(r.ok, `walked up the beach to the Bench (${r.t?.toFixed(1)} s)`);
+  r = await ev(async () => { const IP = window.__ip, ctx = window.__game.ctx, p = ctx.player, goal = ctx.world.resolve({ s: 3282, l: 20 });
+    for (let k = 0; k < 90 * 6 && !IP.fired.has('t_bench'); k++) {
+      if (ctx.flow.state === 'playing' && !p.frozen) { p.yaw = Math.atan2(-(goal.x - p.pos.x), -(goal.z - p.pos.z)); window.__game.input.clear(); window.__game.input.move(0, 1); }
+      await IP.tick(10);
+    }
+    window.__game.input.clear();
+    return { ok: IP.fired.has('t_bench') };
+  });
+  g.assert(r.ok, 'walked up the beach to the Bench: the naming starts (t_bench)');
   r = await until((ctx) => window.__ip.lines.some(l => /I'm calling it Moth/.test(l.text)), null, 60, 5);
   g.assert(r.ok, 'the naming');
   await step(1.2, 4);

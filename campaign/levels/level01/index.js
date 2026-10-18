@@ -147,12 +147,14 @@ function createRuntime(ctx, m, DATA, opts) {
     L.tow = T;
     p.tow = {
       owner: T,
+      // L1 §11 (skiff, Gaffer attack): up to 18 m/s for up to 3 s; the cable breaks on a quick boost or a blade lunge
+      // (player.tow), or when the skiff is staggered or destroyed (here)
       to: () => {
-        if (!unit.alive || p.pos.distanceTo(unit.pos) > 140) return null;
+        if (!unit.alive || unit.stagT > 0 || p.pos.distanceTo(unit.pos) > 140) return null;
         return Math.hypot(unit.pos.x - p.pos.x, unit.pos.z - p.pos.z) > 22 ? unit.pos : p.pos;   // slack inside 22 m
       },
-      get speed() { return Math.max(14, (unit.speed || 0) * 0.8); },
-      seconds: 6,
+      speed: 18,
+      seconds: 3,
       onBreak: (reason) => { if (L.tow === T) L.breakTow(reason); },
     };
     ctx.audio?.play?.('winch', ctx.player?.pos);

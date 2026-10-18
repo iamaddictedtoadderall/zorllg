@@ -391,7 +391,7 @@ Positions are route-relative (`s`, `l`, `h` above ground) unless given as world 
 - **Wave 0:** `pin_g` (Gaffer, tags `pin`, `sled1tow`) at s 960 / l +40, towing `sled1` on a cable 30 m behind. `pin_s` (Sleet, tag `pin`) at s 990 / l +110. Both circle Tick (at s 900 / l +70) with rake runs and shoot at it (visual hits on the ridge around Tick only). They switch to Moth when it fires or comes within 250 m.
 - **Wave 1** (`when: { remaining: 1 }`, or 50 s after the wave starts): `pin_g2` (Gaffer, spawns at **1,400 AP of 2,200**, so it staggers quickly and guarantees the TEAR lesson) at s 1080 / l −60, and `pin_s2` (Sleet) at s 1100 / l +20. They arrive down the east lead together.
 - **Escalation:** in wave 1 the two coordinate. The Gaffer harpoons and tows Moth toward the Sleet's pass line. Snapping the cable (quick boost) is the answer.
-- **TEAR guarantee:** if both waves die without a TEAR, one more Gaffer (`pin_g3`, 1,000 AP) sails in at s 1120 / l 0 and is scripted to stagger on its first hit.
+- **TEAR guarantee:** if both waves die without a TEAR, one more Gaffer (`pin_g3`, 1,000 AP) sails in at s 1120 / l 0 and is scripted to stagger on its first hit. (Integration: until its part is torn it cannot be shot dead; a killing hit leaves it at 1 AP and staggered again, so the rifle cannot skip the lesson.)
 - **Cleared:** all `enc:e_pin` dead.
 
 ### E3 · `e_gleaners`: the wrecks (Z3)
