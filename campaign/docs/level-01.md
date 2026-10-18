@@ -500,7 +500,7 @@ Movement: cruise 4.5 m/s, hunt 7 m/s, turn rate 0.12 rad/s. Its hull colliders (
 - **Saw sweep:** when the player is within 70 m in front. Telegraph 1.5 s (the saw revs, teeth glow white, a spark fountain, the `charge` SFX). It sweeps a 140° arc at ground level, radius 50 m from the shoulder. Everything below 8 m above the ice takes 1,800 damage and 1,400 impact. Counter: jump or hover over it, or quick boost out of range. **After the sweep the saw stays lowered for 2 s and takes ×1.5 damage.**
 - **Cut-line strike:** every 12 s at 80 to 300 m. It drops the saw into the ice and drives a crack line straight at the player at 30 m/s, up to 300 m. The ice glows 0.8 s ahead of the eruption. Within 5 m of the line: 900 damage, 1,200 impact, and a launch upward. Counter: quick boost sideways. The crack leaves a fresh cut line (decal only).
 - Turrets and floodlight continue. Skiff launches every 50 s.
-- **Transition:** when the second saw dies, it turns back east and crawls to the edge at z ≈ 0 (about 10 s; skiffs and turrets keep the player busy): phase 3, and the checkpoint `cp_harvest`.
+- **Transition:** when the second saw dies, it turns back east and crawls to the edge at z ≈ 0 (about 10 s; skiffs and turrets keep the player busy): phase 3, and the checkpoint `cp_harvest`. (Integration: `cp_harvest` is saved when the crawl begins, since its restore already starts in phase 3 at the edge; a death during the crawl no longer sends the player back to redo both saws. The crawl itself takes about 40 to 75 s at 5 m/s from where the hull usually is.)
 
 ### 6.5 Phase 3: HARVEST (bow auger; target 60 s)
 
