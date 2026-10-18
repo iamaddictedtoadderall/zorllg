@@ -1014,7 +1014,7 @@ export default async function (g) {
     g.log('debrief', db.replace(/\s+/g, ' ').slice(0, 400));
     const flags = await ev(() => window.__game.ctx.mission.flags);
     const nSled = ['sled1', 'sled2', 'sled3'].filter(k => flags[k]).length;
-    g.assert(/WALK DAY 1 · THE RIME SHELF/i.test(db) && /Haul/i.test(db) && new RegExp(`${nSled}\\s*/\\s*3`).test(db),
+    g.assert(/WALK DAY 1\s*(·\s*)?THE RIME SHELF/i.test(db) && /Haul/i.test(db) && new RegExp(`${nSled}\\s*/\\s*3`).test(db),
              `debrief: title, haul and sledges ${nSled} / 3`);
     if (SHOTS) await shot('debrief', { settle: false });
     // ── Bench 1 through garage.bench (A6) ──

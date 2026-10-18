@@ -138,17 +138,32 @@ function createRuntime(ctx, m, DATA, opts) {
   };
 
   // ── harpoon tows (the Gaffer's harpoon on Moth; quick boost snaps the cable) ──
+  // integration: the drag rides on ctx.player.tow (P4), so the player's own movement doesn't cancel it; L.tow mirrors it
+  // for the cable and the Gaffer's "one harpoon at a time" rule
   L.attachTow = (unit) => {
-    if (!unit?.alive) return;
-    L.tow = { by: unit, t: 0 };
+    const p = ctx.player;
+    if (!unit?.alive || !p) return;
+    const T = { by: unit, t: 0 };
+    L.tow = T;
+    p.tow = {
+      owner: T,
+      to: () => {
+        if (!unit.alive || p.pos.distanceTo(unit.pos) > 140) return null;
+        return Math.hypot(unit.pos.x - p.pos.x, unit.pos.z - p.pos.z) > 22 ? unit.pos : p.pos;   // slack inside 22 m
+      },
+      get speed() { return Math.max(14, (unit.speed || 0) * 0.8); },
+      seconds: 6,
+      onBreak: (reason) => { if (L.tow === T) L.breakTow(reason); },
+    };
     ctx.audio?.play?.('winch', ctx.player?.pos);
     ctx.hud?.warn?.('HARPOONED · BOOST TO SNAP', 2);
   };
   L.breakTow = (reason) => {
     const t = L.tow; if (!t) return;
     L.tow = null;
+    const p = ctx.player;
+    if (p?.tow?.owner === t) p.tow = null;
     if (reason === 'boost') {
-      const p = ctx.player;
       if (p) { ctx.fx?.sparks?.(p.center(_c), 16, [1, 0.8, 0.5], 20); ctx.audio?.play?.('hit', p.pos); }
     }
   };
@@ -431,19 +446,11 @@ function physics(L, dt) {
   const ctx = L.ctx, p = L.player();
   L.water.update(dt);
   if (!p) return;
-  // the Gaffer's harpoon: Moth is dragged toward the skiff; 6 s, or a quick boost, or the skiff's death breaks it
+  // the Gaffer's harpoon: ctx.player.tow drags the frame (attachTow); here only the mirror is kept honest
   const T = L.tow;
   if (T) {
     T.t += dt;
-    const u = T.by;
-    if (!u?.alive || T.t > 6 || p.pos.distanceTo(u.pos) > 140) L.breakTow('end');
-    else {
-      const dx = u.pos.x - p.pos.x, dz = u.pos.z - p.pos.z, d = Math.hypot(dx, dz) || 1;
-      if (d > 22) {
-        const sp = Math.max(14, (u.speed || 0) * 0.8);
-        p.vel.x = damp(p.vel.x, dx / d * sp, 4, dt); p.vel.z = damp(p.vel.z, dz / d * sp, 4, dt);
-      }
-    }
+    if (p.tow?.owner !== T) L.tow = null;   // the player ended it (boost, blade, time, reset)
   }
   // the raid fail-safe: a harpoon in the cutter, towed to the gully
   const R = L.raidTow;

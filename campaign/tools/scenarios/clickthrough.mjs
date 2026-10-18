@@ -9,6 +9,10 @@ async function waitState(g, want, ms = 30000) {
   while (Date.now() - t0 < ms) {
     const s = await state(g);
     if (s === want) return true;
+    // an intro card waits for Next (a player reads it and clicks on)
+    if (s === 'interstitial' && want !== 'interstitial') await g.eval(() => document.querySelector('#screen #bNext')?.click());
+    // the level-end beat ('complete') runs on sim time, which the harness has debug-paused
+    if (s === 'complete' && want !== 'complete') await g.eval(() => window.__game.step(10));
     await new Promise(r => setTimeout(r, 50));
   }
   return false;
@@ -54,9 +58,26 @@ export default async function (g) {
     g.assert(a.state === 'paused' && b.state === 'playing', `${k1} pauses, ${k2} resumes and stays resumed (${a.state} → ${b.state})`);
   }
 
+  // integration: Level 1 (THAW) is a story level that is not completed by walking its route (int-play.mjs plays it
+  // through), so the walk → debrief → title half runs on the Proving Ground: Esc → Quit to title → Level select
+  // (debug lists the hidden test level) → briefing → Deploy.
+  await g.page.keyboard.press('Escape');
+  await g.step(1);
+  await click(g, '#screen #bQuit');
+  g.assert(await waitState(g, 'title'), 'pause → Quit to title');
+  await click(g, '#bSelect');
+  g.assert(await waitState(g, 'levelSelect'), 'Level select');
+  const picked = await g.eval(() => { const b = [...document.querySelectorAll('#screen .list-item')].find(b => /Proving Ground/i.test(b.textContent)); if (b) b.click(); return !!b; });
+  g.assert(picked, 'the Proving Ground is listed (debug)');
+  g.assert(await waitState(g, 'briefing'), 'Level select → briefing');
+  await click(g, '#bStart');
+  g.assert(await waitState(g, 'playing', 60000), 'Deploy → playing (Proving Ground)');
+  const s1 = await g.eval(() => window.__game.getState());
+  g.assert(s1.levelId === 'test' && s1.player?.alive, `playing ${s1.levelId}`);
+
   // walk the route: steer with injected look toward a point ahead, push the stick forward
   const total = await g.eval(() => window.__game.ctx.world.route.length);
-  let s = s0.player.s, iters = 0, reachedEnd = false;
+  let s = s1.player.s, iters = 0, reachedEnd = false;
   await g.input({ clear: true, move: [0, 1] });
   while (iters++ < 400) {
     await g.eval(() => {
@@ -75,11 +96,13 @@ export default async function (g) {
   g.assert(reachedEnd, 'walking to the route end completes the level');
   g.assert(await waitState(g, 'debrief'), 'complete → debrief');
   const deb = await g.eval(() => ({ h2: document.querySelector('#screen h2')?.textContent, sub: document.querySelector('#screen .sub')?.textContent,
-                                    save: window.__game.save.get().progress.levels.l01 }));
-  g.assert(deb.save?.completed && deb.save.completions === 1, `debrief shown and l01 saved as completed (${deb.sub})`);
+                                    save: window.__game.save.get().progress.levels.test }));
+  g.assert(deb.save?.completed && deb.save.completions === 1, `debrief shown and the Proving Ground saved as completed (${deb.sub})`);
   await g.shot('debrief', { settle: false });
 
-  await click(g, '#bQuit');
+  // the debrief's actions are #bA0.. (A3.7): Continue, Garage, Title
+  const quitOk = await g.eval(() => { const b = [...document.querySelectorAll('#screen .actions button')].find(b => /^\s*Title\s*$/i.test(b.textContent)); if (b) b.click(); return !!b; });
+  g.assert(quitOk, 'the debrief offers Title');
   g.assert(await waitState(g, 'title'), 'debrief → title');
   const back = await g.eval(() => ({ h1: document.querySelector('#screen h1')?.textContent, world: !!window.__game.ctx.world.def,
                                      active: window.__game.ctx.player.active }));

@@ -536,7 +536,11 @@ function designMaterials(ctx, scheme, design) {
     // outline; wearStyle/bare are AD §4.4 options the library honours when it has them (ignored otherwise)
     base: std({ color: scheme.base, roughness: 0.46, metalness: 0.04, envMapIntensity: 0.6, wear: w * 0.8, wearStyle: 'founders', bare: '#9a9384' }),
     mid: std({ color: scheme.mid, roughness: 0.55, metalness: 0.04, envMapIntensity: 0.5, wear: Math.min(1, w + 0.1), wearStyle: 'founders', bare: '#8c8578' }),
-    acc: std({ color: scheme.accent, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.1, wear: 0.35, wearStyle: 'founders', bare: '#7a5e2a' }) };
+    acc: std({ color: scheme.accent, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.1, wear: 0.35, wearStyle: 'founders', bare: '#7a5e2a' }),
+    // integration: the generic dark (#1b1c20, metalness 0.5) made the booster pack and pelvis read as a black hole from
+    // the follow camera (always behind the frame, and L1 is lit from the east ahead of it). AD §4.3's moth dark
+    // (#24262b) lifted a little, as satin painted iron: still the darkest value on the frame, but it shows its shapes.
+    dark: std({ color: scheme.dark ?? '#3a3c42', roughness: 0.58, metalness: 0.15, envMapIntensity: 0.7, wear: w * 0.5, wearStyle: 'founders', bare: '#5a5650' }) };
 }
 
 /** Port of buildAC. scheme: { design, base, mid, accent, visor, flame?, blade?, dark?, wear? }.

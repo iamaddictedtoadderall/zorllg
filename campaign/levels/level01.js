@@ -378,7 +378,7 @@ const encounters = [
   { id: 'e_apron', units: [
       { kind: 'mech', at: { s: 1470, l: -40 }, opts: { name: 'SEXTON', tags: ['sexton'], boss: true, behavior: 'guard', leash: 140, faction: 'ghost',
         config: { design: 'bastion', faction: 'ghost', ap: 11000, impMax: 2400, aggression: 0.8, dodge: 0.5, preferRange: 40,
-                  weapons: ['mg', 'blade'], rifleDmg: 120, bladeDmg: 1800, phases: [{ at: 0.5, aggression: 1.0, add: ['shock'] }] } } },
+                  weapons: ['mg', 'blade'], rifleDmg: 120, bladeDmg: 1800, shockDmg: 2400, phases: [{ at: 0.5, aggression: 1.0, add: ['shock'] }] } } },
       { kind: 'gleaner_carrier', at: { s: 1470, l: -60, h: 35 }, opts: { name: 'GLEANER CARRIER', tags: ['carrier', 'carrier2'],
         config: { hold: { s: 1470, l: -60, h: 35 }, deploy: { every: 12, per: 2, max: 6, cap: 3 }, flares: 3, haul: 'flare_pod', flareOnMissiles: true } } },
       { kind: 'gleaner', count: 3, at: { s: 1480, l: -95, h: 10 }, spread: 15, opts: { name: 'GLEANER', config: { mode: 'defend' } } } ] },
@@ -712,21 +712,24 @@ const def = {
     // short marker text (mission markers show the first 28 characters)
     { id: 'o_look', text: "Look up and find Kit's kite", kind: 'manual' },
     { id: 'o_cut', text: 'Cut the ice blocks marked with orange flags', label: 'CUT MARK', kind: 'destroy', target: { tag: 'block', count: 3 }, showCount: true, marker: 'targets' },
-    { id: 'o_gully', text: 'Run east into the gully', label: 'GULLY', kind: 'reach', at: { s: 320 }, r: 30, marker: true },
+    // integration: o_gully, o_kit, o_abeyance and o_shore are completed by their triggers (t_collapse pass 318, t_pin pass
+    // 820, t_apron pass 1370, t_shore pass 3130). As 'reach' objectives their radius finished them 30 to 80 m short of the
+    // trigger, so the marker vanished and a player who stopped there had nothing telling them to go on.
+    { id: 'o_gully', text: 'Run east into the gully', label: 'GULLY', kind: 'manual', at: { s: 320 }, marker: true },
     { id: 'o_up', text: 'Find a way up: head for the light', label: 'WAY UP', kind: 'reach', at: { s: 625 }, r: 26, marker: true },
     { id: 'o_climb', text: 'Jump and hover up the shaft', kind: 'flag', flag: 'outOfShaft' },
-    { id: 'o_kit', text: 'Reach Kit under the red flare', label: 'KIT', kind: 'reach', at: { s: 860, l: 40 }, r: 80, marker: { s: 900, l: 70, h: 6 } },
+    { id: 'o_kit', text: 'Reach Kit under the red flare', label: 'KIT', kind: 'manual', at: { s: 860, l: 40 }, marker: { s: 900, l: 70, h: 6 } },
     { id: 'o_skiffs', text: "Destroy the skiffs attacking Kit's buggy", kind: 'kill', target: { tag: 'pin' }, showCount: true, marker: 'targets' },
     { id: 'o_sled1', text: 'Flag the sledge the skiff dropped', kind: 'flag', flag: 'sled1', optional: true },
     { id: 'o_wrecks', text: 'Destroy the Gleaners at the wrecks', kind: 'kill', target: { encounter: 'e_gleaners' }, marker: 'targets' },
-    { id: 'o_abeyance', text: 'Head for the giant frozen ship', label: 'FROZEN SHIP', kind: 'reach', at: { s: 1370 }, r: 80, marker: true },
+    { id: 'o_abeyance', text: 'Head for the giant frozen ship', label: 'FROZEN SHIP', kind: 'manual', at: { s: 1370 }, marker: true },
     { id: 'o_sexton', text: 'Destroy the Sexton, the green-lit frame', kind: 'kill', target: { tag: 'sexton' }, marker: 'targets' },
     { id: 'o_climb2', text: 'Climb up inside the Abeyance to the top', label: 'TOP', kind: 'flag', flag: 'crown', marker: abey(0, 124, 0) },
     { id: 'o_sled2', text: "Break the winch lock in the ship's hold", kind: 'flag', flag: 'sled2', optional: true },
     { id: 'o_heads', text: "Break the Icebreaker's three drill heads", kind: 'destroy', target: { tag: 'drillhead', count: 3 },
       showCount: true, marker: 'targets' },
     { id: 'o_surface', text: 'Rise to the light above you', kind: 'flag', flag: 'surfaced' },
-    { id: 'o_shore', text: "Follow Kit's flares to the shore", label: 'SHORE', kind: 'reach', at: { s: 3130 }, r: 60, marker: { s: 3150, l: 0, h: 4 } },
+    { id: 'o_shore', text: "Follow Kit's flares to the shore", label: 'SHORE', kind: 'manual', at: { s: 3130 }, marker: { s: 3150, l: 0, h: 4 } },
     { id: 'o_sled3', text: 'Flag the sledge on the floe to the south', label: 'SLEDGE', kind: 'flag', flag: 'sled3', optional: true,
       failIf: { flag: 'sled3Lost' }, marker: { x: 1010, z: 262, y: FLOE_TOP + 4 } },
     { id: 'o_bench', text: 'Walk to the Bench, under the work lamp', label: 'THE BENCH', kind: 'reach', at: DATA.shore.cradle, r: 18, marker: true },

@@ -45,7 +45,8 @@ class L1Unit extends Unit {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════ skiff
-const SK = { ap: 2200, impMax: 900, stag: 2.6, cruise: 32, attack: 45, water: 30, turn: 1.2, accel: 18 };
+const SK = { ap: 2200, impMax: 860,   // integration: 860, so one point-blank Sleet Gun shot (8 × 110 = 880) staggers a fresh skiff (L1 §13.4)
+             stag: 2.6, cruise: 32, attack: 45, water: 30, turn: 1.2, accel: 18 };
 export class Skiff extends L1Unit {
   constructor(ctx, pos, o, L) {
     const cfg = o.config || {};

@@ -1077,7 +1077,7 @@ All models are built from `art/kit.js` (bevelled plate profiles, `panelBox`, `tr
 | | Value | vs prototype |
 | --- | --- | --- |
 | AP | 2,200 | tank 3,000 |
-| impMax | 900 | tank 1,000 |
+| impMax | 860 (integration: so one point-blank Sleet Gun shot, 8 × 110, staggers it) | tank 1,000 |
 | Stagger | 2.6 s: the sail goes slack and it coasts to a halt over 2 s | — |
 | Hit volume | sphere r 4.5 m at h 3 | |
 | Body | rad 5, hgt 6 | |
@@ -1375,7 +1375,7 @@ The rack holds 3, so a player who wants all three types has to manage swaps. Cac
 | Part | Plays like | Exact values |
 | --- | --- | --- |
 | **Lantern Carbine** (stock R) | Balanced auto-rifle with lock-on lead | 245 dmg, 70 imp, every 0.135 s, 680 m/s, 600 rounds, spread 0.008 (prototype) |
-| **Sleet Gun** (R) | A short-range stagger machine; the fastest way to set up TEARs | 8 pellets × (140 dmg, 110 imp) per shot, every 0.85 s, 520 m/s, 96 shells, 4.5° cone. Full damage to 40 m, falling linearly to 25% at 80 m, nothing past 90 m. At close range one shot staggers a skiff (impMax 900). |
+| **Sleet Gun** (R) | A short-range stagger machine; the fastest way to set up TEARs | 8 pellets × (140 dmg, 110 imp) per shot, every 0.85 s, 520 m/s, 96 shells, 4.5° cone. Full damage to 40 m, falling linearly to 25% at 80 m, nothing past 90 m. At close range one shot staggers a skiff (impMax 860). |
 | **Psalter Blade** (stock L) | Pulse-blade lunge to the locked target | 2,300 dmg, 700 imp, cooldown 2.6 s, lunge 75 m at 110 m/s (prototype) |
 | **Gaff Harpoon** (L) | Grapple and pull; replaces blade melee | Cable 80 m, cooldown 3.0 s, head 220 m/s. On a small or medium target (impMax ≤ 1,000): reels it to 12 m in front of Moth over 0.6 s, 300 dmg and 2,000 impact (a guaranteed stagger, so a TEAR). On a heavy, a boss part, terrain or a structure: pulls Moth to the hit point at 70 m/s, stopping 6 m short and keeping momentum. TEAR still works with the harpoon fitted. |
 | **Chorus Rack** (stock S) | Four-lock missile volley | 4 × (620 dmg, 260 imp), cooldown 7 s, 80 missiles, turn 2.6, accel 110, max 175 (prototype) |

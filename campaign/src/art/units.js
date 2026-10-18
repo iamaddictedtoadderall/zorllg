@@ -422,7 +422,9 @@ export function animateUnit(rig, dt, st = {}) {
     }
   }
   if (rig._legs?.length) {
-    const gait = clamp(sp / 6, 0, 1.5), w = t * (1.2 + sp * 0.25);
+    // integration: the gait phase is integrated, so the stride rate follows the speed without the phase jumping
+    rig._gp = (rig._gp ?? t) + dt * (1.2 + sp * 0.25);
+    const gait = clamp(sp / 6, 0, 1.5), w = rig._gp;
     for (const L of rig._legs) {
       const ph = w + L.phase, lift = Math.max(0, Math.sin(ph));
       L.leg.rotation.x = Math.cos(ph) * 0.28 * gait;
