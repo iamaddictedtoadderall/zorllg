@@ -5,6 +5,12 @@
 // The sky's horizon colour IS the fog colour (with the same sun inscatter), and every patched material reaches pure fog
 // colour before the far plane, so the terrain's far edge never shows. Ridge silhouette bands continue the land above
 // the horizon. All art values are resolved into one flat struct (R) that blends without allocation.
+//
+// Skyline objects (arch §5.8): solid kinds draw right after the sky dome (renderOrder −9 on the meshes only; a
+// Group's renderOrder would become every child's groupOrder and sort them under the sky), plumes in the transparent
+// pass as soft density fields (a rising puff stream for smoke, a torn curved curtain for the storm wall). Extras on a
+// skyline def, all optional: `yaw` (degrees; default: the front faces the first camera that sees it) and `at.dip`
+// (degrees below the camera's horizontal for the base of an azimuth placement; default 0.8).
 import * as THREE from 'three';
 import { deepMerge, DEG, clamp, smooth } from '../core/util.js';
 import * as KIT from '../art/kit.js';
@@ -207,25 +213,78 @@ varying vec3 vN; varying vec3 vW; varying float vY;
 void main() {
   float ndl = max(dot(normalize(vN), uLightDir), 0.0);
   vec3 c = uCol * (0.6 + 0.4 * ndl) + uSunC * pow(ndl, 3.0) * 0.06;
-  float hz = mix(min(1.0, uHaze + 0.35), uHaze, smoothstep(0.0, uH * 0.35, vY));
+  float hz = mix(min(1.0, uHaze + 0.3), uHaze, smoothstep(0.0, uH * 0.25, vY));   // the foot dissolves into the horizon haze
   c = mix(c, cFogColor(normalize(vW - cameraPosition)), hz);
   gl_FragColor = vec4(c, uAlpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
+// Plumes (smoke columns, storm walls) are soft volumes, not shells: the surface only carries a density field. Density
+// falls to zero toward the silhouette (|N·V| → 0) and toward every edge of the sheet, so the column and the curtain
+// have no hard outline anywhere; the noise is in the sheet's own uv (arc × height), so it never streaks or shifts.
+const PLUME_VS = /* glsl */`
+uniform float uH, uTime, uKind, uLean;
+attribute vec3 puff;   // smoke only: start phase, seed, unused
+varying vec3 vN; varying vec3 vW; varying float vY; varying vec2 vUv; varying vec3 vPuff;
+void main() {
+  vec3 p = position;
+  vUv = uv; vPuff = vec3(0.0);
+  if (uKind < 0.5) {
+    // smoke column: a stream of soft puffs rising through the column, growing and drifting downwind as they climb.
+    // The group is turned to the camera every frame, so each puff is a quad in the group's xy plane.
+    float ph = fract(puff.x + uTime * 0.0045 * (0.85 + 0.3 * puff.y));
+    float y = ph * uH;
+    float r = uH * (0.04 + 0.24 * pow(ph, 0.9)) * (0.8 + 0.4 * puff.y);
+    float drift = uLean * ph * ph * uH + (puff.y - 0.5) * r * 0.7;
+    p = vec3(drift + position.x * r, y + position.y * r, (puff.y - 0.5) * r * 0.2);
+    vPuff = vec3(ph, puff.y, r);
+  }
+  vec4 w = modelMatrix * vec4(p, 1.0);
+  vW = w.xyz; vN = normalize(mat3(modelMatrix) * normal); vY = p.y;
+  gl_Position = projectionMatrix * viewMatrix * w;
+}`;
 const PLUME_FS = /* glsl */`
 ${FOG_PARS}
 ${NOISE_PARS}
-uniform vec3 uCol, uLightDir; uniform float uHaze, uH, uTime, uAlpha;
-varying vec3 vN; varying vec3 vW; varying float vY;
+uniform vec3 uCol, uLightDir, uSunC; uniform float uHaze, uH, uTime, uAlpha, uKind, uGlow;
+varying vec3 vN; varying vec3 vW; varying float vY; varying vec2 vUv; varying vec3 vPuff;
+float fbm3(vec2 p) { return cNoise(p) * 0.55 + cNoise(p * 2.07 + 3.1) * 0.3 + cNoise(p * 4.31 + 7.7) * 0.15; }
 void main() {
-  float y = vY / uH;
-  vec2 p = vec2(atan(vN.x, vN.z) * 1.5, y * 6.0 - uTime * 0.02);
-  float n = cNoise(p * 2.0) * 0.6 + cNoise(p * 5.0 + 3.1) * 0.4;
-  float a = smoothstep(0.25, 0.65, n) * smoothstep(1.0, 0.55, y) * smoothstep(0.0, 0.08, y) * uAlpha;
-  if (a < 0.02) discard;
-  float ndl = 0.6 + 0.4 * max(dot(normalize(vN), uLightDir), 0.0);
-  vec3 c = mix(uCol * ndl, cFogColor(normalize(vW - cameraPosition)), uHaze * (0.8 + 0.2 * y));
+  vec3 V = normalize(cameraPosition - vW);
+  float a, lit, shade, y;
+  if (uKind < 0.5) {
+    // one puff: a lumpy soft disc lit as a sphere (the sun side lighter), thinning as it climbs
+    vec2 q = vUv * 2.0 - 1.0;
+    float n = fbm3(q * 2.2 + vPuff.y * 37.0 + vec2(0.0, -uTime * 0.01));
+    float d = length(q) + (n - 0.5) * 0.8;
+    y = vPuff.x;
+    a = smoothstep(1.0, 0.3, d) * (0.4 + 0.6 * n) * smoothstep(0.0, 0.06, y) * smoothstep(1.0, 0.55, y) * (0.75 - 0.3 * y) * uAlpha;
+    vec3 up = vec3(0.0, 1.0, 0.0), rt = normalize(cross(up, V));
+    vec3 N = normalize(rt * q.x + up * q.y + V * sqrt(max(0.0, 1.0 - dot(q, q))));
+    lit = 0.45 + 0.6 * max(dot(N, uLightDir) * 0.7 + 0.3, 0.0);
+    shade = 0.75 + 0.6 * (n - 0.5) + 0.25 * y;   // lumpy: lobes lighter, crevices darker   // soot near the source, paler and thinner aloft
+  } else {
+    // storm wall: a curtain whose sides and top are torn by noise; rain / dust striations hang from a billowed crown
+    float u = vUv.x; y = clamp(vUv.y, 0.0, 1.0);
+    float n = fbm3(vec2(u * 7.0, y * 2.2 + uTime * 0.004));
+    float side = smoothstep(0.0, 0.32, u + (n - 0.5) * 0.3) * smoothstep(1.0, 0.68, u - (n - 0.5) * 0.3);
+    // the crown: big rounded billows (low-frequency noise, squared so the tops bulge), lit from above
+    float cb = fbm3(vec2(u * 4.5 + 2.3, uTime * 0.002));
+    float crown = 0.6 + 0.3 * cb * cb + (n - 0.5) * 0.1;
+    float top = smoothstep(crown + 0.06, crown - 0.1, y);
+    // rain shafts: soft vertical striations, smooth in u (two octaves of stretched noise), drifting down
+    float sx = u * 38.0 + (n - 0.5) * 2.0;
+    float streak = cNoise(vec2(sx, y * 1.2 - uTime * 0.03)) * 0.65 + cNoise(vec2(sx * 2.3 + 5.0, y * 2.0 - uTime * 0.05)) * 0.35;
+    float body = mix(0.72, 1.0, smoothstep(0.2, 0.7, n)) * mix(0.8, 1.0, streak);
+    a = clamp(body, 0.0, 1.0) * side * top * smoothstep(0.0, 0.1, y) * uAlpha;
+    float crownLit = smoothstep(crown - 0.25, crown - 0.02, y);
+    lit = 0.5 + 0.6 * crownLit * (0.6 + 0.4 * cb);   // the crown catches the light, the curtain below is in shadow
+    shade = 0.85 + 0.3 * (streak - 0.5) - 0.15 * (1.0 - crownLit) * smoothstep(0.5, 0.1, y);
+  }
+  if (a < 0.01) discard;
+  vec3 c = uCol * lit * shade + uSunC * 0.035 * lit * lit;
+  c += vec3(1.0, 0.42, 0.12) * uGlow * smoothstep(0.1, 0.0, y);   // embers at the foot of a burning column
+  c = mix(c, cFogColor(-V), uHaze * (0.85 + 0.15 * y) + (1.0 - uHaze) * 0.5 * smoothstep(0.15, 0.0, y));
   gl_FragColor = vec4(c, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -404,8 +463,9 @@ export function install(ctx) {
   function silMat(color, haze, h, plume = false) {
     const m = new THREE.ShaderMaterial({
       uniforms: { ...fogUniforms, uCol: { value: new THREE.Color(color) }, uLightDir: { value: lightDir }, uSunC: { value: skyU.uSkySunCol.value },
-                  uHaze: { value: haze }, uH: { value: h }, uAlpha: { value: 1 }, uTime: skyU.uSkyTime },
-      vertexShader: SKYLINE_VS, fragmentShader: plume ? PLUME_FS : SKYLINE_FS, fog: false,
+                  uHaze: { value: haze }, uH: { value: h }, uAlpha: { value: 1 }, uTime: skyU.uSkyTime,
+                  uKind: { value: 0 }, uLean: { value: 0 }, uGlow: { value: 0 } },
+      vertexShader: plume ? PLUME_VS : SKYLINE_VS, fragmentShader: plume ? PLUME_FS : SKYLINE_FS, fog: false,
       transparent: plume, depthWrite: !plume, side: plume ? THREE.DoubleSide : THREE.FrontSide,
     });
     return m;
@@ -493,17 +553,37 @@ export function install(ctx) {
       addPart(g, plate([[0, 0], [90, 0], [40, 150], [10, 150]], 14, 'side', 2), mat, 0, 105, 120, -0.3, 0, 0);
       return { obj: g, h: 260 };
     },
-    smoke(mat) {        // a rising plume, widening and fading
-      const g = new THREE.Group(), H = 1600;
-      const pg = new THREE.CylinderGeometry(260, 50, H, 24, 12, true); pg.translate(0, H / 2, 0);
+    smoke(mat) {        // a rising column of soft puffs, widening and bending downwind; faces the camera
+      const g = new THREE.Group(), H = 1600, N = 30;
+      const pos = new Float32Array(N * 12), uvs = new Float32Array(N * 8), pf = new Float32Array(N * 12), idx = [];
+      const C = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+      for (let i = 0; i < N; i++) {
+        const seed = (Math.sin(i * 12.9898) * 43758.5453) % 1, sd = seed < 0 ? seed + 1 : seed;
+        for (let k = 0; k < 4; k++) {
+          const v = i * 4 + k;
+          pos.set([C[k][0], C[k][1], 0], v * 3); uvs.set([(C[k][0] + 1) / 2, (C[k][1] + 1) / 2], v * 2);
+          pf.set([i / N, sd, 0], v * 3);
+        }
+        // draw the highest (thinnest, farthest along the stream) puffs first: back-to-front enough for one column
+        idx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3);
+      }
+      const pg = new THREE.BufferGeometry();
+      pg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      pg.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(N * 12).fill(0).map((_, j) => (j % 3 === 2 ? 1 : 0)), 3));
+      pg.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      pg.setAttribute('puff', new THREE.BufferAttribute(pf, 3));
+      pg.setIndex(idx);
       addPart(g, pg, mat, 0, 0, 0);
-      return { obj: g, h: H, plume: true };
+      mat.uniforms.uKind.value = 0; mat.uniforms.uLean.value = 0.4; mat.uniforms.uGlow.value = 0.45;
+      return { obj: g, h: H, plume: true, face: true };
     },
-    storm_wall(mat) {   // a dark curtain across a slice of the horizon
-      const g = new THREE.Group(), H = 1400;
-      const sg = new THREE.CylinderGeometry(3000, 3000, H, 48, 6, true, -0.6, 1.2); sg.translate(0, H / 2, -3000);
+    storm_wall(mat) {   // a dark curtain across a slice of the horizon, curved around the viewer
+      const g = new THREE.Group(), H = 2000, R0 = 3000;
+      const sg = new THREE.CylinderGeometry(R0, R0, H, 64, 4, true, Math.PI - 0.7, 1.4); sg.translate(0, H / 2, R0);
       addPart(g, sg, mat, 0, 0, 0);
-      return { obj: g, h: H, plume: true };
+      mat.uniforms.uKind.value = 1; mat.uniforms.uAlpha.value = 0.95;
+      mat.uniforms.uCol.value.multiplyScalar(0.6);
+      return { obj: g, h: H, plume: true, face: true };
     },
   };
   BUILD.custom = BUILD.spire;
@@ -528,11 +608,19 @@ export function install(ctx) {
         if (!built || !built.obj) continue;
         if (kind === 'custom' && !skylineBuilders.has(def.custom)) warnOnce('skyc:' + def.custom, '[atmosphere] unknown custom skyline', def.custom);
         mat.uniforms.uH.value = built.h || 100;
-        if (kind === 'storm_wall') mat.uniforms.uAlpha.value = 0.9;
-        built.obj.traverse(o => { o.renderOrder = -9; o.frustumCulled = false; o.userData.noAO = true; });
+        // renderOrder on the drawables only. three (r170) turns a Group's renderOrder into the groupOrder of every
+        // descendant, and groupOrder sorts before renderOrder: a Group at -9 would put the opaque silhouettes ahead
+        // of the sky dome (groupOrder 0, renderOrder -10, depthTest off), which then paints over them. So containers
+        // (including a registered builder's) are reset to 0 and each mesh draws right after the sky at -9.
+        built.obj.traverse(o => {
+          o.renderOrder = (o.isMesh || o.isLine || o.isPoints || o.isSprite) ? -9 : 0;
+          o.frustumCulled = false; o.userData.noAO = true;
+        });
         built.obj.matrixAutoUpdate = true;
         skylineRoot.add(built.obj);
-        skyline.push({ obj: built.obj, def, mat, world: null, size: Math.max(0.01, +(def.size ?? 1)), h: built.h || 100 });
+        const yaw = def.yaw != null && isFinite(+def.yaw) ? +def.yaw * DEG : null;
+        skyline.push({ obj: built.obj, def, mat, world: null, size: Math.max(0.01, +(def.size ?? 1)), h: built.h || 100,
+                       face: !!built.face, yaw });
       } catch (e) { console.warn('[atmosphere] skyline build failed', def, e); }
     }
   }
@@ -544,15 +632,28 @@ export function install(ctx) {
     }
     skyline.length = 0;
   }
+  // Where a skyline object stands. Azimuth placements (and [x, z] points outside the generated terrain) have no
+  // ground under them, so they stand on the HORIZON: the base sits `at.dip` degrees (default 0.8) below the
+  // camera's horizontal, worked out every frame. A fixed world y (the old −0.012·dist) buried them below the
+  // surrounding land whenever a level's terrain sits above y = 0, and the terrain then hid them. Route points and
+  // in-bounds [x, z] points stand on the ground; { x, y, z } is absolute.
   function skylineWorld(s) {
     if (s.world) return s.world;
     const at = s.def.at;
+    s.horizon = false;
     if (at && typeof at === 'object' && !Array.isArray(at) && 'azimuth' in at) {
       s.world = dirAzEl(+at.azimuth || 0, 0, new THREE.Vector3()).multiplyScalar(+at.dist || 4000);
-      s.world.y = -0.012 * (+at.dist || 4000);
-    } else if (Array.isArray(at)) s.world = new THREE.Vector3(+at[0] || 0, 0, +at[1] || 0);
+      s.horizon = true;
+    } else if (Array.isArray(at)) {
+      s.world = new THREE.Vector3(+at[0] || 0, 0, +at[1] || 0);
+      const b = ctx.world?.heightfield?.bounds || ctx.world?.bounds, gh = ctx.world?.groundHeight;
+      const inside = b && gh && s.world.x >= b.x0 && s.world.x <= b.x1 && s.world.z >= b.z0 && s.world.z <= b.z1;
+      if (inside) { try { s.world.y = +ctx.world.groundHeight(s.world.x, s.world.z) || 0; } catch (e) { s.horizon = true; } }
+      else s.horizon = true;
+    }
     else if (at && ctx.world?.route) { try { s.world = ctx.world.resolve(at, new THREE.Vector3()); } catch (e) { s.world = null; } }
     else if (at && 'x' in at) s.world = new THREE.Vector3(+at.x || 0, +at.y || 0, +at.z || 0);
+    if (s.world && s.horizon) s.dipTan = Math.tan(clamp(at && at.dip != null ? +at.dip || 0 : 0.8, -10, 30) * DEG);
     return s.world;
   }
   function placeSkyline(cam) {
@@ -562,12 +663,19 @@ export function install(ctx) {
       const w = skylineWorld(s);
       if (!w) { s.obj.visible = false; continue; }
       s.obj.visible = true;
+      if (s.horizon) w.y = cam.position.y - Math.hypot(w.x - cam.position.x, w.z - cam.position.z) * s.dipTan;
       _v.subVectors(w, cam.position);
       const dist = Math.max(1, _v.length());
       const placed = Math.min(dist, far), k = placed / dist;
       s.obj.position.copy(cam.position).addScaledVector(_v, k);
       s.obj.scale.setScalar(s.size * k);
-      s.mat.uniforms.uHaze.value = clamp(0.38 + 0.42 * (1 - Math.exp(-dist / 7000)), 0, 0.86);
+      // plumes turn to the viewer every frame (round column, curtain wrapping the view); a solid silhouette gets its
+      // yaw once (def.yaw in degrees, or its front toward the first camera that sees it) and keeps it
+      if (s.face) s.obj.rotation.y = Math.atan2(-_v.x, -_v.z);
+      else if (s.yaw == null) { s.yaw = Math.atan2(-_v.x, -_v.z); s.obj.rotation.y = s.yaw; }
+      else if (s.obj.rotation.y !== s.yaw) s.obj.rotation.y = s.yaw;
+      // aerial perspective: near silhouettes keep most of their value, the farthest approach the ridge bands' haze
+      s.mat.uniforms.uHaze.value = clamp(0.3 + 0.35 * (1 - Math.exp(-dist / 8000)), 0, 0.8);
     }
   }
 

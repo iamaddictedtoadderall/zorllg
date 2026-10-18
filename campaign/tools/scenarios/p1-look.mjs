@@ -188,6 +188,10 @@ export default async function (g) {
   g.assert(surf.glows, 'particles.glows.add returns a handle with set/remove');
   g.assert(surf.impactOk && surf.emitterKind === 'smoke' && surf.weatherType === 'clear', `unknown impact surface / emitter kind / weather type fall back (emitter ${surf.emitterKind}, weather ${surf.weatherType})`);
   g.log('textures', JSON.stringify(surf.tex), 'gen', JSON.stringify(surf.info));
+  // arch §4.1 / §7.6: every TexName at exactly tier.textureSize (the 4 × 2 sprite atlases: width = textureSize)
+  const TEXN = ['panel', 'grain', 'rock', 'concrete', 'metal', 'grime', 'noise', 'smokeSprite', 'sparkSprite'];
+  const offSize = TEXN.filter(n => { const e = surf.tex.find(x => x[0] === n); return !e || e[1] !== surf.info.textureSize; });
+  g.assert(!offSize.length, `every TexName is generated at tier.textureSize ${surf.info.textureSize}${offSize.length ? '; off: ' + offSize.join(', ') : ''} (gen ${Math.round(surf.info.genMs)} ms)`);
 
   }
   // ------------------------------------------------------------------ level
@@ -467,6 +471,46 @@ export default async function (g) {
   await shot('skyline', { hud: false, settle: false });
   const skErr = await g.eval(() => window.__game.errors());
   g.assert(skErr.length === 0, `every skyline kind builds without errors${skErr.length ? ': ' + JSON.stringify(skErr.slice(0, 3)) : ''}`);
+  // every kind must be ON SCREEN, not just built: one render with each solid kind in its own flat colour (counts the
+  // pixels each covers after depth and sorting against the sky dome and the terrain), and one with only the plumes,
+  // toggled, for the pixels they change
+  const vis = await g.eval(() => {
+    const c = window.__game.ctx, T = c.THREE, G = window.__game, root = c.scene.getObjectByName('skyline');
+    // raw: the scene straight to the canvas, no post chain (flat colours stay exact); skyline placement is the one the
+    // last pipeline render left. Visibility goes through Material.visible: placement re-shows the objects every render.
+    const grab = (raw) => { if (raw) { c.renderer.setRenderTarget(null); c.renderer.render(c.scene, c.camera); } else G.render();
+      const cv = c.canvas, t = document.createElement('canvas'); t.width = cv.width; t.height = cv.height;
+      const x = t.getContext('2d'); x.drawImage(cv, 0, 0); return x.getImageData(0, 0, cv.width, cv.height).data; };
+    const cols = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255]], solid = [], plumes = [], saved = [];
+    const kinds = c.atmosphere.art.skyline.map(d => d.kind);
+    root.children.forEach((o, i) => {
+      const k = kinds[i];
+      if (k === 'smoke' || k === 'storm_wall') { o.traverse(x => { if (x.isMesh) plumes.push(x.material); }); return; }
+      const col = cols[solid.length % cols.length];
+      const m = new T.MeshBasicMaterial({ color: new T.Color(col[0] / 255, col[1] / 255, col[2] / 255), fog: false, toneMapped: false });
+      solid.push({ k, col, m, n: 0 });
+      o.traverse(x => { if (x.isMesh) { saved.push([x, x.material]); x.material = m; } });
+    });
+    for (const m of plumes) m.visible = false;
+    const d = grab(true);
+    for (let i = 0; i < d.length; i += 4) for (const s of solid) {
+      if (Math.abs(d[i] - s.col[0]) < 40 && Math.abs(d[i + 1] - s.col[1]) < 40 && Math.abs(d[i + 2] - s.col[2]) < 40) { s.n++; break; }
+    }
+    for (const s of solid) s.m.visible = false;
+    for (const m of plumes) m.visible = true;
+    const on = grab(false); for (const m of plumes) m.visible = false; const off = grab(false);
+    let plumePx = 0;
+    for (let i = 0; i < on.length; i += 4) if (Math.abs(on[i] - off[i]) + Math.abs(on[i + 1] - off[i + 1]) + Math.abs(on[i + 2] - off[i + 2]) > 12) plumePx++;
+    for (const [x, m] of saved) x.material = m;
+    for (const s of solid) s.m.dispose();
+    for (const m of plumes) m.visible = true;
+    G.render();
+    return { solid: Object.fromEntries(solid.map(s => [s.k, s.n])), plumePx };
+  });
+  g.log('skyline on-screen pixels', JSON.stringify(vis));
+  const hidden = Object.entries(vis.solid).filter(([, n]) => n < 40);
+  g.assert(Object.keys(vis.solid).length >= 5 && !hidden.length, `every solid skyline kind is on screen (≥ 40 px each): ${JSON.stringify(vis.solid)}`);
+  g.assert(vis.plumePx > 2000, `the smoke column and storm wall change the frame (${vis.plumePx} px)`);
   await g.eval((art) => window.__game.ctx.atmosphere.apply(art), base);
   lap('skyline');
   }
@@ -629,6 +673,13 @@ export default async function (g) {
     progs.push(await g.eval(() => window.__game.perf().programs));
   }
   g.log('programs after H, L, H, L, H', JSON.stringify(progs));
+  const texLow = await g.eval(async () => { await window.__game.setTier('low');
+    const M = window.__game.ctx.materials, w = M.textures.grain.image.width, a = M.textures.smokeSprite.image.width, ts = M.info().textureSize;
+    await window.__game.setTier('high');
+    const M2 = window.__game.ctx.materials; return { w, a, ts, hw: M2.textures.grain.image.width, ha: M2.textures.smokeSprite.image.width, hts: M2.info().textureSize, ms: M2.info().genMs }; });
+  g.assert(texLow.w === texLow.ts && texLow.a === texLow.ts && texLow.hw === texLow.hts && texLow.ha === texLow.hts,
+           `textures follow the tier on a switch (low ${texLow.w}/${texLow.a} of ${texLow.ts}, high ${texLow.hw}/${texLow.ha} of ${texLow.hts}, regen ${Math.round(texLow.ms)} ms)`);
+  await g.eval((art) => window.__game.ctx.atmosphere.apply(art), base);
   g.assert(progs[4] === progs[2], `program count stable after the second switch (${progs.join(' → ')})`);
   const errs = await g.eval(() => window.__game.errors());
   g.assert(errs.length === 0, `tier switches raised no errors${errs.length ? ': ' + JSON.stringify(errs.slice(0, 3)) : ''}`);

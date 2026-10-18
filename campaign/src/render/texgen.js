@@ -104,30 +104,39 @@ function scratches(buf, S, seed, count, lenMin, lenMax, val) {
 /** fbm value noise over an S × S tile; base lattice px × py doubles per octave. Values ≈ [0, 1]. */
 function field(S, seed, px, py, octaves = 1, gain = 0.5) {
   const out = new Float32Array(S * S);
-  const xi0 = new Int32Array(S), xi1 = new Int32Array(S), ux = new Float32Array(S);
-  const rowv = new Float32Array(Math.max(1, px << Math.max(0, octaves - 1)));
+  // per octave: the lattice, its amplitude, the column smoothstep weights and where each lattice cell starts in x
+  const O = [];
   let amp = 1, sum = 0;
   for (let o = 0; o < octaves; o++) {
     const P = px << o, Q = py << o, r = mulberry32(seed + o * 101), lat = new Float32Array(P * Q);
     for (let i = 0; i < lat.length; i++) lat[i] = r();
-    for (let x = 0; x < S; x++) {
+    const ux = new Float32Array(S), start = new Int32Array(P + 1).fill(S);
+    for (let x = S - 1; x >= 0; x--) {
       const f = (x + 0.5) / S * P, i = Math.floor(f), t = f - i;
-      xi0[x] = i % P; xi1[x] = (i + 1) % P; ux[x] = t * t * (3 - 2 * t);
+      ux[x] = t * t * (3 - 2 * t); start[i] = x;
     }
-    for (let y = 0; y < S; y++) {
-      const f = (y + 0.5) / S * Q, j = Math.floor(f), t = f - j, vy = t * t * (3 - 2 * t);
-      const r0 = (j % Q) * P, r1 = ((j + 1) % Q) * P, row = y * S;
-      // lerp the two lattice rows once per texture row (scaled by amp), then each texel is one 1D lerp
-      for (let i = 0; i < P; i++) { const A = lat[r0 + i]; rowv[i] = amp * (A + (lat[r1 + i] - A) * vy); }
-      for (let x = 0; x < S; x++) {
-        const a = rowv[xi0[x]];
-        out[row + x] += a + (rowv[xi1[x]] - a) * ux[x];
-      }
-    }
+    for (let i = P - 1; i >= 0; i--) if (start[i] > start[i + 1]) start[i] = start[i + 1];   // cells no texel centre falls in
+    O.push({ P, Q, lat, amp, ux, start });
     sum += amp; amp *= gain;
   }
-  const k = 1 / sum;
-  for (let i = 0; i < out.length; i++) out[i] *= k;
+  const k = 1 / sum, acc = new Float64Array(S), rowv = new Float64Array(Math.max(1, px << Math.max(0, octaves - 1)) + 1);
+  for (let y = 0; y < S; y++) {
+    acc.fill(0);
+    for (let o = 0; o < octaves; o++) {
+      const { P, Q, lat, amp: a0, ux, start } = O[o];
+      const f = (y + 0.5) / S * Q, j = Math.floor(f), t = f - j, vy = t * t * (3 - 2 * t);
+      const r0 = (j % Q) * P, r1 = ((j + 1) % Q) * P;
+      // lerp the two lattice rows once per texture row (scaled by amp); then each texel is one 1D lerp inside its cell
+      for (let i = 0; i < P; i++) { const A = lat[r0 + i]; rowv[i] = a0 * (A + (lat[r1 + i] - A) * vy); }
+      rowv[P] = rowv[0];
+      for (let i = 0; i < P; i++) {
+        const a = rowv[i], d = rowv[i + 1] - a, x1 = start[i + 1];
+        for (let x = start[i]; x < x1; x++) acc[x] += a + d * ux[x];
+      }
+    }
+    const row = y * S;
+    for (let x = 0; x < S; x++) out[row + x] = acc[x] * k;
+  }
   return out;
 }
 /** Periodic Worley over an S × S tile with cx × cy cells: f1, f2 and nearest-cell id per texel. */
@@ -138,32 +147,44 @@ function worleyField(S, seed, cx, cy = cx) {
   const wx = new Int32Array(cx + 2), wy = new Int32Array(cy + 2);
   for (let i = -1; i <= cx; i++) wx[i + 1] = ((i % cx) + cx) % cx;
   for (let j = -1; j <= cy; j++) wy[j + 1] = ((j % cy) + cy) % cy;
+  // texel runs per cell column (the 3 × 3 neighbourhood is the same for every texel of a run)
+  const xs = new Int32Array(cx + 1).fill(S);
+  for (let x = S - 1; x >= 0; x--) xs[Math.floor((x + 0.5) / S * cx)] = x;
+  for (let i = cx - 1; i >= 0; i--) if (xs[i] > xs[i + 1]) xs[i] = xs[i + 1];
+  const nx = new Float64Array(9), ny = new Float64Array(9), nk = new Int32Array(9);
   for (let y = 0; y < S; y++) {
-    const fy = (y + 0.5) / S * cy, yi = Math.floor(fy);
-    for (let x = 0; x < S; x++) {
-      const fx = (x + 0.5) / S * cx, xi = Math.floor(fx);
-      let f1 = 9, f2 = 9, id = 0;
+    const fy = (y + 0.5) / S * cy, yi = Math.floor(fy), row = y * S;
+    for (let xi = 0; xi < cx; xi++) {
+      const x0 = xs[xi], x1 = xs[xi + 1];
+      if (x0 >= x1) continue;
+      let c = 0;
       for (let j = -1; j <= 1; j++) {
         const rowc = wy[yi + j + 1] * cx;
-        for (let i = -1; i <= 1; i++) {
+        for (let i = -1; i <= 1; i++, c++) {
           const k = rowc + wx[xi + i + 1];
-          const dx = xi + i + pts[k * 2] - fx, dy = yi + j + pts[k * 2 + 1] - fy;
-          const d = dx * dx + dy * dy;
-          if (d < f1) { f2 = f1; f1 = d; id = k; } else if (d < f2) f2 = d;
+          nx[c] = xi + i + pts[k * 2]; ny[c] = yi + j + pts[k * 2 + 1] - fy; nk[c] = k;
         }
       }
-      const i = y * S + x;
-      F1[i] = Math.sqrt(f1); F2[i] = Math.sqrt(f2); ID[i] = id;
+      for (let x = x0; x < x1; x++) {
+        const fx = (x + 0.5) / S * cx;
+        let f1 = 9, f2 = 9, id = 0;
+        for (let c2 = 0; c2 < 9; c2++) {
+          const dx = nx[c2] - fx, dy = ny[c2], d = dx * dx + dy * dy;
+          if (d < f1) { f2 = f1; f1 = d; id = nk[c2]; } else if (d < f2) f2 = d;
+        }
+        const i = row + x;
+        F1[i] = Math.sqrt(f1); F2[i] = Math.sqrt(f2); ID[i] = id;
+      }
     }
   }
   return { f1: F1, f2: F2, id: ID };
 }
 function packArr(S, fn) {
-  const data = new Uint8Array(S * S * 4), o = [0, 0, 0, 0];
+  // a clamped view does the 0..255 clamp and rounding in the store (no clamp01 calls per channel)
+  const data = new Uint8Array(S * S * 4), c = new Uint8ClampedArray(data.buffer), o = [0, 0, 0, 0];
   for (let i = 0, j = 0; i < S * S; i++, j += 4) {
     fn(i, o);
-    data[j] = clamp01(o[0]) * 255 + 0.5; data[j + 1] = clamp01(o[1]) * 255 + 0.5;
-    data[j + 2] = clamp01(o[2]) * 255 + 0.5; data[j + 3] = clamp01(o[3]) * 255 + 0.5;
+    c[j] = o[0] * 255; c[j + 1] = o[1] * 255; c[j + 2] = o[2] * 255; c[j + 3] = o[3] * 255;
   }
   return { data, w: S, h: S };
 }
@@ -386,6 +407,8 @@ export function genSmokeAtlas(cw, seed = 81) {
       const k = y * cw + x;
       let D = 0, H = 0, B = 0.5;
       const s = cell * 0.37;
+      // outside the unit circle every round cell is empty (the wisp and the chip are not round: always evaluated)
+      if (r >= 1 && cell !== 3 && cell !== 6) { den[k] = 0; hgt[k] = cell === 4 ? 0.5 : 0; det[k] = B; continue; }
       switch (cell) {
         case 0: D = sstep(1, 0, r) ** 1.5; H = Math.sqrt(Math.max(0, 1 - r * r)); break;
         case 1: case 2: case 5: case 7: {
