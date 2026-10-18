@@ -91,7 +91,9 @@ export class Drown {
     ctx.cameraRig?.addShake?.(1.4);
     this.steam?.set?.({ rate: 4, scale: 3 });
     if (p?.active && p.alive && p.pos.distanceTo(c) < 400) {
-      ctx.combat?.damage?.(p, 600, 3000, { team: 'enemy', owner: ib || null, kind: 'shock', pos: c });
+      // integration: the scripted shock never kills (a frame that won the auger fight on < 600 AP died to the cutscene
+      // and replayed the boss); it still staggers, throws and knocks down as L1 §7.1 says
+      ctx.combat?.damage?.(p, Math.min(600, Math.max(0, (p.ap - 1) / 1.25)), 3000, { team: 'enemy', owner: ib || null, kind: 'shock', pos: c });
       if (p.pos.x < 655) { this.throwT = 1.8; p.vel.y = Math.max(p.vel.y, 10); p.onGround = false; }
       else if (!p.onGround) p.vel.y = Math.min(p.vel.y, -12);   // a hovering player is knocked down
     }

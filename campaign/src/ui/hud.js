@@ -65,7 +65,7 @@ const HUD_CSS = `
 #game.touch #prompt kbd:not([hidden]):not(:empty){display:inline-block;font-size:10px;letter-spacing:.12em;color:var(--en);border-color:var(--en)}
 #objpanel .mrow{display:flex;gap:10px;align-items:baseline}
 #objs li{transition:opacity .6s,color .4s}
-#objs li .pg{font-family:var(--f-mono);font-size:13px;letter-spacing:0;color:var(--hud-dim);margin-left:2px}
+#objs li .pg{font-family:var(--f-mono);font-size:13px;letter-spacing:0;color:var(--hud-dim);margin-left:2px;white-space:nowrap;flex-shrink:0}
 #objs li .tg{font-size:10px;letter-spacing:.2em;color:var(--hud-dim);border:1px solid var(--hud-faint);padding:0 4px;transform:translateY(-2px)}
 #objs li.new{animation:hudObjIn 1.8s ease-out}
 #objs li.new::before{animation:hudObjDot 1.8s ease-out}
