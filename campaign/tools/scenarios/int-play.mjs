@@ -415,6 +415,7 @@ export default async function (g) {
     if (!r.ok) { note('Z3: cache A detour (a side lead off the route): teleported to it'); const ca = await routePos(1012, -160); await g.teleport([ca[0], ca[2]]); }
     await step(1);
     g.log('rack after cache A', await ev(() => [...(window.__game.ctx.haul?.rack || [])]));
+    { const back = await routePos(1000, 0); await g.teleport([back[0], back[2]]); }   // and back to the route (the wreck sits in open water)
     await zone('Z3 after cache A');
     r = await walkTo(1060, 0, 60, 1);
     r = await until((ctx) => ctx.enemies.count({ kind: 'gleaner' }) >= 1, null, 10);
