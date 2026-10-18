@@ -114,7 +114,7 @@ export default async function (g) {
         strafeT -= 10; if (strafeT <= 0) { strafe = -strafe; strafeT = 120 + ((steps / 10) % 7) * 20; }
         const fwd = flat > range ? 1 : flat < minR ? -0.6 : 0;
         if (!o.stand) G.input.move(fwd ? 0.25 * strafe : strafe * 0.8, fwd);
-        if (p.abilities?.fire !== false) G.input.hold('fire', true);
+        if (p.abilities?.fire !== false && flat < 300) G.input.hold('fire', true);
         if (p.abilities?.lock && !p.hardLock && (lockT -= 10) <= 0) { G.input.press('lock'); lockT = 60; }
         if (p.abilities?.missile && (mslT -= 10) <= 0 && flat < 260) { G.input.press('missile'); mslT = 150; }
         if (p.abilities?.kit && p.ap < p.apMax * 0.35) G.input.press('kit');
@@ -398,17 +398,18 @@ export default async function (g) {
       g.assert(r.ok, 'sled 1 flagged (hold F)');
     }
   } else note('Z3: t_sled1 never fired (the tow skiff survived?)');
-  {   // cache A: the old wreck frozen into a side lead
-    const ca = await routePos(1012, -160);
-    r = await walkAt(ca[0], ca[2], 60, 4);
-  }
-  if (!r.ok) { note('Z3: walk to cache A failed; teleported'); const ca = await routePos(1012, -160); await g.teleport([ca[0], ca[2]]); }
+  // cache A: the old wreck frozen into a side lead, a detour across open leads (a straight walk drowns in them): teleport
+  r = { ok: false };
+  if (!r.ok) { note('Z3: cache A detour (a side lead off the route): teleported to it'); const ca = await routePos(1012, -160); await g.teleport([ca[0], ca[2]]); }
   await step(1);
   g.log('rack after cache A', await ev(() => [...(window.__game.ctx.haul?.rack || [])]));
   await zone('Z3 after cache A');
   r = await walkTo(1060, 0, 60, 1);
   r = await until((ctx) => ctx.enemies.count({ kind: 'gleaner' }) >= 1, null, 10);
   g.assert(r.ok, 'the Gleaners at the wrecks');
+  if (!r.ok) g.log('gleaners diag', await ev(() => { const ctx = window.__game.ctx, p = ctx.player, rc = ctx.world.route.closest(p.pos.x, p.pos.z);
+    return { pinClear: ctx.mission.flags['p:pinClear'], s: rc.s, l: rc.l, fired: [...window.__ip.fired].filter(x => /pin|glean|tear/.test(x)),
+             trig: ctx.mission.triggers?.()?.find?.(t => t.id === 't_gleaners') ?? null, enc: ctx.mission.encounterState?.('e_pin') ?? null, state: ctx.flow.state }; }));
   r = await until((ctx) => ctx.player.abilities.blade, null, 12);
   await step(1);
   await shot('32-z3-gleaners');
@@ -497,33 +498,43 @@ export default async function (g) {
   if (FROM <= 4) {
   await step(3);
   await shot('50-z5-icebreaker');
-  for (const head of ['head_port', 'head_stbd']) {
-    r = await fight({ targets: (ctx, L, tag) => ctx.combat.query({ tag }).filter(t => t.alive), arg: head, maxSec: 240, range: 110, min: 50, eye: 6 });
-    g.log(`${head} fight`, r, await ev(() => ({ deaths: window.__ip.deaths, phase: window.__game.ctx.mission.flags['ib:phase'] })));
-    if (!r.ok) { note(`Z5: ${head} still alive after 240 s of fire (${JSON.stringify(r)}); killed it`); await ev((h) => { const ctx = window.__game.ctx, t = ctx.combat.query({ tag: h })[0]; if (t?.alive) ctx.combat.kill(t, { team: 'player' }); }, head); }
-    if (head === 'head_port') { await step(2); await shot('51-z5-phase2'); }
+  // the two saws, then survive the crawl to the edge (a death sends the fight back to cp_cutline: take the saws again)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const head of ['head_port', 'head_stbd']) {
+      r = await fight({ targets: (ctx, L, tag) => ctx.combat.query({ tag }).filter(t => t.alive), arg: head, maxSec: 240, range: 110, min: 50, eye: 6 });
+      g.log(`${head} fight`, r, await ev(() => ({ deaths: window.__ip.deaths, phase: window.__game.ctx.mission.flags['ib:phase'] })));
+      if (!r.ok) { note(`Z5: ${head} still alive after 240 s of fire (${JSON.stringify(r)}); killed it`); await ev((h) => { const ctx = window.__game.ctx, t = ctx.combat.query({ tag: h })[0]; if (t?.alive) ctx.combat.kill(t, { team: 'player' }); }, head); }
+      if (head === 'head_port' && attempt === 0) { await step(2); await shot('51-z5-phase2'); }
+    }
+    // the crawl: keep the deck turrets and the launched skiffs busy (they are what kills an idle frame here)
+    r = await fight({ targets: (ctx) => ctx.enemies.alive({ team: 'enemy' }).filter(u => u.kind !== 'icebreaker' && u.pos.distanceTo(ctx.player.pos) < 260),
+                      until: (ctx) => (ctx.mission.flags['ib:phase'] === 3 && ctx.mission.checkpoint === 'cp_harvest') || ctx.combat.query({ tag: 'head_port' }).some(t => t.alive),
+                      maxSec: 180, range: 90, min: 30 });
+    g.log('the crawl', r);
+    if (await ev(() => window.__game.ctx.mission.checkpoint === 'cp_harvest')) break;
+    note(`Z5: the saws came back (a death and a retry from cp_cutline), attempt ${attempt + 2}`);
   }
-  // phase 3: it crawls to the edge; the player follows along the shelf
-  r = await until((ctx) => ctx.mission.flags['ib:phase'] === 3 && ctx.mission.checkpoint === 'cp_harvest', null, 120);
-  if (!r.ok) {
-    await ev(() => { const p = window.__game.ctx.player; p.teleport(new p.pos.constructor(560, NaN, 60)); });
-    r = await until((ctx) => ctx.mission.flags['ib:phase'] === 3 && ctx.mission.checkpoint === 'cp_harvest', null, 120);
-  }
+  r = await until((ctx) => ctx.mission.flags['ib:phase'] === 3 && ctx.mission.checkpoint === 'cp_harvest', null, 10);
   g.assert(r.ok, `phase 3 at the edge, cp_harvest reached (${r.t.toFixed(0)} s)`);
   await step(2);
   await shot('52-z5-harvest');
   // the bow auger's collar only takes hits from below: down onto the Raft
   r = await until((ctx) => ctx.l01.icebreaker?.boomLow >= 1, null, 10);
-  await ev(() => {
-    const ctx = window.__game.ctx, F = ctx.l01.floes, h = ctx.combat.query({ tag: 'head_bow' })[0];
-    if (!h) return;
-    const i = F.nearestFloe(h.pos.x + 30, h.pos.z, true), f = F.field.floes[i];
-    ctx.player.teleport(new ctx.player.pos.constructor(f.x, f.top + 0.3, f.z));
-  });
-  await step(0.5, 5);
-  r = await fight({ targets: (ctx) => ctx.combat.query({ tag: 'head_bow' }).filter(t => t.alive), until: (ctx) => window.__ip.fired.has('t_finale'), maxSec: 240, range: 120, min: 20, stand: true, eye: 5, teleportBeyond: 1e9 });
-  g.log('bow fight', r);
-  if (!r.ok) { note(`Z5: the bow auger still alive after 240 s from the Raft (${JSON.stringify(r)}); killed it`); await ev(() => { const ctx = window.__game.ctx, h = ctx.combat.query({ tag: 'head_bow' })[0]; if (h?.alive) ctx.combat.kill(h, { team: 'player' }); }); }
+  for (let attempt = 0; attempt < 4 && !(await fired('t_finale')); attempt++) {
+    // down onto the Raft below the collar (again after a retry, which respawns on the shelf)
+    await ev(() => {
+      const ctx = window.__game.ctx, F = ctx.l01.floes, h = ctx.combat.query({ tag: 'head_bow' })[0];
+      if (!h) return;
+      const i = F.nearestFloe(h.pos.x + 30, h.pos.z, true), f = F.field.floes[i];
+      ctx.player.teleport(new ctx.player.pos.constructor(f.x, f.top + 0.3, f.z));
+    });
+    await step(0.5, 5);
+    r = await fight({ targets: (ctx) => ctx.combat.query({ tag: 'head_bow' }).filter(t => t.alive), until: (ctx) => window.__ip.fired.has('t_finale') || ctx.player.pos.y > -10,
+                      maxSec: 150, range: 120, min: 20, stand: true, eye: 5, teleportBeyond: 1e9 });
+    g.log('bow fight', r);
+    if (attempt > 0) note(`Z5: back onto the Raft after a retry (attempt ${attempt + 1})`);
+  }
+  if (!(await fired('t_finale'))) { note('Z5: the bow auger survived four attempts from the Raft; killed it'); await ev(() => { const ctx = window.__game.ctx, h = ctx.combat.query({ tag: 'head_bow' })[0]; if (h?.alive) ctx.combat.kill(h, { team: 'player' }); }); }
   r = await until(() => window.__ip.fired.has('t_finale'), null, 6);
   g.assert(r.ok, 't_finale: the Icebreaker beaten');
   // the sunrise, the split, the drowning (hands off: it plays itself)
@@ -589,7 +600,7 @@ export default async function (g) {
           if ((L.latchCount?.() ?? 0) > 0 && p.en > 200 && (s % 30) === 0) G.input.press('boost');   // shake latched Gleaners off
           G.input.move(0, 1);
           const gap = d - cr, cf = cur >= 0 ? F.field.floes[cur] : null;
-          const edge = cf ? Math.hypot(cf.x - p.pos.x, cf.z - p.pos.z) > m.colR(cf) - 1.5 : true;
+          const edge = cf ? Math.hypot(cf.x - p.pos.x, cf.z - p.pos.z) > m.colR(cf) - 1.5 : false;   // off the floe field (the Raft): run up first
           // a running jump from the very edge clears about 22 m; quick boost at takeoff only for longer gaps; hover only
           // when about to land short (hover costs double on iced vents)
           if (p.onGround && cur !== i && (gap < 8 || edge)) G.input.press('jump');
@@ -621,6 +632,7 @@ export default async function (g) {
   if (sl && !(await ev(() => window.__game.ctx.mission.flags.sled3))) {
     note('Z6: sled 3 is off the hop path; teleported to it and back');
     await g.teleport([sl[0] - 5, sl[1] + 0.4, sl[2] + 2]);
+    await until(() => window.__ip.fired.has('t_sled3'), null, 4);   // Kit calls it out and the sledge opens
     await g.input({ clear: true, hold: { interact: true } });
     r = await until((ctx) => ctx.mission.flags.sled3, null, 4, 5);
     await g.input({ clear: true });

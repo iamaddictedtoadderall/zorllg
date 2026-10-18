@@ -434,7 +434,7 @@ const SEG_Z2 = ['t_look', 't_block1_near', 't_raid', 't_raid_go', 't_raid_hit', 
 const SEG_Z3 = [...SEG_Z2, 't_name', 't_signal', 't_shaft', 't_out', 't_kitflare'];
 const SEG_Z4 = [...SEG_Z3, 't_pin', 't_qb', 't_tear', 't_tear_failsafe', 't_gleaners', 't_blade', 't_abeyance_view', 't_idle_north', 't_pin_clear', 't_burn'];
 const SEG_Z5 = [...SEG_Z4, 't_apron', 't_repair', 't_floor2', 't_stencil', 't_crown', 't_hold_sled', 't_enemy_flares', 't_surge'];
-const SEG_HARVEST = [...SEG_Z5, 't_field', 't_head1', 't_head2', 't_pa2', 't_harvest', 't_crack', 't_spotlight', 't_heads_hint'];
+const SEG_HARVEST = [...SEG_Z5, 't_field', 't_head1', 't_head2', 't_pa2', 't_crawl', 't_harvest', 't_crack', 't_spotlight', 't_heads_hint'];
 const SEG_Z6 = [...SEG_HARVEST, 't_collar', 't_finale', 't_hull_hint'];
 
 // ── triggers ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -563,7 +563,12 @@ const triggers = [
       { comms: 'c_crack' }, hint('sweep', 'The saw sweeps low along the ice. Jump or hover over it, or boost out of reach.') ] },
   { id: 't_pa2', when: { timer: 20, since: 't_head1' }, do: [{ comms: 'c_pa2' }] },
   { id: 't_head2', when: { killed: { tag: 'drillhead', count: 2 } }, do: [{ comms: 'c_head2' }] },
-  { id: 't_harvest', when: { flag: 'ib:phase', eq: 3 }, do: [{ checkpoint: 'cp_harvest' }, { comms: 'c_auger' }, term('collar')] },
+  // integration: cp_harvest is saved as soon as the second saw dies and the crawl to the edge begins (the restore puts the
+  // Icebreaker straight into phase 3 at the edge), so a death during the crawl no longer sends the player back to redo
+  // both saws; t_harvest saves it only if the crawl was skipped
+  { id: 't_crawl', when: { flag: 'ib:phase', eq: 2.5 }, do: [{ checkpoint: 'cp_harvest' }, { flag: ['ib:cpCrawl', true] }] },
+  { id: 't_harvest', when: { flag: 'ib:phase', eq: 3 }, do: [{ if: { not: { flag: 'ib:cpCrawl' } }, then: [{ checkpoint: 'cp_harvest' }] },
+      { comms: 'c_auger' }, term('collar')] },
   { id: 't_collar', when: { custom: 'collarHitFromAbove' }, do: [hint('collar', 'Get below the collar. Fire up at it from the floes.')] },
   { id: 't_finale', when: { killed: { tag: 'drillhead', count: 3 } }, do: [{ event: 'finale' }] },
 

@@ -327,6 +327,9 @@ function createRuntime(ctx, m, DATA, opts) {
       L.breakTow('boost');
       for (const u of L.latched()) u.shake?.();
     });
+    // integration (L1 §9: "All checkpoints refill AP, ammo and kits"): the format refills on a checkpoint restart only
+    // (arch §6.9), so a player who reached the Icebreaker by play could arrive with an empty rifle. Refill on reaching one.
+    on('checkpoint:reached', () => { const p = ctx.player; if (p?.active && p.alive) p.refill?.(); });
     on('structure:state', (e) => onStructureState(L, e));
     on('zone:entered', (e) => { if (L.dawnArt) L.reassert = e.id; });
   };
