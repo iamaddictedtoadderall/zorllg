@@ -28,10 +28,14 @@ export default async function (g) {
     const G = window.__game, ctx = G.ctx;
     const IP = window.__ip = { spoil: [], deaths: 0, lines: [], obj: [], cards: [], fired: new Set(), cps: [] };
     ctx.events.on('trigger:fired', (e) => IP.fired.add(e.id));
+    ctx.events.on('level:start', () => IP.fired.clear());   // a checkpoint restart re-arms what fired after it
     ctx.events.on('comms:line', (e) => IP.lines.push({ who: e.who, text: e.text, tag: e.tag ?? null, name: e.name ?? ctx.comms?.speaker?.(e.who)?.name ?? null }));
     ctx.events.on('objective:changed', (e) => { if (e.state === 'active' && e.text) IP.obj.push({ id: e.id, text: e.text }); });
     ctx.events.on('hud:explain', (e) => IP.cards.push({ id: e.id, term: e.term }));
     ctx.events.on('checkpoint:reached', (e) => IP.cps.push(e.id ?? e.checkpoint ?? JSON.stringify(e)));
+    IP.ev = [];
+    const rec = (n) => (e) => { if (IP.ev.length < 60) IP.ev.push(`${ctx.clock.time.toFixed(1)} ${n} ${JSON.stringify(e ?? {}).slice(0, 80)}`); };
+    for (const n of ['level:start', 'state:changed', 'player:died', 'level:failed', 'mission:restart']) ctx.events.on(n, rec(n));
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     IP.sleep = sleep;
     /** the spoiler watch: visible text naming the frame before the naming */
@@ -368,64 +372,83 @@ export default async function (g) {
   }
   // ════════════════════════════════════════════════════════════════════════════════════════ Z3 · the Teeth
   if (FROM <= 2) {
-  await shot('30-z3-teeth');
-  r = await walkTo(860, 40, 90, 1, 20);   // to Kit's marker (the pin starts at s 820)
-  g.log('walk to Kit', r);
-  r = await until((ctx) => ctx.enemies.count({ tag: 'pin' }) >= 1 && ctx.player.abilities.fire, null, 20);
-  g.assert(r.ok, 'the pin: skiffs on Tick, the rifle remembered');
-  await step(2);
-  await shot('31-z3-pin');
-  r = await fight({ targets: (ctx) => ctx.enemies.alive({ tag: 'pin' }), until: (ctx) => window.__ip.fired.has('t_pin_clear'), maxSec: 240, range: 90, min: 20 });
-  g.log('pin fight', r);
-  if (!r.ok) { note(`Z3: the pin fight did not clear in 240 s (${JSON.stringify(r)}); killed the rest`); await ev(() => window.__game.ctx.enemies.killAll({ tag: 'pin' })); await until(() => window.__ip.fired.has('t_pin_clear'), null, 20); }
-  // the TEAR guarantee (pin3: a Gaffer that staggers on its first hit) arrives once the pin is clear without a TEAR
-  r = await until((ctx) => ctx.enemies.count({ tag: 'pin3' }) >= 1 || (ctx.haul?.rack?.length ?? 0) >= 1, null, 10);
-  if (await ev(() => window.__game.ctx.enemies.count({ tag: 'pin3' }) >= 1)) {
-    r = await fight({ targets: (ctx) => ctx.enemies.alive({ tag: 'pin3' }), until: (ctx) => (ctx.haul?.rack?.length ?? 0) >= 1, maxSec: 120, range: 60, min: 10 });
-    g.log('TEAR guarantee fight', r);
-  }
-  const tears = await ev(() => ({ rack: [...(window.__game.ctx.haul?.rack || [])], tears: window.__game.ctx.haul?.tears ?? 0 }));
-  g.log('after the pin', tears);
-  g.assert(tears.rack.length >= 1, `TEAR in the pin fight racked a part (${tears.rack.join(', ')})`);
-  if (await fired('t_sled1')) {
-    const sp = await ev(() => { const v = window.__game.ctx.l01.sledPos('sled1'); return v && [v.x, v.z]; });
-    if (sp) {
-      const w = await walkAt(sp[0], sp[1], 40, 7);
-      if (!w.ok) { note('Z3: could not walk to sled 1; teleported'); await g.teleport([sp[0] + 5, sp[1]]); }
-      await g.input({ clear: true, hold: { interact: true } });
-      r = await until((ctx) => ctx.mission.flags.sled1, null, 5, 5);
-      await g.input({ clear: true });
-      g.assert(r.ok, 'sled 1 flagged (hold F)');
+  // a death in the Teeth sends the player back to cp_ridges (the pin and the wrecks again): replay the zone like a player
+  for (let attempt = 0; ; attempt++) {
+    const deaths0 = await ev(() => window.__ip.deaths);
+    const guard = async () => { if ((await ev(() => window.__ip.deaths)) > deaths0) throw new Error('RETRY'); };
+    try {
+    await shot('30-z3-teeth');
+    r = await walkTo(860, 40, 90, 1, 20);   // to Kit's marker (the pin starts at s 820)
+    g.log('walk to Kit', r);
+    r = await until((ctx) => ctx.enemies.count({ tag: 'pin' }) >= 1 && ctx.player.abilities.fire, null, 20);
+    await guard();
+    g.assert(r.ok, 'the pin: skiffs on Tick, the rifle remembered');
+    await step(2);
+    await shot('31-z3-pin');
+    r = await fight({ targets: (ctx) => ctx.enemies.alive({ tag: 'pin' }), until: (ctx) => window.__ip.fired.has('t_pin_clear'), maxSec: 240, range: 90, min: 20 });
+    g.log('pin fight', r);
+    await guard();
+    if (!r.ok) { note(`Z3: the pin fight did not clear in 240 s (${JSON.stringify(r)}); killed the rest`); await ev(() => window.__game.ctx.enemies.killAll({ tag: 'pin' })); await until(() => window.__ip.fired.has('t_pin_clear'), null, 20); }
+    // the TEAR guarantee (pin3: a Gaffer that staggers on its first hit) arrives once the pin is clear without a TEAR
+    r = await until((ctx) => ctx.enemies.count({ tag: 'pin3' }) >= 1 || (ctx.haul?.rack?.length ?? 0) >= 1, null, 10);
+    if (await ev(() => window.__game.ctx.enemies.count({ tag: 'pin3' }) >= 1)) {
+      r = await fight({ targets: (ctx) => ctx.enemies.alive({ tag: 'pin3' }), until: (ctx) => (ctx.haul?.rack?.length ?? 0) >= 1, maxSec: 120, range: 60, min: 10 });
+      g.log('TEAR guarantee fight', r);
     }
-  } else note('Z3: t_sled1 never fired (the tow skiff survived?)');
-  // cache A: the old wreck frozen into a side lead, a detour across open leads (a straight walk drowns in them): teleport
-  r = { ok: false };
-  if (!r.ok) { note('Z3: cache A detour (a side lead off the route): teleported to it'); const ca = await routePos(1012, -160); await g.teleport([ca[0], ca[2]]); }
-  await step(1);
-  g.log('rack after cache A', await ev(() => [...(window.__game.ctx.haul?.rack || [])]));
-  await zone('Z3 after cache A');
-  r = await walkTo(1060, 0, 60, 1);
-  r = await until((ctx) => ctx.enemies.count({ kind: 'gleaner' }) >= 1, null, 10);
-  g.assert(r.ok, 'the Gleaners at the wrecks');
-  if (!r.ok) g.log('gleaners diag', await ev(() => { const ctx = window.__game.ctx, p = ctx.player, rc = ctx.world.route.closest(p.pos.x, p.pos.z);
-    return { pinClear: ctx.mission.flags['p:pinClear'], s: rc.s, l: rc.l, fired: [...window.__ip.fired].filter(x => /pin|glean|tear/.test(x)),
-             trig: ctx.mission.triggers?.()?.find?.(t => t.id === 't_gleaners') ?? null, enc: ctx.mission.encounterState?.('e_pin') ?? null, state: ctx.flow.state }; }));
-  r = await until((ctx) => ctx.player.abilities.blade, null, 12);
-  await step(1);
-  await shot('32-z3-gleaners');
-  r = await fight({ targets: (ctx) => ctx.enemies.alive({ tag: 'enc:e_gleaners' }), until: (ctx) => window.__ip.fired.has('t_burn'), maxSec: 300, range: 70, min: 12, blade: true });
-  g.log('gleaner fight', r);
-  if (!r.ok) { note(`Z3: the wrecks fight did not finish in 300 s (${JSON.stringify(r)}); killed the rest`); await ev(() => window.__game.ctx.enemies.killAll({ tag: 'enc:e_gleaners' })); await until(() => window.__ip.fired.has('t_burn'), null, 20); }
-  await shot('33-z3-after-wrecks');
-  r = await until((ctx) => ctx.mission.objective('o_abeyance')?.state === 'active', null, 40);
-  g.assert(r.ok, 'o_abeyance: "Head for the giant frozen ship"');
-  r = await walkTo(1295, 0, 90, 1);
-  g.log('walk to the pass', r);
-  await shot('34-z3-pass');
-  r = await walkTo(1380, 0, 60, 1);
-  r = await until((ctx) => ctx.mission.checkpoint === 'cp_abeyance', null, 10);
-  g.assert(r.ok, 'cp_abeyance reached by playing');
-  await zone('Z4 start');
+    const tears = await ev(() => ({ rack: [...(window.__game.ctx.haul?.rack || [])], tears: window.__game.ctx.haul?.tears ?? 0 }));
+    g.log('after the pin', tears);
+    await guard();
+    g.assert(tears.rack.length >= 1, `TEAR in the pin fight racked a part (${tears.rack.join(', ')})`);
+    if (await fired('t_sled1')) {
+      const sp = await ev(() => { const v = window.__game.ctx.l01.sledPos('sled1'); return v && [v.x, v.z]; });
+      if (sp) {
+        const w = await walkAt(sp[0], sp[1], 40, 7);
+        if (!w.ok) { note('Z3: could not walk to sled 1; teleported'); await g.teleport([sp[0] + 5, sp[1]]); }
+        await g.input({ clear: true, hold: { interact: true } });
+        r = await until((ctx) => ctx.mission.flags.sled1, null, 5, 5);
+        await g.input({ clear: true });
+        g.assert(r.ok, 'sled 1 flagged (hold F)');
+      }
+    } else note('Z3: t_sled1 never fired (the tow skiff survived?)');
+    // cache A: the old wreck frozen into a side lead, a detour across open leads (a straight walk drowns in them): teleport
+    r = { ok: false };
+    if (!r.ok) { note('Z3: cache A detour (a side lead off the route): teleported to it'); const ca = await routePos(1012, -160); await g.teleport([ca[0], ca[2]]); }
+    await step(1);
+    g.log('rack after cache A', await ev(() => [...(window.__game.ctx.haul?.rack || [])]));
+    await zone('Z3 after cache A');
+    r = await walkTo(1060, 0, 60, 1);
+    r = await until((ctx) => ctx.enemies.count({ kind: 'gleaner' }) >= 1, null, 10);
+    await guard();
+    g.assert(r.ok, 'the Gleaners at the wrecks');
+    if (!r.ok) g.log('gleaners diag', await ev(() => { const ctx = window.__game.ctx, p = ctx.player, rc = ctx.world.route.closest(p.pos.x, p.pos.z);
+      return { pinClear: ctx.mission.flags['p:pinClear'], s: rc.s, l: rc.l, fired: [...window.__ip.fired].filter(x => /pin|glean|tear/.test(x)),
+               ev: window.__ip.ev, cp: ctx.mission.checkpoint, enc: ctx.mission.encounterState?.('e_pin') ?? null, state: ctx.flow.state }; }));
+    r = await until((ctx) => ctx.player.abilities.blade, null, 12);
+    await step(1);
+    await shot('32-z3-gleaners');
+    r = await fight({ targets: (ctx) => ctx.enemies.alive({ tag: 'enc:e_gleaners' }), until: (ctx) => window.__ip.fired.has('t_burn'), maxSec: 300, range: 70, min: 12, blade: true });
+    g.log('gleaner fight', r);
+    await guard();
+    if (!r.ok) { note(`Z3: the wrecks fight did not finish in 300 s (${JSON.stringify(r)}); killed the rest`); await ev(() => window.__game.ctx.enemies.killAll({ tag: 'enc:e_gleaners' })); await until(() => window.__ip.fired.has('t_burn'), null, 20); }
+    await shot('33-z3-after-wrecks');
+    r = await until((ctx) => ctx.mission.objective('o_abeyance')?.state === 'active', null, 40);
+    await guard();
+    g.assert(r.ok, 'o_abeyance: "Head for the giant frozen ship"');
+    r = await walkTo(1295, 0, 90, 1);
+    g.log('walk to the pass', r);
+    await shot('34-z3-pass');
+    r = await walkTo(1380, 0, 60, 1);
+    r = await until((ctx) => ctx.mission.checkpoint === 'cp_abeyance', null, 10);
+    await guard();
+    g.assert(r.ok, 'cp_abeyance reached by playing');
+    await zone('Z4 start');
+      break;
+    } catch (e) {
+      if (e.message !== 'RETRY' || attempt >= 2) throw e;
+      note(`Z3: died in the Teeth; the zone again from cp_ridges (attempt ${attempt + 2})`);
+      await until((ctx) => ctx.flow.state === 'playing' && !ctx.player.frozen, null, 30);
+    }
+  }
   await noErrors('Z3');
 
   }
