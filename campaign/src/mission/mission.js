@@ -1319,6 +1319,7 @@ export function install(ctx) {
         time, kills: st.kills || 0, damageTaken: dmg, shots: st.shots || 0, collectibles: [...collected], rank,
         haul: [...(ctx.haul?.rack ?? [])], tears: ctx.haul?.tears ?? 0,
         water: wf.filter(f => !!m.flags[f]).length, waterMax: wf.length,
+        flags: clone(m.flags),   // addendum 02 E10: flow reads the campaign extensions (rigs lost, story) from these
       };
       m.lastResult = result;
       ctx.events.emit('level:complete', { levelId: m.def.id, result });

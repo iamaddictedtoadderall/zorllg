@@ -411,6 +411,7 @@ export default async function (g) {
       const H = window.__p4, G = H.G, c = H.c, p = c.player, out = [];
       const ACT = { R: 'fire', L: 'blade', S: 'missile', U: 'kit' };
       for (const part of Object.values(H.LO.PARTS)) {
+        if (!part.weapon) continue;   // addendum 02: B/G/C parts carry mods, no weapon (eng-l02 covers them)
         H.clean(); H.place(160, 0);
         p.setLoadout({ ...H.LO.DEFAULT_LOADOUT, [part.slot]: part.id }); p.refill(); G.step(5);
         if (part.slot === 'U') p.ap = 5000;
@@ -441,6 +442,8 @@ export default async function (g) {
         case 'kit': ok = w.r0.label === String(w.max) && w.r1.label === String(w.max - 1) && w.repair; break;
         case 'harpoon': ok = w.r0.label === 'READY' && num(w.r1.label) && w.fired > 0; break;
         case 'flares': ok = w.r0.label === String(w.max) && w.r1.label === String(w.max - 1) && w.fired > 0; break;
+        case 'rivet': ok = w.r0.label === String(w.max) && w.a1 < w.a0 && w.r1.label === String(w.a1) && w.fired > 0; break;   // addendum 02 E7
+        case 'claw': ok = w.r0.label === 'READY' && (num(w.r1.label) || w.r1.label === 'READY'); break;                        // a swipe (nothing to grab)
         default: why = 'unknown weapon type';
       }
       g.assert(ok, `${w.id} (${w.weapon}) fires and reads out: ${w.r0.label} → ${w.r1.label} (ammo ${w.a0} → ${w.a1}, projectiles ${w.fired}) ${why}`);

@@ -5,6 +5,7 @@
 export const LEVELS = [
   { id: 'test', title: 'Proving Ground', file: 'test.js', order: 0, hidden: true },
   { id: 'l01', title: 'THAW', file: 'level01.js', order: 1 },
+  { id: 'l02', title: 'THE WAKE', file: 'level02.js', order: 2 },
 ];
 
 const cache = new Map();

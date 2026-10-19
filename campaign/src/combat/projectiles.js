@@ -43,9 +43,11 @@ const KIND_DEFS = {
   flak:    { cap: 160, glow: 0xffc080, geo: () => new THREE.SphereGeometry(0.4, 6, 4), orient: false },
   harpoon: { cap: 8,   std: 0x3a3532, geo: () => new THREE.ConeGeometry(0.35, 2.2, 6).rotateX(Math.PI / 2), orient: true },
   flare:   { cap: 32,  glow: 0xff5a78, geo: () => new THREE.IcosahedronGeometry(0.55, 1), orient: false },
+  // addendum 02 E7: the Rivet Driver's bolt, a short dark rod with an amber hot tip (the shared motor glow, in front)
+  rivet:   { cap: 96,  std: 0x2a2624, geo: () => new THREE.CylinderGeometry(0.2, 0.24, 1.9, 6).rotateX(Math.PI / 2), orient: true, flame: 0.42, flameFront: true },
 };
 const EXPLODES = { missile: 0.7, micro: 0.45, shell: 0.6, mortar: 1.0, flak: 0.45 };   // prototype scales (missile, shell)
-const IMPACT_KIND = { bullet: 'bullet', ebullet: 'bullet', plasma: 'plasma', rail: 'rail', harpoon: 'blade', flare: null };
+const IMPACT_KIND = { bullet: 'bullet', ebullet: 'bullet', plasma: 'plasma', rail: 'rail', harpoon: 'blade', flare: null, rivet: 'rail' };
 
 export function install(ctx) {
   const list = [];        // alive projectiles
@@ -391,8 +393,8 @@ export function install(ctx) {
       r.mesh.setMatrixAt(r.count++, _m);
       if (r.def.flame && flameMesh && fc < 352) {
         // the motor glow sits behind the body
-        _c.copy(p.pos).addScaledVector(_cur, -(r.def.flame * 1.1));
-        _scl.setScalar(r.def.flame * (0.8 + 0.4 * Math.random()));
+        _c.copy(p.pos).addScaledVector(_cur, r.def.flameFront ? 1.0 : -(r.def.flame * 1.1));
+        _scl.setScalar(r.def.flame * (r.def.flameFront ? 1 : 0.8 + 0.4 * Math.random()));
         _m.compose(_c, _quat, _scl);
         flameMesh.setMatrixAt(fc++, _m);
       }

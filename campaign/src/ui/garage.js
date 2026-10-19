@@ -22,23 +22,24 @@ import { esc, clone, injectCSS, clamp, lerp, damp, mulberry32, hashString } from
 const BENCH_LAMP_CD = 300;
 const SLOT_TABS = [['FRAME', null], ['R-ARM', 'R'], ['L-ARM', 'L'], ['SHOULDER', 'S'], ['UTILITY', 'U'], ['PAINT', null]];
 const BENCH_TABS = ['FIT', 'HAUL', 'WAKE', 'LATTICE'];
-const SLOT_NAME = { R: 'R-ARM', L: 'L-ARM', S: 'SHOULDER', U: 'UTILITY' };
+const SLOT_NAME = { R: 'R-ARM', L: 'L-ARM', S: 'SHOULDER', U: 'UTILITY', B: 'BOOSTER', G: 'LEGS', C: 'CORE' };
 const CAMPAIGN_FALLBACK = { startWater: 4, lockerSize: 4, speakers: {}, fixed: [], fragments: [], roll: [], legs: {} };
 const STOCK_FALLBACK = { R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4', U: 'kit_rk3' };
 const MOTH_FALLBACK = { base: '#d8d2c4', mid: '#aaa494', accent: '#c99a3e', visor: '#5fe3ff', flame: '#a8ecff', blade: '#8fe9ff' };
 const STAT_KEYS = { rifle: ['dmg', 'rate', 'ammo'], mg: ['dmg', 'rate', 'ammo'], shotgun: ['pellets', 'dmg', 'ammo'], cannon: ['dmg', 'splash', 'ammo'],
   blade: ['dmg', 'cd', 'lunge'], missiles: ['count', 'dmg', 'cd'], micromissiles: ['count', 'dmg', 'cd'], mortar: ['count', 'dmg', 'splash'],
-  kit: ['kits', 'heal', 'duration'], harpoon: ['range', 'cd', 'dmg'], flares: ['count', 'cd', 'range'] };
+  kit: ['kits', 'heal', 'duration'], harpoon: ['range', 'cd', 'dmg'], flares: ['count', 'cd', 'range'],
+  rivet: ['dmg', 'imp', 'rate'], claw: ['grabR', 'dmg', 'hold'] };
 const STAT_LABEL = { dmg: 'DMG', rate: 'RATE', ammo: 'AMMO', pellets: 'PELLETS', splash: 'SPLASH', cd: 'COOLDOWN', lunge: 'LUNGE', count: 'VOLLEY',
-  kits: 'KITS', heal: 'HEAL/S', duration: 'TIME', range: 'RANGE', imp: 'IMPACT', speed: 'VELOCITY', turn: 'TURN' };
-const STAT_UNIT = { rate: ' s', cd: ' s', duration: ' s', lunge: ' m', range: ' m', splash: ' m', speed: ' m/s' };
+  kits: 'KITS', heal: 'HEAL/S', duration: 'TIME', range: 'RANGE', imp: 'IMPACT', speed: 'VELOCITY', turn: 'TURN', grabR: 'GRAB', hold: 'HOLD' };
+const STAT_UNIT = { rate: ' s', cd: ' s', duration: ' s', lunge: ' m', range: ' m', splash: ' m', speed: ' m/s', grabR: ' m', hold: ' s' };
 
 /** campaignLoadout from loadout.js when it exists (A0 rule 1), else the A3.7 fallback shape */
 function campaignLoadoutOf(fitted) {
   if (typeof LO.campaignLoadout === 'function') return LO.campaignLoadout(fitted);
   const stock = LO.CAMPAIGN_STOCK || STOCK_FALLBACK;
   const lo = { frame: FRAMES.moth ? 'moth' : 'vanguard', ...stock, paint: { ...(LO.MOTH_PAINT || MOTH_FALLBACK) } };
-  for (const s of ['R', 'L', 'S']) if (fitted?.[s] && (PARTS[fitted[s]]?.slot ?? s) === s) lo[s] = fitted[s];
+  for (const s of ['R', 'L', 'S', 'B', 'G', 'C']) if (fitted?.[s] && (PARTS[fitted[s]]?.slot ?? s) === s) lo[s] = fitted[s];
   return lo;
 }
 const stockOf = () => LO.CAMPAIGN_STOCK || STOCK_FALLBACK;
@@ -194,11 +195,13 @@ export function install(ctx) {
   /** (re)build when the frame or paint changed; swap parts live otherwise */
   function setMech(lo, o = {}) {
     const sc = schemeOf(lo), k = JSON.stringify(sc);
-    const parts = { R: lo.R, L: lo.L, S: lo.S, U: lo.U };
+    // addendum 02 E9: B, G and C parts are drawn; bound hungry parts carry their ghost beacons at the Bench too
+    const parts = { R: lo.R, L: lo.L, S: lo.S, U: lo.U, B: lo.B ?? null, G: lo.G ?? null, C: lo.C ?? null };
+    const bound = Array.isArray(o.bound) ? o.bound : [];
     const place = () => { rig.root.rotation.y = dressing === 'bench' ? 0 : Math.PI * 0.85 + spin; rig.root.position.set(0, dressing === 'bench' ? ensureBench().cradleTop : 0, 0); };
-    if (rig && rigKey === k && !o.rebuild) { rig.setParts(parts); place(); return rig; }
+    if (rig && rigKey === k && !o.rebuild) { rig.setParts(parts, { bound }); place(); return rig; }
     const prev = rig;
-    rig = buildMech(ctx, sc, { parts });
+    rig = buildMech(ctx, sc, { parts, bound });
     rigKey = k;
     liveLayer[1] = rig.root;
     place();
@@ -339,31 +342,80 @@ export function install(ctx) {
     root.querySelector('#gOk').focus({ preventScroll: true });
   }
 
-  // ================================================================ the Bench (A3.6)
-  let bench = null;   // { data, levelId, leg, w (working CampaignState), undo[], fired:Set, queue[], line, timers, closing, tab }
-  const defaultState = (data) => ({ v: 1, day: 0, water: data.startWater ?? 4, arms: 0, parts: {}, spares: [], fitted: { R: stockOf().R, L: stockOf().L, S: stockOf().S },
+  // ================================================================ the Bench (A3.6 + addendum 02 E11: Bench V2)
+  // V2: BOOSTER (B) and LEGS (G) take hauled parts; hungry parts open the overwrite picker on the LATTICE tab (the
+  // overwrite is final when confirmed, B2 #7); the forced fit and gifts from the leg; bound parts; Made fragments with
+  // NEW tags and the SYNC chip; FUND rows for Calls (leg.calls); explain cards from leg.terms; the new line keys.
+  let bench = null;   // { data, levelId, leg, w (working CampaignState v2), undo[], fired:Set, queue[], line, timers, closing, tab, picker, funded }
+  const OLD_FRAGS = ['F01', 'F02', 'F03', 'F04', 'F05', 'F06', 'F07', 'F08', 'F09', 'F10', 'F11', 'F12'];
+  const FIT_SLOTS = ['R', 'L', 'S', 'B', 'G'];
+  const HP_NAME = { B: 'BOOSTER', G: 'LEGS', C: 'CORE' };
+  const defaultState = (data) => migrate({ v: 2, day: 0, water: data.startWater ?? 4, arms: 0, parts: {}, spares: [],
+    fitted: { R: stockOf().R, L: stockOf().L, S: stockOf().S, B: null, G: null, C: null },
     lost: [], fragments: {}, kernel: 4, benchVisits: 0, tearCount: 0, pending: null, ledger: null });
+  /** addendum 02 §B5: v2 defaults on a v1 (or partial) state */
+  function migrate(w) {
+    w.parts = w.parts || {}; w.spares = Array.isArray(w.spares) ? w.spares : [];
+    w.fitted = { ...stockOf(), B: null, G: null, C: null, ...(w.fitted || {}) }; delete w.fitted.U;
+    for (const h of ['B', 'G', 'C']) if (w.fitted[h] === undefined) w.fitted[h] = null;
+    if (!w.fragments || typeof w.fragments !== 'object') w.fragments = {};
+    if (!Array.isArray(w.bound)) w.bound = [];
+    if (!Array.isArray(w.overwrites)) w.overwrites = [];
+    w.calls = { kite: 0, mortar: 0, trike: 0, ...(w.calls && typeof w.calls === 'object' ? w.calls : {}) };
+    if (!w.story || typeof w.story !== 'object') w.story = {};
+    if (!w.sync || typeof w.sync !== 'object' || !Array.isArray(w.sync.unlocked)) w.sync = { unlocked: Array.isArray(w.sync?.unlocked) ? w.sync.unlocked : [] };
+    if (!Array.isArray(w.lost)) w.lost = [];
+    w.v = 2;
+    return w;
+  }
   async function campaignData() {
+    try { if (ctx.flow?.campaignData) return (await ctx.flow.campaignData()) || CAMPAIGN_FALLBACK; } catch (e) { /* fall through */ }
     try { const m = await import('../../levels/campaign.js'); return m.default || CAMPAIGN_FALLBACK; } catch (e) { return CAMPAIGN_FALLBACK; }
   }
-  const isStock = (id) => Object.values(stockOf()).includes(id);
+  const stockFor = (slot) => (slot === 'B' || slot === 'G' || slot === 'C') ? null : stockOf()[slot];
+  const isStock = (id) => id == null || Object.values(stockOf()).includes(id);
   const lockerList = (w) => Object.keys(w.parts).filter(id => w.parts[id] === 'locker');
+  const owned = (w, id) => w.parts[id] === 'fitted' || w.parts[id] === 'locker';
+  const hunger = (id) => PARTS[id]?.haul?.hunger ?? 0;
+  const fixedCard = (hp) => (bench?.data?.fixed || []).find(f => f.hardpoint === hp) || null;
+  const fragValue = (s) => (s == null || s === 'intact') ? 1 : s === 'overwritten' ? 0 : (String(s).startsWith('retold') ? 0.5 : 1);
+  /** the fragment cards shown: F01..F12, then every other (Made) fragment present in the state */
+  function fragIds(w) {
+    const extra = Object.keys(w.fragments || {}).filter(id => !OLD_FRAGS.includes(id));
+    const order = (bench?.data?.fragments || []).map(f => f.id);
+    extra.sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999) || a.localeCompare(b));
+    return [...OLD_FRAGS, ...extra];
+  }
+  const syncCap = (w) => Math.floor(fragIds(w).reduce((a, id) => a + fragValue(w.fragments?.[id]), 0) + 1e-6);
+  const intactIds = (w) => fragIds(w).filter(id => (w.fragments?.[id] ?? 'intact') === 'intact');
   function applyArrival(w) {   // A3.5 rule 1
     for (const id of w.pending?.haul || []) {
       if (w.parts[id] === 'fitted' || w.parts[id] === 'locker') w.spares.push(id);
       else w.parts[id] = 'locker';
     }
   }
-  function snapshot() { bench.undo.push(JSON.stringify({ parts: bench.w.parts, spares: bench.w.spares, fitted: bench.w.fitted, water: bench.w.water, arms: bench.w.arms, ledger: bench.w.ledger, given: bench.givenThisVisit })); }
-  /** A3.5 rule 2: can `id` be fitted to `slot` now? Returns null or the reason it can't. */
+  function snapshot() {
+    bench.undo.push(JSON.stringify({ parts: bench.w.parts, spares: bench.w.spares, fitted: bench.w.fitted, water: bench.w.water, arms: bench.w.arms,
+                                     ledger: bench.w.ledger, given: bench.givenThisVisit, funded: bench.funded }));
+  }
+  /** addendum 02 E11: the forced part (leg.forced) is owned and not fitted in its slot → WALK ON is blocked */
+  function forcedBlock() {
+    const f = bench?.leg?.forced, w = bench?.w;
+    if (!f?.part || !w || f.mustFit === false) return null;
+    const slot = PARTS[f.part]?.slot;
+    if (!slot || !(owned(w, f.part) || w.spares.includes(f.part))) return null;
+    return w.fitted[slot] === f.part ? null : (f.reason || 'Fit the required part first.');
+  }
+  /** A3.5 rule 2 (+ B, G): can `id` (null = stock) be fitted to `slot` now? Returns null or the reason it can't. */
   function fitBlock(slot, id) {
     const w = bench.w;
-    if (!['R', 'L', 'S'].includes(slot)) return 'Fixed hardpoint.';
+    if (!FIT_SLOTS.includes(slot)) return 'Fixed hardpoint.';
+    if (id === '' || id === undefined) id = null;
     if (w.fitted[slot] === id) return null;
-    const stock = stockOf()[slot];
-    if (id === stock) {
+    const stock = stockFor(slot);
+    if (id === stock || id == null) {
       const prev = w.fitted[slot];
-      if (prev && prev !== stock && w.parts[prev] === 'fitted' && lockerList(w).length + 1 > (bench.data.lockerSize ?? 4)) return 'Locker full. Give a part first.';
+      if (prev && !isStock(prev) && w.parts[prev] === 'fitted' && lockerList(w).length + 1 > (bench.data.lockerSize ?? 4)) return 'Locker full. Give a part first.';
       return null;
     }
     if (!PARTS[id]) return 'Unknown part.';
@@ -373,17 +425,71 @@ export function install(ctx) {
   }
   function doFit(slot, id) {
     if (!bench || bench.closing) return false;
+    if (id === '' || id === undefined) id = null;
     const w = bench.w;
     if (w.fitted[slot] === id) return true;
     if (fitBlock(slot, id)) return false;
+    // a hungry part not yet bound: pay its hunger first (the overwrite picker)
+    if (id && hunger(id) > 0 && !w.bound.includes(id)) { openPicker(slot, id); return 'picker'; }
     snapshot();
     const prev = w.fitted[slot];
     if (prev && !isStock(prev) && w.parts[prev] === 'fitted') w.parts[prev] = 'locker';
     w.fitted[slot] = id;
     if (!isStock(id)) w.parts[id] = 'fitted';
     sfx('uiSelect');
-    setMech(campaignLoadoutOf(w.fitted));
-    trigger('fit:' + id);
+    showMech();
+    if (id) trigger('fit:' + id);
+    renderBench();
+    return true;
+  }
+  // ---- the overwrite picker (E11)
+  function pickerAllowed(part) {
+    const f = bench.leg?.forced;
+    const intact = intactIds(bench.w);
+    return f?.part === part && Array.isArray(f.fragments) ? intact.filter(id => f.fragments.includes(id)) : intact;
+  }
+  function openPicker(slot, part) {
+    const allowed = pickerAllowed(part);
+    const rank = Array.isArray(bench.data.mothRank) ? bench.data.mothRank : [];
+    bench.picker = { slot, part, remaining: hunger(part), allowed, recommended: rank.find(id => allowed.includes(id)) ?? allowed[0] ?? null, confirmed: 0 };
+    bench.tab = 'LATTICE';
+    sfx('uiMove');
+    trigger('hungry');
+    explainTerm('overwrite');
+    renderBench();
+  }
+  function doOverwrite(fragId) {
+    const P = bench?.picker;
+    if (!P || bench.closing) return false;
+    if (!P.allowed.includes(fragId)) {
+      if (fragIds(bench.w).includes(fragId)) { trigger('locked'); sfx('empty'); }
+      return false;
+    }
+    const w = bench.w;
+    w.fragments[fragId] = 'overwritten';
+    w.overwrites.push({ id: fragId, part: P.part, day: bench.leg?.day ?? w.day ?? 0 });
+    bench.glitch = { id: fragId, t: 0.7 };
+    try { ctx.sync?.refreshCapacity?.(w); } catch (e) { /* the meter is optional here */ }
+    sfx('glitch');
+    trigger('overwrite');
+    P.remaining--; P.confirmed++;
+    if (P.remaining > 0) {
+      P.allowed = pickerAllowed(P.part);
+      const rank = Array.isArray(bench.data.mothRank) ? bench.data.mothRank : [];
+      P.recommended = rank.find(id => P.allowed.includes(id)) ?? P.allowed[0] ?? null;
+      renderBench();
+      return true;
+    }
+    if (!w.bound.includes(P.part)) w.bound.push(P.part);
+    bench.picker = null;
+    doFit(P.slot, P.part);   // the fit completes (and fires fit:<id>)
+    if (bench) { bench.tab = 'FIT'; renderBench(); }
+    return true;
+  }
+  function doCancelPicker() {
+    if (!bench?.picker) return false;
+    bench.picker = null;
+    sfx('uiBack');
     renderBench();
     return true;
   }
@@ -391,18 +497,20 @@ export function install(ctx) {
     if (!bench || bench.closing || isStock(id)) return false;
     const w = bench.w;
     const si = w.spares.indexOf(id);
-    const owned = w.parts[id] === 'fitted' || w.parts[id] === 'locker';
-    if (si < 0 && !owned) return false;
+    const own = owned(w, id);
+    if (si < 0 && !own) return false;
+    const useSpare = si >= 0 && !o.owned;
+    if (!useSpare && giveBlock(id)) { sfx('empty'); return false; }
     snapshot();
     const v = giveValue(id);
     w.water += v; w.arms += v;
     if (!w.ledger) w.ledger = { levelId: bench.levelId, before: w.water - v, sledges: 0, gives: 0 };
     w.ledger.gives = (w.ledger.gives || 0) + v;
-    if (si >= 0 && !o.owned) w.spares.splice(si, 1);
+    if (useSpare) w.spares.splice(si, 1);
     else {
-      if (w.parts[id] === 'fitted') for (const s of ['R', 'L', 'S']) if (w.fitted[s] === id) { w.fitted[s] = stockOf()[s]; }
+      if (w.parts[id] === 'fitted') for (const s of FIT_SLOTS) if (w.fitted[s] === id) { w.fitted[s] = stockFor(s); }
       w.parts[id] = 'given';
-      setMech(campaignLoadoutOf(w.fitted));
+      showMech();
     }
     bench.givenThisVisit++;
     sfx('confirm');
@@ -410,15 +518,58 @@ export function install(ctx) {
     renderBench();
     return true;
   }
-  function doUndo() {
-    if (!bench || bench.closing || !bench.undo.length) return false;
-    const { given, ...s } = JSON.parse(bench.undo.pop());
-    Object.assign(bench.w, s);
-    bench.givenThisVisit = given ?? bench.givenThisVisit;   // undoing a fit leaves the gives alone
-    sfx('uiBack');
-    setMech(campaignLoadoutOf(bench.w.fitted));
+  /** E11 forced fit with noGive: the forced part itself can't be given (spares of it can) */
+  function giveBlock(id) {
+    const f = bench?.leg?.forced;
+    return f?.noGive && f.part === id ? (f.noGiveReason || 'This part is needed.') : null;
+  }
+  // ---- Calls (E11, priority 2)
+  function doFund(call, on) {
+    if (!bench || bench.closing || !bench.leg?.calls) return false;
+    const c = bench.data.calls?.[call];
+    if (!c) return false;
+    const w = bench.w, cur = !!bench.funded[call];
+    if (cur === !!on) return true;
+    if (on && w.water < (c.cost ?? 0)) { sfx('empty'); return false; }
+    snapshot();
+    bench.funded = { ...bench.funded, [call]: !!on };
+    const d = (c.cost ?? 0) * (on ? 1 : -1);
+    w.water -= d;
+    if (!w.ledger) w.ledger = { levelId: bench.levelId, before: w.water + d, sledges: 0, gives: 0 };
+    w.ledger.funded = Math.max(0, (w.ledger.funded || 0) + d);
+    sfx(on ? 'uiSelect' : 'uiBack');
     renderBench();
     return true;
+  }
+  function doUndo() {
+    if (!bench || bench.closing || !bench.undo.length) return false;
+    const { given, funded, ...s } = JSON.parse(bench.undo.pop());
+    Object.assign(bench.w, s);
+    bench.givenThisVisit = given ?? bench.givenThisVisit;   // undoing a fit leaves the gives alone
+    if (funded) bench.funded = funded;
+    sfx('uiBack');
+    showMech();
+    renderBench();
+    return true;
+  }
+  function explainTerm(k) {
+    const t = bench?.leg?.terms?.[k];
+    if (!t || bench.explained.has(k)) return;
+    bench.explained.add(k);
+    try { ctx.hud?.explain?.(t); } catch (e) { /* cards are optional */ }
+  }
+  /** the first time per visit a tab shows something new: its explain card and its line */
+  function tabEvents(name) {
+    const B = bench, w = B.w;
+    if (name === 'FIT' && ['B', 'G'].some(h => Object.keys(w.parts).some(id => PARTS[id]?.slot === h && owned(w, id)) || w.spares.some(id => PARTS[id]?.slot === h)))
+      explainTerm('hardpoints');
+    if (name === 'HAUL') trigger('haul');
+    if (name === 'LATTICE') {
+      trigger('lattice');
+      const made = (w.ledger?.made || []).filter(id => fragIds(w).includes(id));
+      if (made.length) { explainTerm('made'); trigger('made'); }
+    }
+    if (name === 'WAKE' && B.leg?.calls && B.data.calls && Object.keys(B.data.calls).length) { explainTerm('calls'); trigger('calls'); }
   }
   // ---- Bench lines: typed in real time at 42 chars/s × speaker.speed; each key at most once per visit
   function trigger(k) {
@@ -432,6 +583,7 @@ export function install(ctx) {
     const B = bench;
     if (!B) return;
     for (const tm of B.timers) { tm.t -= dt; if (tm.t <= 0 && !tm.done) { tm.done = true; tm.fn(); } }
+    if (B.glitch) { B.glitch.t -= dt; if (B.glitch.t <= 0) { B.glitch = null; if (B.tab === 'LATTICE') renderBench(); } }
     if (!B.line) {
       while (B.queue.length && !B.queue[0].lines.length) { const done = B.queue.shift(); B.onScriptDone(done.key); if (B !== bench) return; }
       if (!B.queue.length) { drawLine(); return; }
@@ -464,30 +616,58 @@ export function install(ctx) {
     if (who.textContent !== L.name) { who.textContent = L.name; who.style.color = L.color; line.style.color = L.color; line.classList.toggle('mono', L.font === 'monoCaps'); }
     line.textContent = L.text.slice(0, Math.floor(L.shown));
   }
+  /** E11: short readouts of a mods-only part (BOOSTER, LEGS) */
+  function modStats(p) {
+    const m = p?.mods; if (!m) return [];
+    const out = [];
+    if (m.speedMul) out.push(['SPEED', '×' + m.speedMul]);
+    if (m.lateralGrip != null) out.push(['GRIP', String(m.lateralGrip)]);
+    if (m.sail) out.push(['SAIL', '×' + m.sail.speedMul + ' · free QB']);
+    if (m.qbCooldown) out.push(['QB GAP', m.qbCooldown + ' s']);
+    if (m.accelMul && out.length < 3) out.push(['ACCEL', '×' + m.accelMul]);
+    return out.slice(0, 3);
+  }
+  function showMech() { setMech(campaignLoadoutOf(bench.w.fitted), { bound: bench.w.bound }); }
   function renderBench() {
     const B = bench; if (!B) return;
     const w = B.w, data = B.data, size = data.lockerSize ?? 4;
     const locker = lockerList(w);
     const card = (id, slot, on, block) => {
-      const p = PARTS[id];
-      return `<button type="button" class="gx-card ${on ? 'on' : ''} ${block ? 'locked' : ''}" data-fit="${esc(slot)}:${esc(id)}" ${block ? 'aria-disabled="true"' : ''}>
-        <span class="nm">${esc(partName(id))}${isStock(id) ? ' <i class="tag">STOCK</i>' : ''}${on ? ' <i class="tag on">FITTED</i>' : ''}</span>
-        <span class="ds">${esc(block || p?.desc || '')}</span>
-        <span class="ks">${keyStats(p).map(([k, v]) => `<b>${esc(k)} ${esc(v)}</b>`).join('')}</span></button>`;
+      const p = id ? PARTS[id] : null;
+      const fx = !id ? fixedCard(HP_NAME[slot]) : null;
+      const name = id ? partName(id) : (fx?.name || 'Stock');
+      const tags = `${isStock(id) ? ' <i class="tag">STOCK</i>' : ''}${id && hunger(id) > 0 ? (w.bound.includes(id) ? ' <i class="tag bound">BOUND</i>' : ' <i class="tag hungry">HUNGRY</i>') : ''}${on ? ' <i class="tag on">FITTED</i>' : ''}`;
+      const ks = p ? (Object.keys(p.stats || {}).length ? keyStats(p) : modStats(p)) : [];
+      return `<button type="button" class="gx-card ${on ? 'on' : ''} ${block ? 'locked' : ''}" data-fit="${esc(slot)}:${esc(id ?? '')}" ${block ? 'aria-disabled="true"' : ''}>
+        <span class="nm">${esc(name)}${tags}</span>
+        <span class="ds">${esc(block || p?.desc || fx?.stats || '')}</span>
+        <span class="ks">${ks.map(([k, v]) => `<b>${esc(k)} ${esc(v)}</b>`).join('')}</span></button>`;
     };
     let body = '';
     if (B.tab === 'FIT') {
-      body = ['R', 'L', 'S'].map(slot => {
-        const choices = [stockOf()[slot], ...locker.filter(id => PARTS[id]?.slot === slot)];
+      body = FIT_SLOTS.map(slot => {
+        const stock = stockFor(slot);
+        const choices = [stock, ...locker.filter(id => PARTS[id]?.slot === slot)];
         if (w.fitted[slot] && !choices.includes(w.fitted[slot])) choices.push(w.fitted[slot]);
-        return `<div class="gx-slot"><div class="gx-slotname">${SLOT_NAME[slot]}</div>${choices.map(id => card(id, slot, w.fitted[slot] === id, w.fitted[slot] === id ? null : fitBlock(slot, id))).join('')}</div>`;
-      }).join('') + `<div class="gx-fixed">${(data.fixed || []).map(fx => `<div class="gx-fixedcard"><span class="hp">${esc(fx.hardpoint)}</span><span class="nm">${esc(fx.name)}</span>
+        if (slot === 'B' || slot === 'G') {   // the stock booster and legs are fixed cards until a part for them is owned
+          const any = choices.length > 1;
+          if (!any) {
+            const fx = fixedCard(HP_NAME[slot]);
+            return `<div class="gx-slot"><div class="gx-slotname">${HP_NAME[slot]}</div><div class="gx-fixedcard wide"><span class="nm">${esc(fx?.name || 'Stock')}</span>
+              <span class="ds mono">${esc(fx?.stats || '')}</span><span class="no">No other parts yet.</span></div></div>`;
+          }
+        }
+        return `<div class="gx-slot"><div class="gx-slotname">${SLOT_NAME[slot] || HP_NAME[slot]}</div>${choices.map(id => card(id, slot, (w.fitted[slot] ?? null) === id, (w.fitted[slot] ?? null) === id ? null : fitBlock(slot, id))).join('')}</div>`;
+      }).join('') + `<div class="gx-fixed">${(data.fixed || []).filter(fx => fx.hardpoint === 'CORE' || fx.hardpoint === 'UTILITY').map(fx => `<div class="gx-fixedcard"><span class="hp">${esc(fx.hardpoint)}</span><span class="nm">${esc(fx.name)}</span>
           <span class="ds mono">${esc(fx.stats)}</span><span class="no">No other parts yet.</span></div>`).join('')}</div>`;
     } else if (B.tab === 'HAUL') {
-      const fittedHaul = ['R', 'L', 'S'].map(s => w.fitted[s]).filter(id => id && !isStock(id) && w.parts[id] === 'fitted');
-      const row = (id, tag, i) => `<div class="gx-haul"><span class="nm">${esc(partName(id))} ${tag ? `<i class="tag">${tag}</i>` : ''}</span>
-        <span class="ds">${esc(PARTS[id]?.desc || (PARTS[id] ? '' : 'Unknown part. It can only be given.'))}</span>
-        <button type="button" class="btn ghost gx-give" data-give="${esc(id)}" data-kind="${tag === 'SPARE' ? 'spare' : 'owned'}" data-i="${i}">Give <span>+${giveValue(id)} water</span></button></div>`;
+      const fittedHaul = FIT_SLOTS.map(s => w.fitted[s]).filter(id => id && !isStock(id) && w.parts[id] === 'fitted');
+      const row = (id, tag, i) => {
+        const gb = tag === 'SPARE' ? null : giveBlock(id);
+        return `<div class="gx-haul"><span class="nm">${esc(partName(id))} ${tag ? `<i class="tag">${tag}</i>` : ''}${hunger(id) > 0 ? ' <i class="tag hungry">HUNGRY</i>' : ''}</span>
+        <span class="ds">${esc(gb || PARTS[id]?.desc || (PARTS[id] ? '' : 'Unknown part. It can only be given.'))}</span>
+        <button type="button" class="btn ghost gx-give ${gb ? 'off' : ''}" data-give="${esc(id)}" data-kind="${tag === 'SPARE' ? 'spare' : 'owned'}" data-i="${i}" ${gb ? 'aria-disabled="true"' : ''}>Give <span>+${giveValue(id)} water</span></button></div>`;
+      };
       body = `<div class="gx-sub">LOCKER ${locker.length} / ${size}</div>
         ${locker.map((id, i) => row(id, '', i)).join('') || '<div class="gx-empty">The Locker is empty.</div>'}
         ${fittedHaul.length ? `<div class="gx-sub">FITTED</div>${fittedHaul.map((id, i) => row(id, 'FITTED', i)).join('')}` : ''}
@@ -496,31 +676,55 @@ export function install(ctx) {
     } else if (B.tab === 'WAKE') {
       const draw = B.leg?.draw ?? 0, after = w.water - draw, short = Math.max(0, -after);
       const lost = new Set(w.lost || []);
+      const road = new Set(w.ledger?.lostOnRoad || []);
       const roll = data.roll || [];
       const souls = roll.filter(r => !lost.has(r.id)).reduce((s, r) => s + (r.souls || 0), 0);
+      const calls = B.leg?.calls && data.calls ? Object.entries(data.calls) : [];
       body = `<div class="gx-wake">
           <div class="gx-big"><span>WATER</span><b>${w.water}</b><i>TANKS</i></div>
           <div class="gx-big"><span>MORNING DRAW</span><b>${draw}</b><i>TANKS</i></div>
           <div class="gx-big ${short ? 'bad' : ''}"><span>AFTER THE COUNT</span><b>${Math.max(0, after)}</b><i>${short ? `${short} SHORT · ${short * 2} RIGS LOST` : 'TANKS'}</i></div>
         </div>
+        ${calls.length ? `<div class="gx-sub">FUND CALLS · HELP FROM THE WAKE NEXT LEG</div>
+          ${calls.map(([k, c]) => `<div class="gx-call ${B.funded[k] ? 'on' : ''}"><span class="nm">${esc(c.name)} <i class="tag">${esc(c.who)}</i></span>
+            <span class="ds">${esc(c.desc || '')}</span><span class="ks"><b>COST ${c.cost} WATER</b><b>USES ${c.uses}</b></span>
+            <button type="button" class="btn ${B.funded[k] ? '' : 'ghost'} gx-fund" data-fund="${esc(k)}">${B.funded[k] ? 'Unfund' : 'Fund'}</button></div>`).join('')}
+          ${short ? '<div class="gx-warnline">This leaves the Wake short at the Count.</div>' : ''}` : ''}
         <div class="gx-sub">WAKE ROLL · ${roll.length - lost.size} RIGS · ${souls} SOULS</div>
-        <div class="gx-roll">${roll.map(r => `<span class="${lost.has(r.id) ? 'lost' : ''}">${esc(r.name)} <i>${r.souls}</i></span>`).join('')}</div>`;
+        <div class="gx-roll">${roll.map(r => `<span class="${lost.has(r.id) ? 'lost' : ''} ${road.has(r.id) ? 'road' : ''}">${esc(r.name)}${road.has(r.id) ? ' <em>LOST ON THE ROAD</em>' : ''} <i>${r.souls}</i></span>`).join('')}</div>`;
     } else {
-      const frags = data.fragments || [];
-      body = `<div class="gx-sub">MOTH — RECOVERED FRAGMENTS (${frags.length})</div><div class="gx-frags">${frags.map(fr => {
-        const rng = mulberry32(hashString(fr.id));
+      const P = B.picker;
+      const ids = fragIds(w);
+      const gloss = (id) => (data.fragments || []).find(f => f.id === id)?.gloss || '';
+      const isNew = new Set(w.ledger?.made || []);
+      const intact = ids.filter(id => (w.fragments[id] ?? 'intact') === 'intact').length;
+      const head = P ? `<div class="gx-picker"><b>MAKE ROOM: ${P.remaining} FRAGMENT${P.remaining === 1 ? '' : 'S'} · ${esc(partName(P.part).toUpperCase())}</b>
+          <button type="button" class="btn ghost gx-pback" id="bPick">Back</button></div>` : '';
+      body = `${head}<div class="gx-sub gx-lhead">MOTH — RECOVERED FRAGMENTS (${intact}) <span class="gx-sync">SYNC ${syncCap(w)}</span></div><div class="gx-frags">${ids.map(id => {
+        const st = w.fragments[id] ?? 'intact';
+        const over = st === 'overwritten';
+        const ow = over ? (w.overwrites || []).find(o => o.id === id) : null;
+        const rng = mulberry32(hashString(id));
         const bars = [0, 1, 2].map(() => `<i style="width:${Math.round(35 + rng() * 60)}%"></i>`).join('');
-        return `<div class="gx-frag"><span class="id mono">${esc(fr.id)}</span><span class="gl mono">${esc(fr.gloss)}</span><span class="rd">${bars}</span></div>`;
+        const sel = P && P.allowed.includes(id), rec = P && P.recommended === id, lock = P && !over && !sel;
+        const glitch = B.glitch?.id === id;
+        return `<div class="gx-frag ${over ? 'over' : ''} ${sel ? 'sel' : ''} ${rec ? 'rec' : ''} ${lock ? 'lockd' : ''} ${glitch ? 'glitch' : ''}" data-frag="${esc(id)}">
+          <span class="id mono">${esc(id)}${isNew.has(id) ? ' <i class="tag new">NEW</i>' : ''}${rec ? ' <i class="tag rec">MOTH SUGGESTS</i>' : ''}${lock ? ' <i class="lk">LOCKED</i>' : ''}</span>
+          <span class="gl mono">${esc(gloss(id))}</span>
+          ${over ? `<span class="ow mono">OVERWRITTEN · ${esc(partName(ow?.part || '').toUpperCase())}</span>` : `<span class="rd">${bars}</span>`}
+          ${sel ? `<button type="button" class="btn gx-ow" data-ow="${esc(id)}">Overwrite</button>` : ''}</div>`;
       }).join('')}</div>`;
     }
     const haulCount = locker.length + w.spares.length;
+    const fb = forcedBlock();
     const root = mount('gx-bench', `
       <section class="gx-panel panel">
         <div class="gx-head"><span class="eyebrow">${esc(B.leg?.debriefTitle || 'Camp')}</span><h2>THE BENCH</h2>
           <span class="gx-water">WATER <b>${w.water}</b></span></div>
         <nav class="tabs" role="tablist">${BENCH_TABS.map(n => `<button type="button" role="tab" class="${n === B.tab ? 'on' : ''}" data-btab="${n}">${n}${n === 'HAUL' && haulCount ? ` <i class="ct">${haulCount}</i>` : ''}</button>`).join('')}</nav>
         <div class="gx-list">${body}</div>
-        <div class="actions"><button type="button" class="btn" id="bWalk">Walk on</button><button type="button" class="btn ghost" id="bUndo" ${B.undo.length ? '' : 'disabled'}>Undo</button></div>
+        ${fb ? `<div class="gx-block" role="alert">${esc(fb)}</div>` : ''}
+        <div class="actions"><button type="button" class="btn ${fb ? 'blocked' : ''}" id="bWalk" ${fb ? 'aria-disabled="true"' : ''}>Walk on</button><button type="button" class="btn ghost" id="bUndo" ${B.undo.length ? '' : 'disabled'}>Undo</button></div>
       </section>
       <div class="gx-stage" aria-hidden="true"></div>
       <div class="gx-comms idle"><span class="who"></span><span class="line"></span></div>
@@ -530,24 +734,32 @@ export function install(ctx) {
     root.querySelectorAll('[data-fit]').forEach(b => b.addEventListener('click', () => {
       const [slot, id] = b.dataset.fit.split(':');
       if (b.getAttribute('aria-disabled') === 'true') { sfx('empty'); return; }
-      doFit(slot, id);
+      doFit(slot, id || null);
     }));
     root.querySelectorAll('[data-give]').forEach(b => {
       b.addEventListener('pointerenter', () => trigger('give'));
       b.addEventListener('focus', () => trigger('give'));
       b.addEventListener('click', () => doGive(b.dataset.give, { owned: b.dataset.kind !== 'spare' }));
     });
+    root.querySelectorAll('[data-fund]').forEach(b => b.addEventListener('click', () => doFund(b.dataset.fund, !B.funded[b.dataset.fund])));
+    root.querySelectorAll('[data-ow]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); doOverwrite(b.dataset.ow); }));
+    root.querySelectorAll('.gx-frag.lockd').forEach(c => c.addEventListener('click', () => doOverwrite(c.dataset.frag)));
+    root.querySelector('#bPick')?.addEventListener('click', () => doCancelPicker());
     root.querySelector('#bUndo').addEventListener('click', () => doUndo());
-    root.querySelector('#bWalk').addEventListener('click', () => { if (B.closing) return; sfx('uiSelect'); B.confirming = true; renderBench(); });
+    root.querySelector('#bWalk').addEventListener('click', () => {
+      if (B.closing) return;
+      if (forcedBlock()) { trigger('mustFit'); sfx('empty'); return; }
+      sfx('uiSelect'); B.confirming = true; renderBench();
+    });
     root.querySelector('#bNo')?.addEventListener('click', () => { sfx('uiBack'); B.confirming = false; renderBench(); });
     root.querySelector('#bYes')?.addEventListener('click', () => walkOnWithLines());
     drawLine();
   }
   function closingKeys() {
-    const w = bench.w;
-    const remaining = Object.values(w.parts).some(s => s === 'fitted' || s === 'locker') || w.spares.length > 0;
-    // A3.6: gaveAll when every hauled part was given this visit, keptAll when none was; with nothing hauled this
-    // visit and nothing given there is nothing to comment on (P3 decision: only walkOn)
+    const w = bench.w, forced = bench.leg?.forced?.part;
+    // gaveAll: every hauled part given this visit (the forced part excepted); keptAll: none was
+    const remaining = Object.entries(w.parts).some(([id, s]) => (s === 'fitted' || s === 'locker') && id !== forced) || w.spares.length > 0;
+    // A3.6: with nothing hauled this visit and nothing given there is nothing to comment on (P3 decision: only walkOn)
     if (bench.givenThisVisit > 0 && !remaining) return ['gaveAll', 'walkOn'];
     if (bench.givenThisVisit === 0 && bench.hauled > 0) return ['keptAll', 'walkOn'];
     return ['walkOn'];
@@ -556,12 +768,19 @@ export function install(ctx) {
     const w = clone(bench.w);
     w.pending = null;
     w.benchVisits = (w.benchVisits | 0) + 1;
+    // E11 Calls: the uses funded for the next level
+    if (bench.leg?.calls && bench.data.calls) {
+      w.calls = { kite: 0, mortar: 0, trike: 0 };
+      for (const [k, c] of Object.entries(bench.data.calls)) w.calls[k] = bench.funded[k] ? (c.uses ?? 0) : 0;
+    }
+    migrate(w); w.v = 2;
     const st = typeof structuredClone === 'function' ? structuredClone(w) : clone(w);
     ctx.save.setFlag('campaign', st);
   }
   function walkOnWithLines() {
     const B = bench;
     if (!B || B.closing) return;
+    if (forcedBlock()) { trigger('mustFit'); B.confirming = false; renderBench(); return; }
     B.closing = true; B.confirming = false;
     B.queue.length = 0; B.line = null; B.timers.length = 0;
     for (const k of closingKeys()) trigger(k);
@@ -575,23 +794,41 @@ export function install(ctx) {
   async function openBench(o) {
     const data = await campaignData();
     const raw = ctx.save.getFlag('campaign');
-    const w = raw && typeof raw === 'object' ? clone(raw) : defaultState(data);
-    w.parts = w.parts || {}; w.spares = w.spares || []; w.fitted = { ...stockOf(), ...(w.fitted || {}) }; delete w.fitted.U;
+    const w = raw && typeof raw === 'object' ? migrate(clone(raw)) : defaultState(data);
     const levelId = o.levelId || w.pending?.levelId || Object.keys(data.legs || {})[0] || null;
+    const leg = data.legs?.[levelId] || null;
+    // E11 gifts: before the pending haul is applied, unless the part is already owned or arriving anyway
+    const giftLines = [];
+    for (const g of leg?.gifts || []) {
+      if (!g?.part) continue;
+      const pend = w.pending?.haul || [];
+      if (g.unlessOwned && (owned(w, g.part) || w.spares.includes(g.part) || pend.includes(g.part))) continue;
+      if (!w.pending) w.pending = { levelId, haul: [], tears: 0, sledges: 0 };
+      w.pending.haul = [...(w.pending.haul || []), g.part];
+      giftLines.push(g.line || 'gift');
+    }
+    const hauled = (w.pending?.haul || []).length;
     applyArrival(w);
-    bench = { data, levelId, leg: data.legs?.[levelId] || null, w, undo: [], fired: new Set(), queue: [], line: null, timers: [], tab: 'FIT',
-              givenThisVisit: 0, hauled: (raw?.pending?.haul || []).length, closing: false, confirming: false, onScriptDone: () => {} };
+    bench = { data, levelId, leg, w, undo: [], fired: new Set(), explained: new Set(), queue: [], line: null, timers: [], tab: 'FIT',
+              givenThisVisit: 0, hauled, closing: false, confirming: false, onScriptDone: () => {}, picker: null,
+              funded: { kite: false, mortar: false, trike: false }, glitch: null, gifts: giftLines };
     const B = bench;
     B.onScriptDone = (k) => {
-      if (k === 'arrive') B.timers.push({ t: 3, fn: () => trigger('hatch') });
+      if (k === 'arrive') {
+        for (const g of B.gifts) trigger(g);
+        if (B.leg?.bench?.hatch) B.timers.push({ t: 3, fn: () => trigger('hatch') });
+        else B.timers.push({ t: 6, fn: () => trigger('haul') });
+      }
       if (k === 'hatch') B.timers.push({ t: 6, fn: () => trigger('haul') });
     };
+    try { ctx.sync?.refreshCapacity?.(w); } catch (e) { /* optional */ }
     setDressing('bench');
     setViewShift(0.2);
-    setMech(campaignLoadoutOf(w.fitted), { rebuild: true });
+    setMech(campaignLoadoutOf(w.fitted), { rebuild: true, bound: w.bound });
     orbit.yaw = 0; orbit.dragYaw = 0; orbit.dragPitch = 0;
     renderBench();
     trigger('arrive');
+    tabEvents('FIT');
   }
 
   // ================================================================ service
@@ -610,20 +847,38 @@ export function install(ctx) {
       if (!bench || !resolveOpen) return null;
       return {
         state: () => clone(bench.w),
+        /** E11: true when fitted, 'picker' when a hungry part opened the overwrite picker, false when refused */
         fit: (slot, id) => doFit(slot, id),
         give: (id) => doGive(id),
         undo: () => doUndo(),
         tab: (name) => {
           if (!BENCH_TABS.includes(name) || !bench) return;
+          if (bench.picker && name !== 'LATTICE') bench.picker = null;   // leaving the picker cancels it
           bench.tab = name;
-          if (name === 'HAUL') trigger('haul');
-          if (name === 'LATTICE') trigger('lattice');
+          tabEvents(name);
           renderBench();
         },
-        walkOn: async () => { if (!bench || bench.closing) return; bench.closing = true; commitBench(); api.close(); },
+        /** E11: the open overwrite picker ({ part, remaining, allowed, recommended }) or null */
+        get picker() { const P = bench?.picker; return P ? { part: P.part, remaining: P.remaining, allowed: P.allowed.slice(), recommended: P.recommended } : null; },
+        overwrite: (id) => doOverwrite(id),
+        cancelPicker: () => doCancelPicker(),
+        fund: (call, on) => doFund(call, on),
+        /** E11: skips the confirm and the closing lines and commits; refused (false, plays mustFit) while the forced fit is owed */
+        walkOn: async () => {
+          if (!bench || bench.closing) return false;
+          if (forcedBlock()) { trigger('mustFit'); return false; }
+          bench.closing = true; commitBench(); api.close(); return true;
+        },
+        /** extra (tests): the reason WALK ON is blocked (the forced fit), or null; the reason GIVE is blocked on a part */
+        get walkOnBlocked() { return bench ? forcedBlock() : null; },
+        giveBlock: (id) => (bench ? giveBlock(id) : null),
+        /** extra (tests): the funded Calls and the Sync size the LATTICE chip shows */
+        get funded() { return bench ? { ...bench.funded } : null; },
+        get syncSize() { return bench ? syncCap(bench.w) : null; },
         /** extra (tests): the line being typed, the queued script keys and the keys fired so far */
         get line() { return bench?.line && bench.line.text ? { who: bench.line.who, text: bench.line.text } : null; },
         get fired() { return bench ? [...bench.fired] : []; },
+        get queued() { return bench ? bench.queue.map(q => q.key) : []; },
         fitBlock: (slot, id) => fitBlock(slot, id),
       };
     },
@@ -1244,6 +1499,39 @@ const BENCH_CSS = `
 .gx-comms .line{font:500 17px var(--f-display);letter-spacing:.03em;line-height:1.3;min-height:1.3em}
 .gx-comms .line.mono{font:500 14px var(--f-mono);text-transform:uppercase;letter-spacing:.06em}
 .gx-confirm{pointer-events:auto;position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(12,11,14,.55)}
+/* addendum 02 E11: Bench V2 */
+.gx .tag.hungry{color:#d8ffe6;border-color:rgba(168,255,158,.55)}
+.gx .tag.bound{color:#a8ff9e;border-color:#a8ff9e}
+.gx .tag.new{color:var(--accent);border-color:var(--accent)}
+.gx .tag.rec{color:#7fe9ff;border-color:#7fe9ff}
+.gx-fixedcard.wide{grid-column:1 / -1}
+.gx-block{flex:none;margin-top:10px;font:500 12px var(--f-mono);color:var(--threat);letter-spacing:.02em}
+.gx .btn.blocked{background:var(--hud-faint);color:var(--hud-dim);cursor:not-allowed}
+.gx-give.off{opacity:.45;cursor:not-allowed}
+.gx-call{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center;border:1px solid var(--hud-faint);padding:8px 10px;background:rgba(12,11,14,.4)}
+.gx-call.on{border-color:var(--en);box-shadow:inset 3px 0 0 var(--en)}
+.gx-call .nm{font:600 16px var(--f-display);letter-spacing:.08em;text-transform:uppercase}
+.gx-call .ds{grid-column:1;font:400 11px var(--f-mono);color:var(--hud-dim)}
+.gx-call .ks{grid-column:1;display:flex;gap:12px;font:500 11px var(--f-mono);color:var(--en)}
+.gx-call .gx-fund{grid-column:2;grid-row:1 / span 3;font-size:13px;padding:8px 14px}
+.gx-warnline{font:500 12px var(--f-mono);color:var(--threat);margin-top:4px}
+.gx-roll span.road em{font:600 9px var(--f-display);font-style:normal;letter-spacing:.2em;color:var(--threat);margin-left:6px;text-decoration:none;display:inline-block}
+.gx-picker{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid #7fe9ff;background:rgba(127,233,255,.08)}
+.gx-picker b{font:600 13px var(--f-display);letter-spacing:.2em;color:#7fe9ff}
+.gx-picker .btn{font-size:12px;padding:6px 12px}
+.gx-lhead{display:flex;justify-content:space-between;align-items:baseline}
+.gx-sync{font:600 11px var(--f-mono);letter-spacing:.12em;color:#7fe9ff;border:1px solid rgba(127,233,255,.5);padding:1px 6px}
+.gx-frag.over .gl{text-decoration:line-through;color:var(--hud-dim)}
+.gx-frag .ow{font-size:10px;letter-spacing:.12em;color:#a8ff9e}
+.gx-frag.sel{border-color:#7fe9ff;cursor:pointer}
+.gx-frag.rec{box-shadow:inset 0 0 0 1px #7fe9ff,0 0 12px rgba(127,233,255,.25)}
+.gx-frag.lockd{opacity:.42;cursor:not-allowed}
+.gx-frag .gx-ow{justify-self:start;font-size:12px;padding:6px 12px;margin-top:2px}
+.gx-frag.glitch{animation:gxGlitch .7s steps(7) both}
+.gx-frag.glitch .rd i,.gx-frag.glitch .gl{animation:gxBars .7s ease-in both}
+@keyframes gxGlitch{0%{transform:translate(0,0);filter:none}20%{transform:translate(-3px,1px);filter:hue-rotate(90deg) saturate(3)}40%{transform:translate(3px,-1px)}
+  60%{transform:translate(-2px,0);filter:invert(.3)}80%{transform:translate(1px,1px)}100%{transform:none;filter:none}}
+@keyframes gxBars{0%{opacity:1}100%{opacity:.35}}
 .gx-confirm h3{margin:0 0 6px;font:700 36px var(--f-display);text-transform:uppercase;letter-spacing:.04em}
 @media (max-height:500px),(max-width:760px){
   .gx-comms{width:min(330px,38vw);right:max(8px,var(--safe-r));bottom:8px;padding:6px 10px}

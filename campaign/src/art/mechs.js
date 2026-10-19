@@ -10,6 +10,11 @@
 // One change to the ported designs: the right forearm's gun and the left forearm's blade emitter are built into child
 // groups (S.arms.R.gun, S.arms.L.emitter) at the forearm's origin, and the shoulder pod into S.pod (a child of the pod
 // bone), so a fitted part can replace them. The plates themselves are unchanged.
+//
+// Addendum 02 E9: hardpoints B (booster: on the back housing), G (legs: one sub-mount per shin and per foot) and C
+// (core) are drawn; PART_VISUALS sailrig, skates, rivet, claw (Dredge style: black iron and oxide on adapter brackets);
+// rig.setSail(k) unfolds the Sail-Rig's vanes, rig.setJets(k) drives the Skate-Jets' under-glow; a part with
+// PARTS[id].ghostLight whose id is in `bound` gets a lightGhost lens and a ghost beacon (particles.glows, pulse 'beat').
 import * as THREE from 'three';
 import * as KIT from './kit.js';
 import { clamp, lerp, damp, mulberry32, smooth } from '../core/util.js';
@@ -354,6 +359,9 @@ function partMaterials(ctx, M) {
   };
   const PM = { ...M, iron: lib('iron'), oxide: lib('oxide'), steel: lib('steel') };
   PM.warn = ctx?.materials?.emissive ? ctx.materials.emissive('#ff2a1a', 3) : M.visor;
+  const gl = ctx?.materials?.get?.('lightGhost');
+  PM.ghost = gl && gl.name === 'lightGhost' ? gl : (ctx?.materials?.emissive ? ctx.materials.emissive('#a8ff9e', 6) : M.visor);
+  PM.hot = ctx?.materials?.emissive ? ctx.materials.emissive('#ffb36b', 2.5) : M.visor;
   PART_MATS.set(M, PM);
   return PM;
 }
@@ -488,6 +496,105 @@ export const PART_VISUALS = {
     mk(box, KIT.plateBox(1.38, 0.08, 0.2, 0.02), M.oxide, 0, 0.5, 0.55);
     marker(box, 'muzzle', 0, 0, -1.15);
   },
+  // ---- addendum 02 E9 (Dredge style: black iron and oxide red bolted onto the ceramic with visible adapter brackets)
+  rivet(K, M, mount) {   // Rivet Driver: a box-magazine rivet gun replacing the right forearm rifle
+    for (const z of [0.55, -0.1]) {   // adapter bracket clamping the forearm
+      mk(mount, KIT.plateGeo(KIT.chamferRect(1.36, 1.25, 0.12), 0.26, 'front', 0.04, { holes: [KIT.chamferRect(1.06, 0.98, 0.06, 0, 0.12)] }), M.dark, 0, 0.62, z);
+      rivets(mount, M.iron, [0.69, 0.25, z - 0.06], [0.69, 0.95, z - 0.06], 3, 0.06);
+      rivets(mount, M.iron, [-0.69, 0.25, z - 0.06], [-0.69, 0.95, z - 0.06], 3, 0.06);
+    }
+    // receiver: a long square iron body with an oxide top plate and a cocking rail
+    K.side(mount, [[0.9, 0.12], [0.9, -0.62], [-1.9, -0.66], [-2.15, -0.35], [-2.15, 0.12]], 0.86, M.iron);
+    mk(mount, KIT.armourPlate(KIT.chamferRect(2.4, 0.5, 0.12), 0.08), M.oxide, 0, 0.2, -0.55, -Math.PI / 2, 0, 0);
+    mk(mount, KIT.plateBox(0.12, 0.14, 1.9, 0.02), M.steel, 0.46, -0.05, -0.6);
+    // the box magazine below, stamped ribs
+    mk(mount, KIT.ribbedPlate(0.62, 1.1, 0.7, { pitch: 0.22, axis: 'y' }), M.iron, 0, -1.15, -0.45);
+    mk(mount, KIT.plateBox(0.66, 0.12, 0.74, 0.02), M.oxide, 0, -1.72, -0.45);
+    // the driver barrel: a thick stepped tube, a pressure cylinder over it, and the riveting nozzle
+    mk(mount, KIT.cylinder(0.34, 0.38, 1.7, 14), M.dark, 0, -0.25, -2.9, ALONG_Z);
+    mk(mount, KIT.cylinder(0.16, 0.16, 2.2, 10), M.steel, 0, 0.28, -2.4, ALONG_Z);
+    for (const z of [-2.2, -3.3]) mk(mount, KIT.ring(0.4, 0.1, 0.16), M.iron, 0, -0.25, z, Math.PI / 2);
+    mk(mount, KIT.cylinder(0.24, 0.34, 0.5, 12), M.iron, 0, -0.25, -4.0, ALONG_Z);
+    mk(mount, KIT.ring(0.19, 0.06, 0.1), M.hot, 0, -0.25, -4.26, Math.PI / 2);   // the hot tip
+    marker(mount, 'muzzle', 0, -0.25, -4.4);
+  },
+  claw(K, M, mount) {   // Crane-Claw: a three-finger hydraulic claw replacing the blade emitter
+    for (const z of [0.5, -0.15]) {   // adapter straps
+      mk(mount, KIT.plateGeo(KIT.chamferRect(1.36, 1.25, 0.12), 0.24, 'front', 0.04, { holes: [KIT.chamferRect(1.06, 0.98, 0.06, 0, 0.12)] }), M.dark, 0, 0.6, z);
+      rivets(mount, M.iron, [-0.69, 0.3, z - 0.06], [-0.69, 0.95, z - 0.06], 3, 0.06);
+    }
+    // wrist: an iron drum with an oxide collar
+    mk(mount, KIT.cylinder(0.55, 0.62, 0.9, 14), M.iron, 0, -0.1, -0.9, ALONG_Z);
+    mk(mount, KIT.ring(0.6, 0.12, 0.24), M.oxide, 0, -0.1, -1.3, Math.PI / 2);
+    // three fingers at 120°, each a two-segment iron hook with a hydraulic ram
+    for (let i = 0; i < 3; i++) {
+      const a = i / 3 * Math.PI * 2 + Math.PI / 2;
+      const f = new THREE.Group(); f.position.set(Math.cos(a) * 0.42, -0.1 + Math.sin(a) * 0.42, -1.35); f.rotation.z = a - Math.PI / 2; mount.add(f);
+      mk(f, KIT.plateGeo([[0, -0.14], [-1.1, -0.1], [-1.2, 0.08], [0, 0.14]], 0.3, 'side', 0.03), M.iron, 0, 0.12, 0, 0.18, 0, 0);
+      mk(f, KIT.plateGeo([[0, -0.1], [-0.85, 0.02], [-0.95, 0.22], [-0.7, 0.16], [0, 0.12]], 0.26, 'side', 0.03), M.oxide, 0, 0.32, -1.05, -0.35, 0, 0);
+      mk(f, KIT.cylinder(0.07, 0.07, 0.8, 8), M.steel, 0, 0.32, -0.45, ALONG_Z + 0.25);
+      K.joint(f, 0.1, 0.34, M.dark, 0, 0.2, -1.05, 'x');
+    }
+    marker(mount, 'muzzleL', 0, -0.1, -2.4);
+  },
+  sailrig(K, M, mount) {   // Sail-Rig: two folding vane-sails (battened oxide plates on iron spars) on the back housing
+    // adapter frame bolted over the booster housing
+    mk(mount, KIT.plateGeo(KIT.chamferRect(2.5, 0.9, 0.14), 0.18, 'front', 0.04, { holes: [KIT.chamferRect(1.9, 0.42, 0.06)] }), M.dark, 0, 0.35, 0.05);
+    rivets(mount, M.iron, [-1.1, 0.72, 0.16], [1.1, 0.72, 0.16], 6, 0.06);
+    mk(mount, KIT.plateBox(2.3, 0.22, 0.5, 0.04), M.iron, 0, 0.82, 0.12);
+    const vanes = [];
+    for (const s of [-1, 1]) {
+      mk(mount, KIT.cylinder(0.2, 0.2, 0.5, 10), M.iron, s * 0.62, 0.86, 0.25, 0, 0, Math.PI / 2);   // hinge block
+      const v = new THREE.Group(); v.name = 'vane'; v.rotation.order = 'ZXY';
+      v.position.set(s * 0.62, 0.86, 0.3); v.userData.side = s;
+      mount.add(v);
+      mk(v, KIT.cylinder(0.07, 0.1, 2.9, 8), M.iron, 0, 1.45, 0);                                   // spar
+      mk(v, KIT.cylinder(0.11, 0.11, 0.16, 8), M.iron, 0, 2.92, 0);                                 // masthead cap
+      // battened plates: each turns about the spar (edge-on when folded, spread like a sail when raised)
+      const battens = [];
+      for (let k = 0; k < 4; k++) {
+        const y = 0.5 + k * 0.62, w = 1.18 - k * 0.1;
+        const b = new THREE.Group(); b.name = 'batten'; b.position.set(0, y, 0); v.add(b);
+        mk(b, KIT.ribbedPlate(w, 0.54, 0.05, { pitch: 0.18, axis: 'x' }), M.oxide, s * (w / 2 + 0.07), 0, 0);
+        mk(b, KIT.plateBox(w + 0.06, 0.07, 0.09, 0.015), M.iron, s * (w / 2 + 0.07), 0.29, 0);       // the batten
+        mk(b, KIT.cylinder(0.06, 0.06, 0.12, 6), M.iron, 0, 0.29, 0);                                  // its ring on the spar
+        battens.push(b);
+      }
+      v.userData.battens = battens;
+      vanes.push(v);
+    }
+    mount.userData.vanes = vanes;
+    setVanes(vanes, 0);
+  },
+  skates(K, M, mount) {   // Skate-Jets: four hover-skid pods on the shins and feet, a blue-white jet under each foot
+    const sub = mount.userData.sub;
+    if (!sub) return;
+    const jets = [];
+    for (const [key, s] of [['shinL', -1], ['shinR', 1]]) {
+      const g = sub[key];
+      // adapter strap round the shin
+      mk(g, KIT.plateGeo(KIT.chamferRect(1.5, 0.3, 0.06), 1.5, 'front', 0.03, { holes: [KIT.chamferRect(1.2, 0.12, 0.03)] }), M.dark, 0, -0.9, 0.05, Math.PI / 2, 0, 0);
+      rivets(g, M.iron, [s * 0.76, -0.75, -0.55], [s * 0.76, -0.75, 0.6], 3, 0.06);
+      // the pod on the outside of the shin: an iron capsule with an oxide chevron and an intake ring
+      mk(g, KIT.cylinder(0.3, 0.36, 1.5, 12), M.iron, s * 0.98, -1.35, 0.1);
+      mk(g, KIT.ring(0.37, 0.08, 0.14), M.oxide, s * 0.98, -0.72, 0.1, 0, 0, 0);
+      mk(g, KIT.plateGeo([[0, 0.3], [0.32, 0], [0.32, -0.16], [0, 0.14], [-0.32, -0.16], [-0.32, 0]], 0.08, 'front', 0.015), M.oxide, s * 0.98, -1.35, -0.38);
+      mk(g, KIT.nozzle ? KIT.nozzle(0.26, 0.4) : KIT.cylinder(0.2, 0.28, 0.4, 10), M.dark, s * 0.98, -2.2, 0.1, Math.PI, 0, 0);
+      marker(g, 'ghostAt', s * 0.98, -0.55, -0.15);
+    }
+    for (const [key, s] of [['footL', -1], ['footR', 1]]) {
+      const g = sub[key];
+      // a skid plate under the foot, bracketed to it, with an oxide chevron and a jet nozzle
+      mk(g, KIT.plateGeo(KIT.chamferRect(2.6, 0.22, 0.08), 1.2, 'side', 0.04), M.iron, 0, -0.5, -0.35);
+      for (const z of [-1.0, 0.4]) mk(g, KIT.plateBox(1.3, 0.2, 0.18, 0.03), M.dark, 0, -0.32, z);
+      mk(g, KIT.plateGeo([[0.0, 0.18], [0.5, -0.12], [0.5, -0.24], [0.0, 0.06], [-0.5, -0.24], [-0.5, -0.12]], 0.06, 'top', 0.015), M.oxide, 0, -0.36, -1.5);
+      mk(g, KIT.cylinder(0.24, 0.3, 0.3, 10), M.dark, 0, -0.7, 0.15);
+      const jet = new THREE.Mesh(jetGeo(), jetMat()); jet.position.set(0, -0.86, 0.15); jet.name = 'skateJet';
+      jet.userData.bakeAdditive = false; jet.castShadow = false; jet.visible = false;
+      g.add(jet); jets.push(jet);
+    }
+    mount.userData.jets = jets;
+  },
   kit(K, M, mount) {   // repair kits: three canisters strapped in a back rack
     K.side(mount, [[0.75, -0.35], [0.75, 0.05], [-0.75, 0.05], [-0.85, -0.35]], 1.05, M.dark);
     for (const x of [-0.32, 0, 0.32]) {
@@ -497,7 +604,33 @@ export const PART_VISUALS = {
     for (const z of [-0.3, 0.25]) mk(mount, KIT.plateBox(1.02, 0.05, 0.1, 0.012), M.dark, 0, 0.39, z);
   },
 };
-const MOUNTS = { R: [0, -0.5, -2.2], L: [0, -0.55, -2.0], U: [-1.25, 2.95, 1.0] };
+const MOUNTS = { R: [0, -0.5, -2.2], L: [0, -0.55, -2.0], U: [-1.25, 2.95, 1.0], B: [0, 2.05, 2.36], C: [0, 1.7, -1.2] };
+/** Sail-Rig vanes: k 0 folded (spars upright behind the shoulders, battens turned edge-on, so the follow camera looks
+ *  past them), 1 raised (spars spread into a V, battens open like sails) */
+function setVanes(vanes, k) {
+  for (const v of vanes || []) {
+    const s = v.userData.side || 1;
+    v.rotation.x = lerp(0.42, 0.14, k);
+    v.rotation.z = -s * lerp(0.1, 0.66, k);
+    const bs = v.userData.battens || [];
+    for (let i = 0; i < bs.length; i++) bs[i].rotation.y = s * lerp(1.48 - i * 0.03, 0.06 + i * 0.05, k);
+  }
+}
+// the Skate-Jets' under-glow: a downward cone, additive (never baked)
+let _jetGeo = null, _jetMat = null;
+function jetGeo() {
+  // wide at the nozzle (y 0), narrowing to the tip 1.4 m below
+  if (!_jetGeo) { _jetGeo = new THREE.ConeGeometry(0.34, 1.4, 12, 1, true); _jetGeo.rotateX(Math.PI); _jetGeo.translate(0, -0.7, 0); _jetGeo.userData.shared = true; }
+  return _jetGeo;
+}
+function jetMat() {
+  if (!_jetMat) {
+    _jetMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#bfe6ff').multiplyScalar(2.2), transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide });
+    _jetMat.userData.shared = true;
+  }
+  return _jetMat;
+}
 
 // shared FX geometry (flame = outer cone + nested hot core, one additive mesh; blade = tapered edge + core)
 let flameGeo = null, bladeGeo = null, ventGeo = null;
@@ -594,12 +727,26 @@ export function buildMech(ctx, scheme, o = {}) {
   const builtin = { R: gun, L: emitter, S: podShell };
   const defaultMuzzle = { R: muzzle.position.clone(), L: muzzleL.position.clone(), S: null };
 
-  const mounts = { R: new THREE.Group(), L: new THREE.Group(), S: new THREE.Group(), U: new THREE.Group() };
+  const mounts = { R: new THREE.Group(), L: new THREE.Group(), S: new THREE.Group(), U: new THREE.Group(),
+                   B: new THREE.Group(), G: new THREE.Group(), C: new THREE.Group() };
   mounts.R.position.set(...MOUNTS.R); arms.R.el.add(mounts.R);
   mounts.L.position.set(...MOUNTS.L); arms.L.el.add(mounts.L);
   pod.add(mounts.S);
   mounts.U.position.set(...MOUNTS.U); torso.add(mounts.U);
+  // addendum 02 E9: the booster on the back housing, the core on the chest, the legs on every shin and foot
+  mounts.B.position.set(...MOUNTS.B); torso.add(mounts.B);
+  mounts.C.position.set(...MOUNTS.C); torso.add(mounts.C);
+  pelvis.add(mounts.G);
+  const gSub = {};
+  for (const L of legs) {
+    const k = L.side < 0 ? 'L' : 'R';
+    const shin = new THREE.Group(); shin.name = 'mountG_shin' + k; L.knee.add(shin);
+    const foot = new THREE.Group(); foot.name = 'mountG_foot' + k; L.ankle.add(foot);
+    gSub['shin' + k] = shin; gSub['foot' + k] = foot;
+  }
+  mounts.G.userData.sub = gSub;
   for (const k in mounts) mounts[k].name = 'mount' + k;
+  const ghostGlows = [];
   const shadows = o.shadows !== false;
   const bake = o.bake !== false;
   const sphere = { center: [0, 5.2, -0.8], r: 9 };
@@ -612,17 +759,34 @@ export function buildMech(ctx, scheme, o = {}) {
     muzzleS: null,
     get baked() { return !!root.userData.rigidBake; },
     get drawCalls() { return root.userData.rigidBake?.drawCalls ?? null; },
-    setParts(parts = {}) {
+    /** addendum 02 E9: hungry parts whose hunger is paid (ghost beacons on their mounts) */
+    bound: Array.isArray(o.bound) ? o.bound.slice() : [],
+    /** E9: the Sail-Rig's vanes, 0 folded … 1 raised */
+    setSail(k) { setVanes(mounts.B.userData.vanes, clamp(+k || 0, 0, 1)); },
+    /** E9: the Skate-Jets' under-glow, 0 off … 1 full */
+    setJets(k) {
+      const jets = mounts.G.userData.jets;
+      if (!jets) return;
+      const v = clamp(+k || 0, 0, 1);
+      for (const j of jets) { j.visible = v > 0.05; j.scale.set(0.7 + v * 0.4, 0.4 + v * 0.9 * (0.85 + Math.random() * 0.3), 0.7 + v * 0.4); }
+    },
+    setParts(parts = {}, po = {}) {
+      // E9: also accepts buildMech's own shape, { parts: { R, L, S, U, B, G, C }, bound? }
+      if (parts && typeof parts.parts === 'object' && parts.parts) { po = { bound: parts.bound, ...po }; parts = parts.parts; }
       const wasBaked = !!root.userData.rigidBake;
       if (wasBaked) KIT.unbakeRigid(root);
       const K = KIT.acKit(DESIGN_BEVEL[design] ?? 0.07);
       const PM = partMaterials(ctx, M);
-      for (const slot of ['R', 'L', 'S', 'U']) {
+      if (Array.isArray(po.bound)) rig.bound = po.bound.slice();
+      for (const slot of ['R', 'L', 'S', 'U', 'B', 'G', 'C']) {
         if (!(slot in parts)) continue;
         const id = parts[slot];
         rig.parts[slot] = id;
         const mount = mounts[slot];
         for (const c of mount.children.slice()) mount.remove(c);
+        if (slot === 'G') for (const g of Object.values(mount.userData.sub || {})) for (const c of g.children.slice()) g.remove(c);
+        if (slot === 'B') mount.userData.vanes = null;
+        if (slot === 'G') mount.userData.jets = null;
         const vis = PARTS[id]?.visual ?? ID_VISUAL[id] ?? null;
         const useBuiltin = !!builtin[slot] && (vis == null || vis === BUILTIN[slot]);
         if (builtin[slot]) builtin[slot].visible = useBuiltin;
@@ -635,16 +799,42 @@ export function buildMech(ctx, scheme, o = {}) {
         if (slot === 'R') { if (mz) localTo(mz, arms.R.el, muzzle.position); else muzzle.position.copy(defaultMuzzle.R); }
         if (slot === 'L') { if (mz) localTo(mz, arms.L.el, muzzleL.position); else muzzleL.position.copy(defaultMuzzle.L); }
         if (slot === 'S') rig.muzzleS = mz || null;
+        if (slot === 'L') rig.noBlade = !useBuiltin && vis !== 'blade' && vis !== 'blade_heavy';
         if (!shadows) mount.traverse(m => { if (m.isMesh) m.castShadow = false; });
+        if (slot === 'G' && !shadows) for (const g of Object.values(mount.userData.sub || {})) g.traverse(m => { if (m.isMesh) m.castShadow = false; });
       }
+      ghostBeacons(PM);
       if (wasBaked || (bake && rig._built)) KIT.bakeRigid(root, { sphere, castShadow: shadows });
     },
     dispose() {
+      for (const h of ghostGlows.splice(0)) h?.remove?.();
       root.parent?.remove(root);
       const b = root.userData.rigidBake;
       if (b) { for (const sm of b.meshes) sm.geometry.dispose(); b.skeleton.dispose(); }
     },
   };
+  /** E9: a lightGhost lens and a ghost beacon on every drawn part with ghostLight whose id is in rig.bound */
+  function ghostBeacons(PM) {
+    for (const h of ghostGlows.splice(0)) h?.remove?.();
+    root.traverse(c => { if (c.name === 'ghostLens' || c.name === 'ghostBeacon') c.parent?.remove(c); });
+    for (const slot of ['R', 'L', 'S', 'U', 'B', 'G', 'C']) {
+      const id = rig.parts[slot];
+      if (!id || !PARTS[id]?.ghostLight || !rig.bound.includes(id)) continue;
+      const mount = mounts[slot];
+      const spots = [];
+      mount.traverse(c => { if (c.name === 'ghostAt') spots.push(c); });
+      if (slot === 'G') for (const g of Object.values(mount.userData.sub || {})) g.traverse(c => { if (c.name === 'ghostAt') spots.push(c); });
+      if (!spots.length) spots.push(mount);
+      for (const at of spots) {
+        const lens = mk(at, KIT.lampLens ? KIT.lampLens(0.16) : KIT.cylinder(0.13, 0.13, 0.02, 10), PM.ghost, 0, 0, 0, -Math.PI / 2, 0, 0, 'ghostLens');
+        lens.castShadow = false;
+        const b = new THREE.Object3D(); b.name = 'ghostBeacon'; b.position.set(0, 0, -0.05); at.add(b);
+        const h = ctx?.particles?.glows?.add?.(b, { color: '#a8ff9e', size: 0.5, pulse: 'beat', minPx: 4 });
+        if (h) ghostGlows.push(h);
+      }
+    }
+  }
+  rig.ghostBeacons = () => ghostGlows.length;
   if (o.parts) rig.setParts(o.parts);
   if (!shadows) root.traverse(m => { if (m.isMesh) m.castShadow = false; });
   rig._built = true;
@@ -712,7 +902,7 @@ export function animateMech(ac, st, dt) {
     ac.arms.R.el.rotation.x = damp(ac.arms.R.el.rotation.x, -0.4 * reach, 16, dt);
     if (Math.abs(ac.arms.L.el.rotation.x) < 1e-4 && tr === 0) { ac.arms.L.el.rotation.x = 0; ac.arms.R.el.rotation.x = 0; }
   }
-  ac.blade.visible = bl > 0 || !!st.bladeWind;
+  ac.blade.visible = !ac.noBlade && (bl > 0 || !!st.bladeWind);   // addendum 02: no energy blade on a claw or harpoon
   ac.blade.scale.z = st.bladeWind ? 0.6 + Math.random() * 0.1 : 1;
   const th = st.thrust;
   for (const f of ac.flames) { const l = th * (0.85 + Math.random() * 0.3); f.scale.set(0.6 + th * 0.6, 0.6 + th * 0.6, Math.max(0.01, l)); f.visible = l > 0.03; }

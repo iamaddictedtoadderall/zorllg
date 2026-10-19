@@ -8,6 +8,8 @@
 //   owner.repairT, owner.repairRate              repair kit
 //   owner.slowMo?.(scale, realSeconds)           blade-hit slow motion (prototype)
 // AimContext (§4.4) gains an optional `hit` flag: true when the camera ray hit something within 600 m.
+// Addendum 02 E7: 'rivet' (R: heavy bolts, `rate` is the cooldown; a hit sets the target's slowT) and 'claw' (L: grab a
+// staggered light enemy, hold it at the claw, throw it; a swipe with nothing to grab). DamageSource.kind 'rivet'/'claw'.
 // Gameplay randomness (spread, launch jitter) uses ctx.random() (§1.4).
 import * as THREE from 'three';
 import { clamp, aimDir, lerp } from '../core/util.js';
@@ -27,13 +29,17 @@ const SHARED = new WeakMap();
 function shared(ctx) {
   let s = SHARED.get(ctx);
   if (s) return s;
-  s = { reels: [], flares: [], flareFx: [] };
+  s = { reels: [], flares: [], flareFx: [], holds: [], throws: [] };
   ctx.addSystem({ name: 'weapons', phase: 'physics', when: 'sim', order: 10, update: (dt) => updateShared(ctx, s, dt) });
   const reset = () => {
     for (const r of s.reels) if (r.target) r.target.heldT = 0;
     s.reels.length = 0;
     for (const f of s.flares) killFlare(f);
     s.flares.length = 0;
+    for (const h of s.holds) { if (h.target) h.target.heldT = 0; h.weapon.clawDrop?.(); }
+    s.holds.length = 0;
+    for (const t of s.throws) if (t.unit) t.unit.heldT = 0;
+    s.throws.length = 0;
   };
   s.reset = reset;
   ctx.events.on('level:cleared', reset);
@@ -72,6 +78,57 @@ function killFlare(f) {
 }
 
 function updateShared(ctx, s, dt) {
+  // claw holds (E7): the held unit stays staggered and rides the claw (after AI: A1 A5.6, an outside force owns pos)
+  for (let i = s.holds.length - 1; i >= 0; i--) {
+    const h = s.holds[i], t = h.target, o = h.owner;
+    if (!t || !t.alive || !o?.alive || !o.active) { if (t) t.heldT = 0; s.holds.splice(i, 1); h.weapon.clawDrop?.(); continue; }
+    t.stagT = Math.max(t.stagT || 0, 0.6);
+    t.heldT = 0.15;
+    socket(o, 'L', _c);
+    aimDir(o.bodyYaw ?? o.yaw ?? 0, 0, _f);
+    const k = h.reach > 0 ? 1 - h.reach / 0.3 : 1;   // the 0.3 s reach pulls it in
+    _to.copy(_c).addScaledVector(_f, (t.hitR || 2.5) + 1.2);
+    _to.y -= t.hitY || 0;
+    if (k < 1) t.pos.lerp(_to, Math.min(1, k * 0.6 + 0.25)); else t.pos.copy(_to);
+    t.vel.set(0, 0, 0);
+    if (t.root) t.root.position.copy(t.pos);
+  }
+  // claw throws: the thrown unit flies along the aim until it hits a target, the world, or 3 s pass
+  for (let i = s.throws.length - 1; i >= 0; i--) {
+    const th = s.throws[i], u = th.unit;
+    th.t += dt;
+    if (!u) { s.throws.splice(i, 1); continue; }
+    th.vel.y -= 18 * dt;
+    _from.copy(u.pos); _from.y += u.hitY || 0;
+    _to.copy(_from).addScaledVector(th.vel, dt);
+    let hitT = null, point = null;
+    const C = ctx.combat, steps = Math.max(1, Math.ceil(_from.distanceTo(_to) / 1.5));
+    for (let k = 1; k <= steps && !hitT; k++) {
+      _v.lerpVectors(_from, _to, k / steps);
+      for (const t of C?.targets || []) {
+        if (t === u || !t.alive || t.targetable === false || !isHostile(th.team, t.team)) continue;
+        const r = (t.hitR || 2.5) + (u.hitR || 2.5) * 0.5;
+        if (t.center(_c2).distanceToSquared(_v) < r * r) { hitT = t; point = _v.clone(); break; }
+      }
+    }
+    let world = null;
+    if (!hitT && ctx.collision?.segment) world = ctx.collision.segment(_from, _to, null, { ground: true, colliders: true, radius: 0 });
+    if (!hitT && !world && th.t < 3 && u.alive) {
+      u.pos.addScaledVector(th.vel, dt); u.heldT = 0.15; u.stagT = Math.max(u.stagT || 0, 0.3);
+      if (u.root) { u.root.position.copy(u.pos); u.root.rotation.x += dt * 6; }
+      continue;
+    }
+    s.throws.splice(i, 1);
+    const at = point || (world ? world.point.clone() : _to.clone());
+    const src = { team: th.team, owner: th.owner, kind: 'claw', pos: at.clone() };
+    if (hitT) C?.damage(hitT, th.st.dmg ?? 1600, th.st.imp ?? 1800, src);
+    u.heldT = 0;
+    if (u.alive) { u.pos.copy(at); u.pos.y -= u.hitY || 0; C?.kill(u, src); }
+    C?.radial(at, th.st.splashR ?? 8, th.st.splashDmg ?? 600, th.st.splashImp ?? 600, src, { exclude: hitT || undefined });
+    ctx.fx?.explosion?.(at, 1.1);
+    ctx.cameraRig?.addShake?.(0.5);
+    ctx.events.emit('claw:impact', { unit: u, target: hitT || null, point: at });
+  }
   // reels: drag a light target to `reelTo` m in front of the owner over `reelTime` s (it can't fight back: heldT)
   for (let i = s.reels.length - 1; i >= 0; i--) {
     const r = s.reels[i], t = r.target, o = r.owner;
@@ -170,7 +227,7 @@ export function createWeapon(ctx, part, owner) {
   const st = part.stats || {};
   const type = part.weapon;
   const ammoMax = st.ammo ?? st.kits ?? st.count ?? 0;
-  const S = (type === 'harpoon' || type === 'flares') ? shared(ctx) : null;
+  const S = (type === 'harpoon' || type === 'flares' || type === 'claw') ? shared(ctx) : null;
   const team = () => owner.team || 'player';
   const src = (kind) => ({ team: team(), owner, kind: kind || type });
   let cable = null;
@@ -183,6 +240,7 @@ export function createWeapon(ctx, part, owner) {
     update(dt) {
       if (w.cd > 0) w.cd = Math.max(0, w.cd - dt);
       if (type === 'harpoon') updateCable();
+      if (type === 'claw') updateClaw(dt);
     },
     trigger(inp, aim) {
       if (!inp) return;
@@ -196,6 +254,8 @@ export function createWeapon(ctx, part, owner) {
         case 'kit': if (inp.pressed) useKit(); break;
         case 'harpoon': if (inp.pressed) fireHarpoon(aim); break;
         case 'flares': if (inp.pressed) fireFlare(aim); break;
+        case 'rivet': if (inp.down) fireRivet(aim); break;
+        case 'claw': if (inp.pressed) useClaw(aim); break;
         default: break;
       }
     },
@@ -209,6 +269,9 @@ export function createWeapon(ctx, part, owner) {
         case 'kit': label = String(w.ammo); cool = (owner.repairT || 0) > 0; break;
         case 'flares': label = String(w.ammo); break;
         case 'rifle': case 'mg': label = String(w.ammo); cool = false; break;
+        case 'rivet': label = String(w.ammo); break;
+        case 'claw': label = w.state === 'hold' || w.state === 'reach' ? `HOLDING ${Math.max(0, Math.ceil(w.holdLeft ?? 0))} s` : cooling ? w.cd.toFixed(1) : 'READY';
+          cool = cooling && w.state === 'idle'; break;
         default: label = String(w.ammo);
       }
       return { label, cooling: cool, empty };
@@ -222,6 +285,10 @@ export function createWeapon(ctx, part, owner) {
       }
       if (owner.pull?.weapon === w) owner.pull = null;
       if (owner.lunge?.weapon === w) owner.lunge = null;
+      if (S && type === 'claw') {
+        for (let i = S.holds.length - 1; i >= 0; i--) if (S.holds[i].weapon === w) { if (S.holds[i].target) S.holds[i].target.heldT = 0; S.holds.splice(i, 1); }
+        w.state = 'idle'; w.held = null;
+      }
     },
     /** blade: the lunge ended (called by the player). Prototype doSlash(). */
     slash() {
@@ -517,6 +584,113 @@ export function createWeapon(ctx, part, owner) {
     sfx(ctx, 'missile', from);
     ctx.particles?.lights?.flash?.(from, 0xff6a80, 500, 25, 0.2);
   }
+
+  // ---------------------------------------------------------------- rivet (addendum 02 E7)
+  function fireRivet(aim) {
+    if (w.cd > 0) return;
+    if (w.ammo <= 0) { sfx(ctx, 'empty'); w.cd = 0.3; return; }
+    w.cd = st.rate ?? 0.66; w.ammo--;
+    const s = stats(ctx); if (s && owner.team === 'player') s.shots++;
+    const from = socket(owner, 'R', _from).clone();
+    const speed = st.speed ?? 420;
+    aimTarget(from, aim, speed, _to);
+    const sp = st.spread ?? 0.004;
+    _dir.copy(_to).sub(from).normalize();
+    _dir.x += rnd(ctx, -sp, sp); _dir.y += rnd(ctx, -sp, sp); _dir.z += rnd(ctx, -sp, sp); _dir.normalize();
+    const slowT = st.slowT ?? 2;
+    ctx.projectiles?.fire({ pos: from, vel: _v.copy(_dir).multiplyScalar(speed), dmg: st.dmg ?? 650, imp: st.imp ?? 420, team: team(), owner,
+                            kind: 'rivet', life: (st.range ?? 400) / speed, srcKind: 'rivet',
+                            onHit: (p, hit) => { const t = hit.target; if (t && t.alive && t !== owner) t.slowT = Math.max(t.slowT || 0, slowT); } });
+    sfx(ctx, 'cannon', from);
+    owner.recoil = 1.6;
+    ctx.fx?.muzzle?.(from, _dir, 'cannon');
+    ctx.particles?.lights?.flash?.(from, 0xffa050, 500, 24, 0.08);
+    ctx.cameraRig?.addShake?.(0.12);
+  }
+
+  // ---------------------------------------------------------------- claw (addendum 02 E7)
+  w.held = null; w.holdLeft = 0;
+  function grabbable(t, aim, from) {
+    if (!t || !t.alive || t.targetable === false || !isHostile(team(), t.team) || t.boss || t.kind === 'structure') return false;
+    if ((t.impMax ?? Infinity) > (st.lightImpMax ?? 1000) || !(t.stagT > 0) || !t.pos || !t.vel || t.immovable) return false;
+    const c = t.center(_c2);
+    if (c.distanceTo(from) > (st.grabR ?? 25) + (t.hitR || 0)) return false;
+    return _v.copy(c).sub(from).normalize().angleTo(aim.dir) <= (st.cone ?? 20) * Math.PI / 180;
+  }
+  function useClaw(aim) {
+    if (w.state === 'hold') { clawThrow(aim); return; }
+    if (w.state !== 'idle' || w.cd > 0) return;
+    const C = ctx.combat; if (!C) return;
+    const from = owner.center(_from).clone();
+    let pick = aim.lock && grabbable(aim.lock, aim, from) ? aim.lock : null;
+    if (!pick) {
+      let bd = Infinity;
+      for (const t of C.targets) {
+        if (!grabbable(t, aim, from)) continue;
+        const d = t.center(_c2).distanceTo(from);
+        if (d < bd) { bd = d; pick = t; }
+      }
+    }
+    if (pick) {
+      w.state = 'reach'; w.held = pick; w.holdLeft = st.hold ?? 6;
+      const h = { target: pick, owner, weapon: w, reach: 0.3 };
+      S.holds.push(h);
+      pick.heldT = 0.15; pick.stagT = Math.max(pick.stagT || 0, 0.6);
+      sfx(ctx, 'winch', pick.pos);
+      sfx(ctx, 'servo', from);
+      ctx.events.emit('claw:grab', { target: pick });
+      return;
+    }
+    // nothing to grab: a swipe in front
+    w.cd = st.cd ?? 1.2;
+    owner.bladeT = 0.4;
+    aimDir(owner.bodyYaw ?? owner.yaw ?? 0, 0, _f);
+    let hitAny = false;
+    for (const t of [...C.targets]) {
+      if (!t.alive || t.targetable === false || !isHostile(team(), t.team)) continue;
+      const ec = t.center(_c2); _v.copy(ec).sub(from); const dl = _v.length();
+      if (dl < (st.swipeR ?? 12) + (t.hitR || 0) && _v.normalize().dot(_f) > 0.2) {
+        C.damage(t, st.swipeDmg ?? 900, st.swipeImp ?? 900, src('claw'));
+        ctx.fx?.sparks?.(ec, 22, [1, 0.75, 0.35], 30);
+        hitAny = true;
+      }
+    }
+    sfx(ctx, hitAny ? 'bladeHit' : 'blade', from);
+    if (hitAny) ctx.cameraRig?.addShake?.(0.4);
+  }
+  function updateClaw(dt) {
+    if (w.state === 'idle') return;
+    const h = S.holds.find(x => x.weapon === w);
+    if (!h) { w.state = 'idle'; w.held = null; return; }
+    if (w.state === 'reach') {
+      h.reach -= dt;
+      if (h.reach <= 0) { h.reach = 0; w.state = 'hold'; }
+    } else {
+      w.holdLeft -= dt;
+      if (w.holdLeft <= 0) clawThrow(null);
+    }
+  }
+  function clawThrow(aim) {
+    const i = S.holds.findIndex(x => x.weapon === w);
+    const h = i >= 0 ? S.holds[i] : null;
+    if (i >= 0) S.holds.splice(i, 1);
+    const u = h?.target;
+    w.state = 'idle'; w.held = null; w.cd = st.cd ?? 1.2;
+    if (!u || !u.alive) return;
+    const dir = new THREE.Vector3();
+    if (aim) {
+      if (aim.lock && aim.lock.alive && aim.lock !== u) dir.copy(aim.lock.center(_c2)).sub(u.center(_c));
+      else dir.copy(aim.point).sub(u.center(_c));
+      if (dir.lengthSq() < 1e-6) dir.copy(aim.dir);
+      dir.normalize();
+    } else aimDir(owner.yaw ?? 0, owner.pitch ?? 0, dir);
+    S.throws.push({ unit: u, vel: dir.multiplyScalar(st.throwSpeed ?? 90), t: 0, team: team(), owner, st });
+    u.heldT = 0.15;
+    sfx(ctx, 'qb', u.pos);
+    owner.bladeT = 0.4;
+    ctx.events.emit('claw:throw', { target: u });
+  }
+  w.clawDrop = () => { w.state = 'idle'; w.held = null; };
 
   return w;
 }

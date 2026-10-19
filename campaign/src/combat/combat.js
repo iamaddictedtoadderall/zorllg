@@ -4,6 +4,9 @@
 //
 // Addendum A5.1: `invuln` blocks damage on every target (DamageInfo.blocked, payload `blocked`), DamageSource.kind,
 // and ctx.haul (combat/haul.js), installed from here.
+// Addendum 02 E1/E4: ctx.sync (combat/sync.js) is installed from here too; `invulnT > 0` blocks like `invuln`; Hold
+// (a hit that would take the player to 0 AP while ctx.sync.holdReady) leaves 1 AP, no stagger, and marks
+// DamageInfo.held; the target:damaged / player:damaged payloads carry `source` and `held` (Sync credits player damage).
 //
 // Target ids are deterministic per level (§1.4: same level, checkpoint and inputs → same getState(), unit ids included):
 //  · the player, one Target reused across levels, always gets PLAYER_ID;
@@ -15,6 +18,7 @@
 import * as THREE from 'three';
 import { clamp } from '../core/util.js';
 import { installHaul } from './haul.js';
+import { installSync } from './sync.js';
 
 export const TEAMS = ['player', 'ally', 'enemy', 'neutral'];
 /** Player and ally are hostile to enemy; neutral is hostile to nobody (§1.3). */
@@ -104,15 +108,21 @@ export function install(ctx) {
       const info = { amount: 0, imp: 0, source, staggered: false, killed: false };
       if (!t || !t.alive) return info;
       const pl = isPlayer(t);
-      if (t.invuln) {
+      if (t.invuln || t.invulnT > 0) {
         info.blocked = true;
-        ctx.events.emit('target:damaged', { target: t, amount: 0, staggered: false, blocked: true });
+        ctx.events.emit('target:damaged', { target: t, amount: 0, staggered: false, blocked: true, source });
         if (pl) ctx.events.emit('player:damaged', { amount: 0, source, ap: t.ap, blocked: true });
         return info;
       }
       amount = Math.max(0, Number(amount) || 0); imp = Math.max(0, Number(imp) || 0);
       if (t.stagT > 0) amount *= pl ? 1.25 : 1.6;
       if (pl && api.god) amount = 0;
+      // addendum 02 E4: Hold. A hit that would take the player to 0 AP or below leaves 1 AP and no stagger.
+      if (pl && amount > 0 && amount >= t.ap && ctx.sync?.holdReady) {
+        amount = Math.max(0, t.ap - 1); imp = 0;
+        ctx.sync._fireHold(source);
+        info.held = true;
+      }
       t.ap -= amount; t.imp = (t.imp || 0) + imp; t.lastHit = ctx.clock.time;
       info.amount = amount; info.imp = imp;
       if (pl) api.stats.damageTaken += amount;
@@ -125,9 +135,10 @@ export function install(ctx) {
       if (t.ap <= 0) { t.ap = 0; info.killed = true; }
       if (!pl && source?.team === 'player') ctx.hud?.hitmark?.();
       t.onDamage?.(info);
-      ctx.events.emit('target:damaged', { target: t, amount, staggered: info.staggered });
+      ctx.events.emit('target:damaged', info.held ? { target: t, amount, staggered: info.staggered, source, held: true }
+                                                   : { target: t, amount, staggered: info.staggered, source });
       if (pl) {
-        ctx.events.emit('player:damaged', { amount, source, ap: t.ap });
+        ctx.events.emit('player:damaged', info.held ? { amount, source, ap: t.ap, held: true } : { amount, source, ap: t.ap });
         if (info.staggered) ctx.events.emit('player:staggered', {});
       }
       if (info.killed) api.kill(t, source, info);
@@ -190,5 +201,6 @@ export function install(ctx) {
   ctx.events.on('player:spawned', rewindIds);
   ctx.combat = api;
   installHaul(ctx);
+  try { installSync(ctx); } catch (e) { ctx.recordError?.('sync', e); }
   return api;
 }

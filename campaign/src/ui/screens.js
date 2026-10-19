@@ -161,6 +161,8 @@ const SCREEN_CSS = `
 .count-grid dd.neg{color:var(--threat)}
 .count-lost{font-family:var(--f-mono);font-size:13px;color:var(--hud-dim);line-height:1.7}
 .count-lost s{color:rgba(233,227,211,.42)}
+.count-lost .road,.count-lost .thirst{display:block}
+.count-lost .road .cl-h{display:block;font:600 11px var(--f-display);letter-spacing:.3em;font-variant:small-caps;color:var(--threat);margin-bottom:2px}
 .count-log{font:italic 400 19px/1.55 Georgia,"Times New Roman",serif;color:#e8dcc4;max-width:640px}
 .count-wrap .actions{display:flex;gap:12px}
 @media (max-height:520px){
@@ -688,9 +690,14 @@ export function install(ctx) {
       const w = m.water || {};
       const parts = [`${w.before ?? 0}`, `+ ${w.sledges ?? 0} sledge${w.sledges === 1 ? '' : 's'}`];
       if (w.gives > 0) parts.push(`+ ${w.gives} given`);
+      if (w.funded > 0) parts.push(`− ${w.funded} to Calls`);   // addendum 02 E11: water spent funding Calls
       parts.push(`− ${w.draw ?? 0} drawn`);
+      // addendum 02 E10: rigs lost on the road come first, under their own small-caps label; thirst losses keep the old look
+      const road = Array.isArray(m.lostOnRoad) ? m.lostOnRoad : [];
+      const thirst = (m.lost || []).filter((n, i) => i >= road.length || n !== road[i]);
+      const roadHtml = road.length ? `<span class="road"><span class="cl-h">LOST ON THE ROAD</span>${road.map(n => `<s>${esc(n)}</s>`).join(' · ')}</span>` : '';
       const lost = (m.lost || []).length
-        ? `<div class="count-lost">Lost this leg: ${m.lost.map(n => `<s>${esc(n)}</s>`).join(' · ')}</div>`
+        ? `<div class="count-lost">${roadHtml}${thirst.length ? `<span class="thirst">Lost this leg: ${thirst.map(n => `<s>${esc(n)}</s>`).join(' · ')}</span>` : ''}</div>`
         : '<div class="count-lost">— no names lost —</div>';
       const p = open('count', `<div class="count-wrap">
           <div class="count-day"><small>THE MORNING COUNT</small>Day ${esc(m.day ?? 1)}</div>

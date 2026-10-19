@@ -14,11 +14,13 @@ export const SFX = [
   'shockwave', 'warn',
   // addendum A5.4
   'chime', 'heartbeat', 'flatline', 'tear', 'splash', 'bubbles', 'iceGroan', 'iceCrack', 'saw', 'harpoon', 'winch', 'rotorWhine',
+  // addendum 02 E12
+  'syncSight', 'syncDrive', 'syncHold', 'sailSnap', 'rigHorn', 'cableSnap',
 ];
 const KNOWN = new Set(SFX);
 const LOOPS = ['boost', 'hover', 'wind', 'rain', 'fire', 'alarm', 'engine', 'rumble'];
 const UI = new Set(['blip', 'lock', 'hit', 'hurt', 'alarm', 'repair', 'empty', 'confirm', 'glitch', 'pickup', 'objective', 'checkpoint',
-  'uiMove', 'uiSelect', 'uiBack', 'interact', 'warn', 'klaxon', 'chime', 'heartbeat', 'flatline', 'static']);
+  'uiMove', 'uiSelect', 'uiBack', 'interact', 'warn', 'klaxon', 'chime', 'heartbeat', 'flatline', 'static', 'syncSight', 'syncDrive', 'syncHold']);
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -153,6 +155,43 @@ const RECIPES = {
   harpoon(S, t, k, r) { S.noise(t, { dur: 0.08, freq: 1500 * r, q: 0.7, vol: 0.45 * k }); S.tone(t, { type: 'square', f0: 140 * r, f1: 60, dur: 0.1, vol: 0.2 * k }); S.tone(t + 0.04, { type: 'sine', f0: 950 * r, f1: 380 * r, dur: 0.35, vol: 0.05 * k }); },
   winch(S, t, k, r) { S.chop(t, { dur: 0.8, freq: 2200 * r, q: 3, vol: 0.2 * k, rate: 18 * r, depth: 1, att: 0.02 }); S.tone(t, { type: 'sawtooth', f0: 190 * r, f1: 240 * r, dur: 0.8, vol: 0.05 * k, lp: 900 }); },
   rotorWhine(S, t, k, r) { S.tone(t, { type: 'sine', f0: 1800 * r, dur: 0.8, vol: 0.03 * k, att: 0.1 }); S.tone(t, { type: 'sine', f0: 1811 * r, dur: 0.8, vol: 0.03 * k, att: 0.1 }); S.chop(t, { dur: 0.8, freq: 1900 * r, q: 6, vol: 0.03 * k, rate: 30, att: 0.1 }); },
+  // ---- addendum 02 E12
+  // Second Sight: a breathy whoosh that swells in (the same recipe at the end reads as the breath going out)
+  syncSight(S, t, k, r) {
+    S.noise(t, { dur: 0.9, freq: 600 * r, f1: 3200 * r, q: 1.4, vol: 0.22 * k, att: 0.55 });
+    S.noise(t + 0.85, { dur: 0.35, freq: 3200 * r, f1: 900 * r, q: 1.2, vol: 0.1 * k, att: 0.01 });
+    S.tone(t + 0.2, { type: 'sine', f0: 220 * r, f1: 330 * r, dur: 0.9, vol: 0.05 * k, att: 0.5 });
+  },
+  // Moth Drives: a rising servo chord
+  syncDrive(S, t, k, r) {
+    [1, 1.26, 1.5].forEach((m, i) => S.tone(t + i * 0.05, { type: 'sawtooth', f0: 180 * m * r, f1: 360 * m * r, dur: 0.6, vol: 0.05 * k, att: 0.05, lp: 1800 }));
+    S.tone(t, { type: 'square', f0: 90 * r, f1: 180 * r, dur: 0.5, vol: 0.04 * k, lp: 700 });
+  },
+  // Hold: a deep single thump and a white-noise flare
+  syncHold(S, t, k, r) {
+    S.tone(t, { type: 'sine', f0: 70 * r, f1: 34, dur: 0.7, vol: 0.7 * k, att: 0.004 });
+    S.noise(t, { dur: 0.6, freq: 6000 * r, f1: 1400 * r, type: 'highpass', vol: 0.32 * k, att: 0.004 });
+    S.noise(t + 0.02, { dur: 0.9, freq: 2400 * r, f1: 400 * r, q: 0.6, vol: 0.18 * k, att: 0.02 });
+  },
+  // a canvas sail cracking taut
+  sailSnap(S, t, k, r) {
+    S.noise(t, { dur: 0.05, freq: 3500 * r, type: 'highpass', vol: 0.5 * k, att: 0.001 });
+    S.noise(t + 0.02, { dur: 0.35, freq: 800 * r, f1: 300 * r, q: 0.8, vol: 0.3 * k, att: 0.005 });
+    S.noise(t + 0.1, { dur: 0.25, freq: 1400 * r, f1: 500 * r, q: 1.5, vol: 0.1 * k, att: 0.01 });
+  },
+  // a low two-tone rig horn
+  rigHorn(S, t, k, r) {
+    for (const [dt0, f] of [[0, 98], [0.7, 82]]) {
+      S.tone(t + dt0, { type: 'sawtooth', f0: f * r, dur: 0.65, vol: 0.12 * k, att: 0.06, lp: 520, lpQ: 2 });
+      S.tone(t + dt0, { type: 'square', f0: f * 1.5 * r, dur: 0.65, vol: 0.03 * k, att: 0.06, lp: 700 });
+    }
+  },
+  // a cable parting: a twang and a whip
+  cableSnap(S, t, k, r) {
+    S.tone(t, { type: 'triangle', f0: 420 * r, f1: 140 * r, dur: 0.45, vol: 0.16 * k, att: 0.002, vib: 18, vibRate: 22 });
+    S.noise(t, { dur: 0.06, freq: 4000 * r, type: 'highpass', vol: 0.4 * k, att: 0.001 });
+    S.noise(t + 0.08, { dur: 0.3, freq: 1200 * r, f1: 4200 * r, q: 2, vol: 0.18 * k, att: 0.01 });
+  },
 };
 
 function makeBuffers(ac) {

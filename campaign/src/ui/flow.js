@@ -8,6 +8,12 @@
 // A level end (level:complete / level:failed) that arrives while the level is suspended ('paused', 'interstitial',
 // 'loading') is held and handled at the first tick back in 'playing', never dropped: mission.complete() runs once per
 // start. In 'dead' a level end is dropped (the death screen decides). A restart, a new level or quitting discards it.
+//
+// Addendum 02 E10: campaign state v2 (readers accept v1 and fill the new fields; the first writer after a v1 read writes
+// v 2), and at level:complete of a campaign level, from CampaignData.legs[id] and LevelResult.flags: rigs lost on the
+// road (st.lost, ledger.lostOnRoad), story flags (st.story), Made fragments (st.fragments, ledger.made) and the Sync
+// moves unlocked (st.sync.unlocked). The debrief's water label and 'Rigs lost' row; the Count's lostOnRoad and log
+// variants ({ by, variants, default } keyed by st.story[by]).
 import { ACT } from '../core/input.js';
 import { LEVELS, loadLevel, nextLevel } from '../../levels/index.js';
 import * as LO from '../combat/loadout.js';
@@ -20,10 +26,35 @@ const DEATH_LINES = ['Signal lost.'];   // L1 §10.5: the generic, spoiler-safe 
 const CREDITS = ['Follow the thaw. Carry what you can.', 'Built with three.js.',
                  'Every model, texture, sound and note is generated in code.', 'Thank you for playing.'];
 export const CAMPAIGN_FALLBACK = Object.freeze({ version: 1, startWater: 4, lockerSize: 4, speakers: {}, fixed: [], fragments: [], roll: [], legs: {} });
-/** A3.4: the campaign state anyone uses when the save flag is missing */
+/** A3.4 + addendum 02 §B5: the campaign state anyone uses when the save flag is missing (v 2) */
 export function defaultCampaign(data) {
-  return { v: 1, day: 0, water: data?.startWater ?? 4, arms: 0, parts: {}, spares: [], fitted: { R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4' },
-           lost: [], fragments: {}, kernel: 4, benchVisits: 0, tearCount: 0, pending: null, ledger: null };
+  return { v: 2, day: 0, water: data?.startWater ?? 4, arms: 0, parts: {}, spares: [],
+           fitted: { R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4', B: null, G: null, C: null },
+           lost: [], fragments: {}, kernel: 4, benchVisits: 0, tearCount: 0, pending: null, ledger: null,
+           bound: [], overwrites: [], calls: { kite: 0, mortar: 0, trike: 0 }, story: {}, sync: { unlocked: [] } };
+}
+/** addendum 02 §B5: a v1 (or partial) state with every v2 field filled with its default. Writers then write v 2. */
+export function migrateCampaign(st) {
+  if (!st || typeof st !== 'object') return st;
+  st.fitted = { R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4', ...(st.fitted || {}) };
+  for (const h of ['B', 'G', 'C']) if (st.fitted[h] === undefined) st.fitted[h] = null;
+  if (!st.fragments || typeof st.fragments !== 'object') st.fragments = {};
+  if (!Array.isArray(st.bound)) st.bound = [];
+  if (!Array.isArray(st.overwrites)) st.overwrites = [];
+  st.calls = { kite: 0, mortar: 0, trike: 0, ...(st.calls && typeof st.calls === 'object' ? st.calls : {}) };
+  if (!st.story || typeof st.story !== 'object') st.story = {};
+  if (!st.sync || typeof st.sync !== 'object') st.sync = { unlocked: [] };
+  if (!Array.isArray(st.sync.unlocked)) st.sync.unlocked = [];
+  if (!Array.isArray(st.lost)) st.lost = [];
+  return st;
+}
+/** addendum 02 E10: a leg's Count line: a string, or { by, variants, default } picked by st.story[by] */
+export function legLog(leg, st) {
+  const L = leg?.log;
+  if (L == null) return '';
+  if (typeof L === 'string') return L;
+  if (typeof L === 'object') return L.variants?.[st?.story?.[L.by]] ?? L.default ?? '';
+  return String(L);
 }
 const deepCopy = (o) => (typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
 
@@ -80,9 +111,9 @@ export function install(ctx) {
   }
   function getCampaign(data) {
     const s = ctx.save.getFlag('campaign');
-    return s && typeof s === 'object' ? deepCopy(s) : defaultCampaign(data);
+    return s && typeof s === 'object' ? migrateCampaign(deepCopy(s)) : defaultCampaign(data);
   }
-  function putCampaign(st) { ctx.save.setFlag('campaign', deepCopy(st)); }
+  function putCampaign(st) { const c = deepCopy(st); migrateCampaign(c); c.v = 2; ctx.save.setFlag('campaign', c); }
   function campaignLoadout(st) {
     if (typeof LO.campaignLoadout === 'function') return LO.campaignLoadout(st.fitted);
     const lo = ctx.save.getLoadout();
@@ -96,6 +127,20 @@ export function install(ctx) {
     st.ledger = { levelId, before: st.water, sledges, gives: 0 };
     st.water += sledges;
     st.tearCount = (st.tearCount || 0) + tears;
+    // addendum 02 E10: the leg's campaign extensions, from the mission flags at completion
+    const leg = data?.legs?.[levelId] || {};
+    const flags = result?.flags || {};
+    const roadIds = leg.result?.rigsLostFlag ? flags[leg.result.rigsLostFlag] : null;
+    const road = Array.isArray(roadIds) ? roadIds.filter(id => id != null) : [];
+    for (const id of road) if (!st.lost.includes(id)) st.lost.push(id);
+    st.ledger.lostOnRoad = road.slice();
+    const story = leg.result?.storyFlag ? flags[leg.result.storyFlag] : null;
+    if (story && typeof story === 'object' && !Array.isArray(story)) st.story = { ...st.story, ...story };
+    const made = Array.isArray(leg.made) ? leg.made : [];
+    for (const id of made) st.fragments[id] ??= 'intact';
+    st.ledger.made = made.slice();
+    const unl = ctx.sync?.unlocked ? [...ctx.sync.unlocked] : [];
+    st.sync.unlocked = [...new Set([...(st.sync.unlocked || []), ...unl])];
     putCampaign(st);
     return st;
   }
@@ -121,6 +166,9 @@ export function install(ctx) {
     const ledger = st.ledger || { before: st.water, sledges: 0, gives: 0 };
     const roll = Array.isArray(data.roll) ? data.roll : [];
     let after = st.water - draw, short = 0;
+    // addendum 02 E10: the rigs lost on the road this leg are listed first (already off the Roll since level:complete)
+    const rollName = (id) => roll.find(r => r.id === id)?.name ?? String(id);
+    const lostOnRoad = (Array.isArray(ledger.lostOnRoad) ? ledger.lostOnRoad : []).map(rollName);
     const lostNow = [];
     if (after < 0) {
       short = -after;
@@ -135,8 +183,10 @@ export function install(ctx) {
     st.water = after; st.day = day; st.ledger = null;
     putCampaign(st);
     const walking = roll.filter(r => !st.lost.includes(r.id));
-    flow.lastCount = { day, water: { before: ledger.before, sledges: ledger.sledges, gives: ledger.gives || 0, draw, after, short },
-                       rigs: walking.length, souls: walking.reduce((a, r) => a + (r.souls || 0), 0), lost: lostNow, log: leg.log || '', edgeLat: leg.edgeLat };
+    flow.lastCount = { day, water: { before: ledger.before, sledges: ledger.sledges, gives: ledger.gives || 0, draw, after, short,
+                                     ...(ledger.funded ? { funded: ledger.funded } : {}) },
+                       rigs: walking.length, souls: walking.reduce((a, r) => a + (r.souls || 0), 0), lost: [...lostOnRoad, ...lostNow],
+                       ...(lostOnRoad.length ? { lostOnRoad } : {}), log: legLog(leg, st), edgeLat: leg.edgeLat };
     await S().showMorningCount(flow.lastCount);
   }
 
@@ -351,6 +401,8 @@ export function install(ctx) {
     def: null,
     /** extra: the last Morning Count shown (tests) */
     lastCount: null,
+    /** extra (addendum 02): CampaignData (levels/campaign.js, or the A3.3 fallback), shared with the Bench */
+    campaignData: () => campaignData(),
     async boot() {
       const lvl = ctx.params.get('level');
       if (lvl && LEVELS.some(l => l.id === lvl)) { await flow.startLevel(lvl, ctx.params.get('cp') || undefined, { skipIntro: true }); return; }
@@ -515,9 +567,14 @@ export function install(ctx) {
           { label: 'Kills', value: String(result.kills ?? 0) },
           { label: 'Damage taken', value: String(Math.round(result.damageTaken || 0)) },
           { label: 'Haul', value: haul.length ? haul.join(', ') : '—' },
-          { label: 'Sledges flagged', value: `${result.water ?? 0} / ${result.waterMax ?? 0}` },
+          { label: leg.debrief?.waterLabel || 'Sledges flagged', value: `${result.water ?? 0} / ${result.waterMax ?? 0}` },
           { label: 'Rank', value: result.rank || '-' },
         ];
+        if (leg.debrief?.rigsLost) {   // addendum 02 E10
+          const ids = getCampaign(data).ledger?.lostOnRoad || [];
+          const names = ids.map(id => (data.roll || []).find(r => r.id === id)?.name ?? String(id));
+          rows.splice(5, 0, { label: 'Rigs lost', value: names.length ? names.join(', ') : '—' });
+        }
         r = await S().showDebrief({ level: def, result, unlocks: [], title: leg.debriefTitle || def.title, rows,
                                     actions: [{ key: 'next', label: camp.bench === false ? 'Continue' : 'To the Bench' }] });
       } else {

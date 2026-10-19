@@ -8,6 +8,10 @@
 // Addendum A5.1 fields: abilities, hoverCostScale, enRegenScale, gravityScale, hidden, idleFacing (+ idleFacingReached),
 // animOverride, autopilot (emits 'player:autopilotDone'). Extras: lunge / pull / rip states (blade, harpoon, TEAR),
 // repairT, slowMo(), idleT, aimHit, aimDir. Event extra: 'player:boost' on every quick boost.
+//
+// Addendum 02 E3: `drive` (Moth Drives steering: range keeping, orbit, edge safety, free auto-dodges), `invulnT`
+// (Hold), `sail` / `mods` (part mods from stats.mods: speedMul, accelMul, lateralGrip, qbCooldown, sail), and the
+// perfect dodge ('player:perfectDodge' when an input quick boost starts just before a hostile shot would have hit).
 import * as THREE from 'three';
 import { clamp, damp, dampAng, angWrap, yawTo, aimDir } from '../core/util.js';
 import { ACT, LOOK_RAD_PER_PX } from '../core/input.js';
@@ -24,6 +28,22 @@ const SLOT_ACT = { R: ACT.FIRE, L: ACT.BLADE, S: ACT.MISSILE, U: ACT.KIT };
 const SLOT_AB = { R: 'fire', L: 'blade', S: 'missile', U: 'kit' };
 const ANIM_KEYS = ['fwd', 'lat', 'onGround', 'pitch', 'aimYaw', 'thrust', 'hover', 'landT', 'bladeT', 'bladeWind', 'recoil', 'crouch', 'tear'];
 const IDLE_DELAY = 5, IDLE_TURN = 0.35;
+const NO_MODS = Object.freeze({});
+const DEG = 180 / Math.PI;
+const _pp = new THREE.Vector3(), _pv = new THREE.Vector3();
+const _dhit = { t: 0, point: new THREE.Vector3(), normal: new THREE.Vector3(), collider: null, ground: false, surface: '' };
+const _dseg = { ground: false, colliders: true, radius: 0 };
+/** closest approach of projectile `pr` to the point `c` within `horizon` s (relative to the frame's velocity `pv`):
+ *  { d, t, ax, az } (ax/az: the horizontal offset from the approach point to `c`), or null when it moves away */
+function approach(pr, c, pv, horizon) {
+  const rx = c.x - pr.pos.x, ry = c.y - pr.pos.y, rz = c.z - pr.pos.z;
+  const vx = pr.vel.x - pv.x, vy = pr.vel.y - pv.y, vz = pr.vel.z - pv.z;
+  const vv = vx * vx + vy * vy + vz * vz;
+  if (vv < 1e-6) return null;
+  const t = Math.max(0, Math.min(horizon, (rx * vx + ry * vy + rz * vz) / vv));
+  const ax = rx - vx * t, ay = ry - vy * t, az = rz - vz * t;
+  return { d: Math.sqrt(ax * ax + ay * ay + az * az), t, ax, az, vx: pr.vel.x, vz: pr.vel.z };
+}
 
 export const DEFAULT_ABILITIES = Object.freeze({ move: 1, jump: true, hover: true, boost: true, fire: true, lock: true, blade: true,
                                                  missile: true, kit: true, interact: true, tear: true });
@@ -36,6 +56,9 @@ function turnToward(a, b, step) {
 
 export function install(ctx) {
   let hidden = false, lastLock = null, idleReached = false;
+  // addendum 02 E3: sail state, quick-boost timing, Moth Drives steering state
+  let sail = false, sailT = 0, airT = 0, lastHead = null, sailK = 0, qbLast = -1e9;
+  const drv = { dir: 1, flipT: 3, dodgeT: 0, dodges: 0 };
   const ST = {};            // reused MechAnimState
   let overrideExtras = [], lastOverride = null;
   const aim = { origin: new THREE.Vector3(), point: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1), lock: null, hit: false };
@@ -88,6 +111,18 @@ export function install(ctx) {
     animOverride: null,
     autopilot: null,
 
+    // ── addendum 02 E3 ──
+    /** Moth Drives (set by ctx.sync): while set, movement intent comes from the steering below */
+    drive: null,
+    /** seconds of invulnerability left (Hold); combat.damage honours it like `invuln` */
+    invulnT: 0,
+    /** the Sail-Rig's SAIL state (mods.sail) */
+    get sail() { return sail; },
+    /** the merged part mods (stats.mods, from the fitted B, G and C parts) */
+    get mods() { return p.stats?.mods || NO_MODS; },
+    /** extra (tests): free auto-dodges Moth Drives has made this level */
+    get driveDodges() { return drv.dodges; },
+
     // ── extras ──
     landT: 0, qbT: 0, enUseT: 0, recoil: 0, bladeT: 0, repairT: 0, repairRate: 3600,
     lunge: null, pull: null, rip: null, slowT: 0, idleT: 0,
@@ -113,9 +148,14 @@ export function install(ctx) {
       if (p.rig) p.rig.dispose();
       const paint = p.loadout.paint || {};
       const design = DESIGNS[s.design] ? s.design : 'vanguard';
+      // addendum 02 E9: B, G and C parts are drawn; bound hungry parts (campaign state) carry ghost beacons
+      const camp = ctx.save?.getFlag?.('campaign');
+      const bound = Array.isArray(camp?.bound) ? camp.bound.slice() : [];
       p.rig = buildMech(ctx, { design, base: paint.base, mid: paint.mid, accent: paint.accent, visor: paint.visor,
                                flame: paint.flame, blade: paint.blade },
-                       { parts: { R: p.loadout.R, L: p.loadout.L, S: p.loadout.S, U: p.loadout.U } });
+                       { parts: { R: p.loadout.R, L: p.loadout.L, S: p.loadout.S, U: p.loadout.U, B: p.loadout.B ?? null,
+                                  G: p.loadout.G ?? null, C: p.loadout.C ?? null }, bound });
+      sail = false; sailT = 0; sailK = 0;
       p.rig.root.visible = p.active && p.alive && !hidden;
       p.rig.root.position.copy(p.pos); p.rig.root.rotation.y = p.bodyYaw;
       ctx.scene.add(p.rig.root);
@@ -125,8 +165,11 @@ export function install(ctx) {
       endSlow();
       Object.assign(p, { alive: true, active: true, imp: 0, stagT: 0, lastHit: -9, overheat: 0, landT: 0, qbT: 0, enUseT: 0,
                          thrust: 0, hover: 0, lock: null, hardLock: false, frozen: false, onGround: true, recoil: 0, bladeT: 0,
-                         repairT: 0, lunge: null, pull: null, rip: null, idleT: 0, autopilot: null, tow: null });
+                         repairT: 0, lunge: null, pull: null, rip: null, idleT: 0, autopilot: null, tow: null, drive: null, invulnT: 0 });
       lastLock = null; idleReached = false;
+      sail = false; sailT = 0; airT = 0; lastHead = null; qbLast = -1e9; sailK = 0;
+      drv.dir = 1; drv.flipT = 3; drv.dodgeT = 0; drv.dodges = 0;
+      p.rig?.setSail?.(0);
       p.ap = snap?.ap ?? p.apMax; p.en = p.enMax;
       for (const slot of SLOTS) { const w = p.weapons[slot]; if (!w) continue; w.refill(); if (snap?.ammo?.[slot] != null) w.ammo = snap.ammo[slot]; }
       p.yaw = p.bodyYaw = yaw; p.pitch = -0.05;
@@ -189,6 +232,7 @@ export function install(ctx) {
       } else if (p.hardLock) p.hardLock = false;
 
       if (!p.alive) return;
+      if (p.invulnT > 0) p.invulnT = Math.max(0, p.invulnT - dt);
       const rip = p.rip, ap = p.autopilot;
       const canAct = p.stagT <= 0 && !p.frozen && !rip;
       p.stagT = Math.max(0, p.stagT - dt);
@@ -205,7 +249,20 @@ export function install(ctx) {
       const cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
       let wx = mx * cy - my * sy, wz = -mx * sy - my * cy;
       const moveScale = typeof p.abilities?.move === 'number' ? p.abilities.move : 1;
-      let speed = S.speed * (S.speedMul || 1) * moveScale;
+      const MD = S.mods || NO_MODS;
+      const topSpeed = S.speed * (S.speedMul || 1) * moveScale;
+      let speed = topSpeed * (sail && MD.sail ? (MD.sail.speedMul ?? 1) : 1);
+
+      // Moth Drives (E3): the frame steers itself; look, aim, fire, missiles, blade and TEAR stay the player's
+      const D = p.drive;
+      if (D && (ctx.clock.time >= D.until || p.frozen)) p.drive = null;
+      let driving = false, dSupport = 0;
+      if (p.drive && !ap && canAct) {
+        driving = true;
+        dSupport = ground(p.pos.x, p.pos.z, p.pos.y + 0.5);
+        const w = driveWish(dt, topSpeed, dSupport);
+        wx = w.x; wz = w.z; moveMag = w.mag;
+      }
 
       // autopilot (A5.1): walks to `to` even while frozen, then turns the body to `face`
       let apYaw = null;
@@ -217,10 +274,15 @@ export function install(ctx) {
         } else if (!ap.to) ap.arrived = true;
       }
 
-      // quick boost
-      if (canAct && p.can('boost') && inp.pressed(ACT.BOOST) && p.overheat <= 0 && p.en >= 60) {
-        useEN(S.qbCost ?? 170);
-        let qx = wx, qz = wz; if (il === 0) { qx = -sy; qz = -cy; }
+      // quick boost (E3: mods.qbCooldown; free while SAIL with qbFree; a perfect dodge when a shot was about to hit)
+      const qbFree = sail && !!MD.sail?.qbFree;
+      const qbReady = !(MD.qbCooldown > 0) || ctx.clock.time - qbLast >= MD.qbCooldown;
+      if (canAct && p.can('boost') && inp.pressed(ACT.BOOST) && qbReady && p.overheat <= 0 && (qbFree || p.en >= 60)) {
+        if (!qbFree) useEN(S.qbCost ?? 170);
+        qbLast = ctx.clock.time;
+        perfectDodgeCheck();
+        let qx = wx, qz = wz; if (il === 0 && !driving) { qx = -sy; qz = -cy; }
+        else if (driving && moveMag === 0) { qx = -sy; qz = -cy; }
         p.vel.x += qx * S.qbImpulse; p.vel.z += qz * S.qbImpulse; if (!p.onGround) p.vel.y = Math.max(p.vel.y, 0);
         p.qbT = 0.28; p.pull = null;
         if (p.tow) endTow('boost');
@@ -254,9 +316,17 @@ export function install(ctx) {
         }
       }
       if (!driven) {
-        const k = p.qbT > 0 ? 1.4 : (p.onGround ? 7 : 2.4);
+        const k = p.qbT > 0 ? 1.4 : (p.onGround ? 7 * (MD.accelMul ?? 1) : 2.4);
         const sp = (p.onGround ? speed : speed * 0.92) * moveMag;
-        p.vel.x = damp(p.vel.x, wx * sp, k, dt); p.vel.z = damp(p.vel.z, wz * sp, k, dt);
+        if (p.onGround && p.qbT <= 0 && MD.lateralGrip != null) {
+          // E3 lateralGrip: across the body's facing the velocity decays at its own rate (Skate-Jets slide on turns)
+          const fx = -Math.sin(p.bodyYaw), fz = -Math.cos(p.bodyYaw);
+          const tx = wx * sp, tz = wz * sp;
+          const vf = p.vel.x * fx + p.vel.z * fz, vl = -p.vel.x * fz + p.vel.z * fx;
+          const tf = tx * fx + tz * fz, tl = -tx * fz + tz * fx;
+          const nf = damp(vf, tf, k, dt), nl = damp(vl, tl, MD.lateralGrip, dt);
+          p.vel.x = nf * fx - nl * fz; p.vel.z = nf * fz + nl * fx;
+        } else { p.vel.x = damp(p.vel.x, wx * sp, k, dt); p.vel.z = damp(p.vel.z, wz * sp, k, dt); }
         // vertical: jump from the ground, hover in the air
         if (canAct && inp.down(ACT.JUMP) && p.overheat <= 0 && p.en > 0) {
           if (p.onGround && inp.pressed(ACT.JUMP)) {
@@ -270,7 +340,13 @@ export function install(ctx) {
       }
       p.vel.y = Math.max(p.vel.y, -75);
       if (p.frozen && !ap) { p.vel.x *= 0.9; p.vel.z *= 0.9; }
+      if (driving) autoDodge(dt);
+      const ox = p.pos.x, oz = p.pos.z;
       p.pos.addScaledVector(p.vel, dt);
+      // E3 edge safety: Moth Drives never walks the frame off a deck (a drop of more than 3 m) by itself
+      if (driving && p.onGround && ground(p.pos.x, p.pos.z, p.pos.y + 0.5) < dSupport - 3) {
+        p.pos.x = ox; p.pos.z = oz; p.vel.x = 0; p.vel.z = 0; drv.dir = -drv.dir; drv.flipT = 3;
+      }
       if (p.tow) {
         const T = p.tow; T.t = (T.t || 0) + dt;
         const to = typeof T.to === 'function' ? T.to() : T.to;
@@ -310,6 +386,7 @@ export function install(ctx) {
           if (out > 0) { p.vel.x += dx / dl * out; p.vel.z += dz / dl * out; }
         }
       }
+      updateSail(dt, topSpeed, MD);
       // EN regen and repair
       if (p.enUseT <= 0) p.en = Math.min(p.enMax, p.en + (p.overheat > 0 ? 0 : (p.onGround ? S.enRegen : S.enRegenAir)) * (p.enRegenScale ?? 1) * dt);
       if (p.repairT > 0) { p.repairT -= dt; p.ap = Math.min(p.apMax, p.ap + (p.repairRate || 3600) * dt); }
@@ -372,6 +449,9 @@ export function install(ctx) {
       // ── visuals ──
       const r = p.rig;
       if (!r) return;
+      sailK = damp(sailK, sail ? 1 : 0, 4, dt);
+      if (r.setSail && Math.abs(sailK - (r._sailShown ?? -1)) > 0.004) { r._sailShown = sailK; r.setSail(sailK); }
+      r.setJets?.(p.onGround ? clamp(Math.hypot(p.vel.x, p.vel.z) / 30, 0, 1) : 0.4);
       r.root.position.copy(p.pos); r.root.rotation.y = p.bodyYaw;
       r.root.visible = !hidden;
       const cb = Math.cos(p.bodyYaw), sb = Math.sin(p.bodyYaw);
@@ -411,6 +491,102 @@ export function install(ctx) {
       }
     },
   };
+
+  // ---------------------------------------------------------------- addendum 02 E3 helpers
+  /** SAIL: after `after` s on the ground at ≥ minSpeedFrac of top speed with the heading turning slower than maxTurn
+   *  °/s. A turn faster than breakTurn °/s, stopping, a stagger or 1 s airborne ends it. */
+  function updateSail(dt, top, MD) {
+    const cfg = MD.sail;
+    if (!cfg) { sail = false; sailT = 0; lastHead = null; return; }
+    const hs = Math.hypot(p.vel.x, p.vel.z);
+    const head = hs > 1 ? Math.atan2(p.vel.x, p.vel.z) : null;
+    const turn = head != null && lastHead != null && dt > 0 ? Math.abs(angWrap(head - lastHead)) / dt * DEG : 0;
+    lastHead = head;
+    airT = p.onGround ? 0 : airT + dt;
+    if (sail) {
+      if (turn > (cfg.breakTurn ?? 25) || hs < top * 0.5 || p.stagT > 0 || airT >= 1 || p.frozen) { sail = false; sailT = 0; }
+      return;
+    }
+    if (p.onGround && hs >= top * (cfg.minSpeedFrac ?? 0.9) && turn < (cfg.maxTurn ?? 12) && p.stagT <= 0) {
+      sailT += dt;
+      if (sailT >= (cfg.after ?? 2)) { sail = true; ctx.audio?.play?.('sailSnap', null); ctx.events.emit('player:sail', { on: true }); }
+    } else sailT = 0;
+  }
+  /** the closest hostile projectile threat to the frame within `range` m and `horizon` s, under `margin` m, or null */
+  function threat(range, horizon, margin) {
+    const P = ctx.projectiles; if (!P?.forEach) return null;
+    const c = p.center(_pp), r2 = range * range;
+    let best = null;
+    P.forEach((pr) => {
+      if (!isHostile(pr.team, p.team) || pr.pos.distanceToSquared(c) > r2) return;
+      const a = approach(pr, c, p.vel, horizon);
+      if (!a || a.d >= margin || (a.t <= 0 && a.d > p.hitR)) return;
+      if (!best || a.t < best.a.t) best = { pr, a };
+    });
+    return best;
+  }
+  /** E3: an input quick boost that starts while a hostile shot would hit within 0.25 s is a perfect dodge */
+  function perfectDodgeCheck() {
+    const th = threat(60, 0.25, (p.hitR || 3.6) + 0.5);
+    if (th) ctx.events.emit('player:perfectDodge', { projectile: th.pr });
+  }
+  /** E3: Moth Drives' free dodge (no EN, no Sync), at most every 0.5 s */
+  function autoDodge(dt) {
+    drv.dodgeT -= dt;
+    if (drv.dodgeT > 0) return;
+    const th = threat(60, 0.35, (p.hitR || 3.6) + 1.5);
+    if (!th) return;
+    let dx = -th.a.ax, dz = -th.a.az;   // away from the approach point, across the shot
+    const vl = Math.hypot(th.a.vx, th.a.vz);
+    if (vl > 1e-3) { const ux = th.a.vx / vl, uz = th.a.vz / vl, d = dx * ux + dz * uz; dx -= ux * d; dz -= uz * d; }
+    let dl = Math.hypot(dx, dz);
+    if (dl < 1e-3) { dx = vl > 1e-3 ? -th.a.vz / vl : 1; dz = vl > 1e-3 ? th.a.vx / vl : 0; dl = 1; if (drv.dir < 0) { dx = -dx; dz = -dz; } }
+    dx /= dl; dz /= dl;
+    // never dodge off a deck
+    const sup = ground(p.pos.x, p.pos.z, p.pos.y + 0.5);
+    if (ground(p.pos.x + dx * 8, p.pos.z + dz * 8, p.pos.y + 0.5) < sup - 3) { dx = -dx; dz = -dz; }
+    if (ground(p.pos.x + dx * 8, p.pos.z + dz * 8, p.pos.y + 0.5) < sup - 3) return;
+    p.vel.x += dx * (p.stats.qbImpulse ?? 82); p.vel.z += dz * (p.stats.qbImpulse ?? 82);
+    p.qbT = 0.28; drv.dodgeT = 0.5; drv.dodges++;
+    ctx.audio?.play?.('qb', null);
+    ctx.events.emit('player:boost', { dir: [dx, dz], auto: true });
+  }
+  /** E3 steering: keep within 15 m of the R part's preferred range around the target, orbiting at 70 % speed */
+  function driveWish(dt, top, support) {
+    const out = { x: 0, z: 0, mag: 0 };
+    let T = p.lock && p.lock.alive ? p.lock : null;
+    if (!T) T = ctx.combat?.nearestHostile?.(p.pos, p.team, 400) || null;
+    if (!T) return out;
+    let pref = p.weapons?.R?.part?.stats?.pref ?? 120;
+    const gh = ctx.collision?.groundHeight ? ctx.collision.groundHeight(p.pos.x, p.pos.z) : support;
+    if (support > gh + 0.75) pref = Math.min(pref, 40);   // on a structure (a deck): fight close
+    const c = T.center(_pv);
+    let rx = c.x - p.pos.x, rz = c.z - p.pos.z;
+    const d = Math.hypot(rx, rz) || 1; rx /= d; rz /= d;
+    drv.flipT -= dt;
+    let tx = -rz * drv.dir, tz = rx * drv.dir;
+    const C = ctx.collision;
+    const blocked = (ux, uz, L) => {
+      if (!ux && !uz) return false;
+      if (ground(p.pos.x + ux * L, p.pos.z + uz * L, p.pos.y + 0.5) < support - 3) return true;
+      if (C?.segment) {
+        _pp.set(p.pos.x, p.pos.y + 3, p.pos.z); _pv.set(p.pos.x + ux * L, p.pos.y + 3, p.pos.z + uz * L);
+        if (C.segment(_pp, _pv, _dhit, _dseg)) return true;
+      }
+      return false;
+    };
+    if (drv.flipT <= 0 || blocked(tx, tz, 8)) { drv.dir = -drv.dir; drv.flipT = 3; tx = -tx; tz = -tz; }
+    const radial = clamp((d - pref) / 15, -1, 1);
+    let ax = rx * radial, az = rz * radial;
+    let ox = tx * 0.7, oz = tz * 0.7;
+    if (blocked(tx, tz, 6)) { ox = oz = 0; }
+    if (ax || az) { const al = Math.hypot(ax, az); if (blocked(ax / al, az / al, 6)) { ax = az = 0; } }
+    let wx = ox + ax, wz = oz + az;
+    const wl = Math.hypot(wx, wz);
+    if (wl < 1e-4) return out;
+    out.mag = Math.min(1, wl); out.x = wx / wl; out.z = wz / wl;
+    return out;
+  }
 
   function updateLock() {
     if (p.hardLock && p.lock && p.lock.alive) return;
@@ -467,6 +643,7 @@ export function install(ctx) {
     p.abilities = { ...DEFAULT_ABILITIES };
     p.hoverCostScale = 1; p.enRegenScale = 1; p.gravityScale = 1;
     p.hidden = false; p.idleFacing = null; p.animOverride = null; p.autopilot = null; p.invuln = false; p.tow = null;
+    p.drive = null; p.invulnT = 0;
   });
   ctx.addSystem({ name: 'player', phase: 'player', when: 'sim', update: (dt) => p.update(dt) });
   ctx.player = p;

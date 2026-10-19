@@ -17,6 +17,9 @@ import { isHostile } from './combat.js';
 
 const HOLD = 0.4, RIP_DUR = 1.2, RIP_AT = 0.72, RANGE = 30, GLINT_RANGE = 300, CHOICE_SCALE = 0.3;
 const GLINT_COLOR = '#ffbf4a';
+// addendum 02 E8 / B2 #10: a hungry part glints pale green-white, with a faint ghost-green halo (never ghost green alone)
+const HUNGRY_COLOR = '#d8ffe6', HUNGRY_HALO = '#a8ff9e';
+const isHungry = (part) => (PARTS[part]?.haul?.hunger ?? 0) > 0;
 const _pc = new THREE.Vector3(), _tc = new THREE.Vector3(), _v = new THREE.Vector3();
 
 export function installHaul(ctx) {
@@ -47,11 +50,15 @@ export function installHaul(ctx) {
   function addGlint(t) {
     const root = t.root || t.rig?.root || null;
     if (!root) return null;
-    const rec = { handle: null, mesh: null, root, phase: (t.id || 0) * 1.7 };
+    const hungry = isHungry(t.haul.part);
+    const rec = { handle: null, halo: null, mesh: null, root, phase: (t.id || 0) * 1.7, hungry, color: hungry ? HUNGRY_COLOR : GLINT_COLOR };
     const off = glintPoint(t);
     const glows = ctx.particles?.glows;
     if (glows?.add) {
-      rec.handle = glows.add(root, { color: GLINT_COLOR, size: 0.9, pulse: 'sparkle', offset: off, minPx: 3 });
+      if (hungry) {
+        rec.handle = glows.add(root, { color: HUNGRY_COLOR, size: 1.0, pulse: 'sparkle', offset: off, minPx: 3 });
+        rec.halo = glows.add(root, { color: HUNGRY_HALO, size: 1.6, pulse: 'beat', intensity: 0.6, offset: off });
+      } else rec.handle = glows.add(root, { color: GLINT_COLOR, size: 0.9, pulse: 'sparkle', offset: off, minPx: 3 });
     } else {
       // stand-in until particles.glows lands (A0 rule 7: trivial): an additive diamond on the part
       if (!glintGeo) {
@@ -60,7 +67,7 @@ export function installHaul(ctx) {
                                                  depthWrite: false, fog: false });
         glintMat.userData.shared = true;
       }
-      const m = new THREE.Mesh(glintGeo, glintMat);
+      const m = new THREE.Mesh(glintGeo, hungry ? hungryMat() : glintMat);
       m.name = 'haulGlint'; m.position.set(off[0], off[1], off[2]); m.renderOrder = 5;
       m.frustumCulled = false;
       root.add(m);
@@ -73,6 +80,7 @@ export function installHaul(ctx) {
     const rec = glints.get(t);
     if (!rec) return;
     rec.handle?.remove?.();
+    rec.halo?.remove?.();
     if (rec.mesh) rec.mesh.parent?.remove(rec.mesh);
     glints.delete(t);
   }
@@ -88,6 +96,7 @@ export function installHaul(ctx) {
       const d = pl?.active ? t.pos.distanceTo(pl.pos) : 0;
       const vis = d <= GLINT_RANGE;
       if (rec.handle?.set) rec.handle.set({ visible: vis });
+      if (rec.halo?.set) rec.halo.set({ visible: vis });
       if (rec.mesh) {
         rec.mesh.visible = vis;
         rec.phase += dt;
@@ -97,6 +106,15 @@ export function installHaul(ctx) {
         rec.mesh.rotation.y += dt * 1.5;
       }
     }
+  }
+
+  let hMat = null;
+  function hungryMat() {
+    if (!hMat) {
+      hMat = new THREE.MeshBasicMaterial({ color: HUNGRY_COLOR, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+      hMat.userData.shared = true;
+    }
+    return hMat;
   }
 
   // ---------------------------------------------------------------- candidate and TEAR
@@ -282,6 +300,8 @@ export function installHaul(ctx) {
     },
     /** extra: true while the rack-full choice is open */
     get choosing() { return choosing; },
+    /** extra (tests, addendum 02 E8): the glint shown on a target ({ color, hungry, halo }) or null */
+    glintOf(t) { const r = glints.get(t); return r ? { color: r.color, hungry: r.hungry, halo: !!r.halo } : null; },
     isHaulPart(id) { return !!PARTS[id]?.haul; },
     add(part, o = {}) {
       const d = simDeferred();

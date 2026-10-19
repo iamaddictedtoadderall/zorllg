@@ -108,7 +108,7 @@ class Drone extends Unit {
     if (this.heldT <= 0) {
       const ty = Math.max(this.groundAt(tx, tz), this.groundAt()) + ai.alt + Math.sin(ctx.clock.time * 1.3 + ai.orbitR) * 3;
       const want = _v.set(tx - this.pos.x, ty - this.pos.y, tz - this.pos.z);
-      const wl = want.length(); want.multiplyScalar(Math.min(34, wl * 1.2) / (wl || 1));
+      const wl = want.length(); want.multiplyScalar(Math.min(34, wl * 1.2) / (wl || 1) * this.speedScale);
       if (this.stagT > 0) want.set(0, -6, 0);
       else if (this.blindT > 0) { this.drift(dt); want.set(Math.cos(ai.driftA) * 8, -1, Math.sin(ai.driftA) * 8); }
       this.vel.x = damp(this.vel.x, want.x, 1.6, dt); this.vel.y = damp(this.vel.y, want.y, 1.6, dt); this.vel.z = damp(this.vel.z, want.z, 1.6, dt);
@@ -180,8 +180,9 @@ class Tank extends Unit {
     }
     animateUnit(this.rig, dt, { speed: sp, alert: !!T });
     this.cd -= dt;
+    this.windup = 0;
     if (this.canFire() && dist < 270) {
-      if (this.cd < 0.7 && this.cd > 0) setTell(this.tell, (0.7 - this.cd) / 0.7);   // barrel glow tell (prototype)
+      if (this.cd < 0.7 && this.cd > 0) { setTell(this.tell, (0.7 - this.cd) / 0.7); this.windup = this.cd; }   // barrel glow tell (prototype)
       if (this.cd <= 0) {
         setTell(this.tell, 0);
         const n = this.heavy ? 3 : 1;
@@ -312,7 +313,7 @@ class Gunship extends Unit {
     if (this.heldT <= 0) {
       const ty = Math.max(this.groundAt(tx, tz), this.groundAt()) + ai.alt + Math.sin(ctx.clock.time * 0.7 + ai.r) * 4;
       const want = _v.set(tx - this.pos.x, ty - this.pos.y, tz - this.pos.z);
-      const wl = want.length(); want.multiplyScalar(Math.min(22, wl * 0.8) / (wl || 1));
+      const wl = want.length(); want.multiplyScalar(Math.min(22, wl * 0.8) / (wl || 1) * this.speedScale);
       if (this.stagT > 0) want.set(this.vel.x * 0.3, -5, this.vel.z * 0.3);
       else if (this.blindT > 0) { this.drift(dt); want.set(Math.cos(ai.driftA) * 6, 0, Math.sin(ai.driftA) * 6); }
       this.vel.x = damp(this.vel.x, want.x, 1.2, dt); this.vel.y = damp(this.vel.y, want.y, 1.2, dt); this.vel.z = damp(this.vel.z, want.z, 1.2, dt);
@@ -344,8 +345,9 @@ class Gunship extends Unit {
         ctx.fx?.muzzle?.(from, dir, 'mg');
       }
     }
-    // rocket pods: 4 unguided rockets with splash
+    // rocket pods: 4 unguided rockets with splash (addendum 02 E4: the last 0.8 s before a salvo is its wind-up)
     ai.rcd -= dt;
+    this.windup = ai.rcd > 0 && ai.rcd < 0.8 && this.canFire() && dist < 350 ? ai.rcd : 0;
     if (ai.rcd <= 0 && this.canFire() && dist < 350) {
       ai.rcd = this.rnd(7, 9);
       for (let k = 0; k < 4; k++) ctx.timers.after(k * 0.12, () => this.rocket(k));
@@ -445,8 +447,9 @@ class Walker extends Unit {
     }
     // heavy cannon with a charge tell
     this.cd -= dt;
+    this.windup = ai.stompWind > 0 ? ai.stompWind : 0;   // addendum 02 E4: stomp and cannon wind-ups
     if (this.canFire() && dist < 320 && !busy) {
-      if (this.cd < 0.9 && this.cd > 0) setTell(this.tell, (0.9 - this.cd) / 0.9);
+      if (this.cd < 0.9 && this.cd > 0) { setTell(this.tell, (0.9 - this.cd) / 0.9); this.windup = Math.max(this.windup, this.cd); }
       if (this.cd <= 0) {
         setTell(this.tell, 0);
         this.cd = this.rnd(4, 5.5);
@@ -491,9 +494,12 @@ class Artillery extends Unit {
     if (P.barrelPivot) P.barrelPivot.rotation.x = damp(P.barrelPivot.rotation.x, T ? clamp(0.5 + dist / 2400, 0.5, 0.85) : 0.3, 2, dt);
     animateUnit(this.rig, dt, { speed: sp, alert: !!T });
     this.cd -= dt;
+    // addendum 02 E4: from a salvo until its last shell lands (the ground warnings) the unit is winding up
+    this.windup = Math.max(0, (ai.landAt ?? 0) - this.ctx.clock.time);
     if (this.cd <= 0 && this.canFire() && dist >= 120 && dist <= 900) {
       this.cd = this.rnd(6, 8);
       ai.salvos++;
+      { const D0 = Math.hypot(T.pos.x - this.pos.x, T.pos.z - this.pos.z); ai.landAt = this.ctx.clock.time + 0.7 + clamp(2 + D0 / 300, 2.2, 5); }
       // 3 shells at where the target is now; each impact point is marked on the ground 2 s before it lands
       const g = 45;
       for (let k = 0; k < 3; k++) {

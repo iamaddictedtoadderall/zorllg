@@ -82,7 +82,7 @@ class Mech extends Unit {
     if (P && (T || dist > 3)) this.yaw = dampAng(this.yaw, yawTo(dx, dz), 6, dt);
     ai.qbT -= dt; ai.qbCd -= dt; ai.msCd -= dt; ai.bladeCd -= dt; ai.shockCd -= dt; ai.landT = Math.max(0, ai.landT - dt * 2.5);
     ai.recoil = damp(ai.recoil, 0, 10, dt);
-    let wishx = 0, wishz = 0, speed = 30 * aggr, ascend = false;
+    let wishx = 0, wishz = 0, speed = 30 * aggr * this.speedScale, ascend = false;   // addendum 02 E4: slowed by speedScale
     const busy = this.stagT > 0 || ai.bladeWind > 0 || ai.shockWind > 0 || ai.lungeT > 0;
     if (this.stagT > 0 || this.heldT > 0) { /* stunned or held */ }
     else if (ai.shockWind > 0) {
@@ -165,6 +165,8 @@ class Mech extends Unit {
       this.keepInPlayArea();
     }
     ai.bladeT = Math.max(0, ai.bladeT - dt);
+    // addendum 02 E4: the blade wind-up and the shock charge are telegraphs (Second Sight flashes them)
+    this.windup = ai.bladeWind > 0 ? ai.bladeWind + 0.45 : ai.shockWind > 0 ? ai.shockWind : 0;
     this.animate(dt, T, dist, ascend);
   }
   dodge(dirx, dirz, k) {

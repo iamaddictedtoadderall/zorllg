@@ -3,6 +3,9 @@
 // kill feed, hints, warnings) plus the arch additions (boss bar, interaction prompt, zone card, checkpoint toast,
 // letterbox, fade, choice) and the addendum A5.2 additions: pilot vitals, panels, weapon slots with ability gating,
 // the TEAR prompt and the Haul rack, choice with up to four options, prompt options and the blocked-hit flash.
+// Addendum 02 E5: the Sync meter (panel 'sync') with its SIGHT/DRIVE touch buttons, the Hold flash, the Second Sight
+// overlay (#hud.sight), the SAIL chip, hud.tracker (panel 'tracker'), explain cards above the Bench and the Count
+// (real time), and a pale green-white rack dot for hungry parts.
 //
 // Clocks (§1.4). The 'hud' system runs always on real dt (it draws while paused). Promises that gate sim logic count
 // SIM time in the 'hud-sim' system (ui phase, when 'sim'), so they freeze while paused:
@@ -19,7 +22,9 @@ const SLOT4 = ['R', 'L', 'S', 'U'];
 const SLOT_KEY = { R: 'R', L: 'L', S: 'S', U: 'K' };                 // setSlots uses K for the utility slot
 const SLOT_TOUCH = { R: 'fire', L: 'blade', S: 'msl', U: 'kit' };
 const SLOT_ABILITY = { R: 'fire', L: 'blade', S: 'missile', U: 'kit' };
-const PANELS = ['ap', 'en', 'weapons', 'radar', 'compass', 'objectives', 'lock', 'rack'];
+const PANELS = ['ap', 'en', 'weapons', 'radar', 'compass', 'objectives', 'lock', 'rack', 'sync', 'tracker'];
+const SYNC_MOVES = [['sight', 'SIGHT', 'C'], ['drive', 'DRIVE', 'V'], ['hold', 'HOLD', '']];
+const MOVE_TITLE = { sight: 'SECOND SIGHT', drive: 'MOTH DRIVES' };
 // Clarity pass (docs/todo.md): weapon rows lead with a plain type label taken from PartDef.weapon; the part's own
 // (flavour) name follows, smaller, or is dropped when it says the same thing.
 const TYPE_LABEL = { rifle: 'Rifle', mg: 'Machine gun', shotgun: 'Shotgun', cannon: 'Cannon', blade: 'Blade', missiles: 'Missiles',
@@ -255,6 +260,77 @@ const HUD_CSS = `
 @keyframes hudExInL{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
 #game.touch #explain:not([hidden]){animation-name:hudExInL}
 @media (max-height:520px){#explain{top:min(256px,44vh)}}
+/* addendum 02 E5: explain cards above the Bench and the Count */
+#explain.over{z-index:6;right:calc(28px + var(--safe-r,0px));left:auto;top:24px}
+#game.touch #explain.over{right:calc(14px + var(--safe-r,0px));left:auto;top:10px;border-left:0;border-right:2px solid var(--accent);
+  background:linear-gradient(270deg,rgba(12,11,14,.9),rgba(12,11,14,.62))}
+/* addendum 02 E5: the Sync meter, under the AP bar */
+#syncm{margin-top:8px;--sync:#7fe9ff}
+#syncm .sh{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:.3em;color:var(--hud-dim)}
+#syncm .sh b{font-family:var(--f-mono);font-weight:500;letter-spacing:.04em;color:var(--sync)}
+#syncm.act .sh .sl{color:var(--sync);letter-spacing:.24em;font-weight:600}
+#syncm .sg{display:flex;gap:2px;margin-top:3px;height:7px}
+#syncm .sg i{position:relative;flex:1 1 0;min-width:0;background:rgba(127,233,255,.1);box-shadow:inset 0 0 0 1px rgba(127,233,255,.22)}
+#syncm .sg i.on{background:var(--sync);box-shadow:0 0 6px rgba(127,233,255,.55)}
+#syncm .sg i u{position:absolute;left:0;bottom:-3px;height:2px;background:var(--sync);opacity:.85}
+#syncm .sk{position:relative;height:14px;margin-top:4px;font:500 10px/1 var(--f-mono);letter-spacing:.06em}
+#syncm .sk span{position:absolute;top:0;left:0;white-space:nowrap;color:var(--sync);transition:color .3s;text-shadow:0 1px 2px rgba(0,0,0,.85),0 0 6px rgba(0,0,0,.5)}
+#syncm .sh{text-shadow:0 1px 2px rgba(0,0,0,.7)}
+#syncm .sg i.cost::after{content:"";position:absolute;right:-2px;bottom:-5px;width:2px;height:4px;background:rgba(127,233,255,.7)}
+#syncm .sk span.dim{color:rgba(127,233,255,.38)}
+#syncm .sk span.grey{color:var(--hud-faint)}
+#syncm .sk span.rdy{color:#fff;text-shadow:0 0 8px var(--sync)}
+#syncm .sk span[hidden]{display:none}
+#syncm .sk kbd{font-size:9px;padding:0 3px;margin-left:4px;border-color:currentColor;color:inherit;opacity:.8}
+#game.touch #syncm .sk kbd{display:none}
+#syncm.flash .sg i{background:#fff;box-shadow:0 0 10px #fff}
+#syncm.flash .sh{color:#fff}
+#holdtx{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);font:700 64px/1 var(--f-display);letter-spacing:.4em;padding-left:.4em;color:#fff;
+  text-shadow:0 0 24px rgba(127,233,255,.9),0 0 4px #fff;pointer-events:none;opacity:0;transition:opacity .25s}
+#holdtx.on{opacity:1}
+#holdflare{position:absolute;inset:0;background:#fff;pointer-events:none;opacity:0}
+#holdflare.on{animation:hudHoldFlare .3s ease-out}
+@keyframes hudHoldFlare{0%{opacity:.85}100%{opacity:0}}
+#game.touch #holdtx{font-size:40px}
+#game.touch #hud.syncon #hint{bottom:132px}
+#game.touch #syncm{margin-top:5px}
+#game.touch #syncm .sg{height:6px}
+/* Second Sight: a cyan inner vignette and a 2 px chromatic edge (CSS only) */
+#hud.sight::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse at center,rgba(127,233,255,0) 55%,rgba(127,233,255,.10) 80%,rgba(127,233,255,.24) 100%);
+  box-shadow:inset 0 0 160px 24px rgba(127,233,255,.2),inset 2px 0 0 rgba(255,70,90,.6),inset -2px 0 0 rgba(70,230,255,.7),
+             inset 0 2px 0 rgba(255,70,90,.45),inset 0 -2px 0 rgba(70,230,255,.5);animation:hudSightIn .4s ease-out}
+@keyframes hudSightIn{from{opacity:0}to{opacity:1}}
+/* the SAIL chip beside the EN bar */
+#enLbl .sail{margin-left:auto;margin-right:10px;font:600 10px/1 var(--f-mono);letter-spacing:.18em;padding:2px 5px 1px;color:var(--ink,#0c0b0e);background:var(--en);
+  box-shadow:0 0 8px rgba(143,210,198,.6)}
+#enLbl .sail[hidden]{display:none}
+/* touch: the partner-move buttons, above BOOST */
+#tSight,#tDrive{--s:46px;border-color:rgba(127,233,255,.7);color:#bff4ff}
+#tSight{right:calc(178px + var(--r,0px));bottom:196px}
+#tDrive{right:calc(124px + var(--r,0px));bottom:226px}
+#tSight.on,#tDrive.on{background:rgba(127,233,255,.35);border-color:#7fe9ff}
+/* addendum 02 E5: the tracker, under the objectives */
+#tracker{margin-top:10px;padding:6px 0 0;border-top:1px solid var(--hud-faint);max-width:340px}
+#tracker .trk-t{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+#tracker .trk-t b{font-size:12px;letter-spacing:.3em;color:var(--accent);font-weight:600}
+#tracker .trk-t span{font:500 12px var(--f-mono);color:var(--hud)}
+#tracker .trk-b{margin-top:4px;font-size:12px;letter-spacing:.22em;text-transform:uppercase}
+#tracker .trk-b.in{color:var(--hud-dim)}
+#tracker .trk-b.warn{color:var(--accent)}
+#tracker .trk-b.out{color:var(--threat);animation:hudBlink .7s steps(2) infinite}
+#tracker .trk-a{display:grid;grid-template-columns:72px 1fr auto;gap:2px 8px;align-items:center;margin-top:5px;font:500 11px var(--f-mono)}
+#tracker .trk-a .ab{height:5px;background:var(--hud-faint);position:relative;overflow:hidden}
+#tracker .trk-a .ab i{position:absolute;left:0;top:0;bottom:0;background:var(--en)}
+#tracker .trk-a .al{text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tracker .trk-a .at{color:var(--hud-dim)}
+#tracker .trk-a.danger .ab i{background:var(--threat)}
+#tracker .trk-a.danger .al{color:var(--threat)}
+#game.touch #tracker{max-width:none;margin-top:6px}
+#game.touch #tracker .trk-t b,#game.touch #tracker .trk-b{font-size:10px;letter-spacing:.16em}
+#game.touch #tracker .trk-a{grid-template-columns:44px 1fr auto;font-size:10px}
+/* a hungry part in the rack: a pale green-white dot */
+#rack .rc.hungry i{background:#d8ffe6;box-shadow:0 0 8px #a8ff9e}
 `;
 
 export function install(ctx) {
@@ -290,6 +366,36 @@ export function install(ctx) {
   rackEl.id = 'rack'; rackEl.hidden = true;
   const rackCount = rackEl.querySelector('.rh b'), rackCells = [];
   for (let i = 0; i < 3; i++) rackCells.push(mk('div', 'rc empty', rackEl.querySelector('.rs'), '<i></i><span>—</span>'));
+  // addendum 02 E5: the Sync meter (under the AP bar, inside #status), the Hold flash, the SAIL chip, the tracker
+  const syncEl = mk('div', '', el.status, `<div class="sh"><span class="sl">SYNC</span><b></b></div><div class="sg"></div><div class="sk"></div>`);
+  syncEl.id = 'syncm'; syncEl.hidden = true;
+  const sy = { head: syncEl.querySelector('.sl'), num: syncEl.querySelector('.sh b'), segs: syncEl.querySelector('.sg'), ticks: syncEl.querySelector('.sk'),
+               cells: [], tick: {}, sig: '', flashT: 0, holdT: 0, flareOn: false };
+  for (const [m, label, key] of SYNC_MOVES) {
+    const t = mk('span', '', sy.ticks, `<em></em><kbd>${key}</kbd>`);
+    t.style.fontStyle = 'normal'; if (!key) t.querySelector('kbd').remove();
+    sy.tick[m] = { el: t, label, txt: t.querySelector('em'), shown: '' };
+    t.querySelector('em').style.fontStyle = 'normal';
+  }
+  const holdTx = mk('div', '', el.hud, 'HOLD'); holdTx.id = 'holdtx';
+  const holdFlare = mk('div', '', game); holdFlare.id = 'holdflare';
+  const sailChip = document.createElement('span'); sailChip.className = 'sail'; sailChip.textContent = 'SAIL'; sailChip.hidden = true;
+  if (el.enLbl) el.enLbl.insertBefore(sailChip, el.enLbl.lastElementChild || null);
+  const trackerEl = mk('div', '', $('#objpanel') || el.hud); trackerEl.id = 'tracker'; trackerEl.hidden = true;
+  const trk = { def: null, sig: '', rows: [] };
+  // touch: SIGHT and DRIVE buttons (input routes them through its delegated .tb handler)
+  const touchLayer = $('#touch');
+  const syncBtn = {};
+  for (const [act, label, id] of [['sight', 'SIGHT', 'tSight'], ['drive', 'DRIVE', 'tDrive']]) {
+    let b = touchLayer?.querySelector(`.tb[data-act="${act}"]`);
+    if (!b && touchLayer) {
+      b = document.createElement('button'); b.type = 'button'; b.className = 'tb'; b.id = id; b.dataset.act = act;
+      b.innerHTML = `<span>${label}</span><small></small>`; b.hidden = true;
+      const boost = touchLayer.querySelector('#tBoost');
+      touchLayer.insertBefore(b, boost ? boost.nextSibling : null);
+    }
+    syncBtn[act] = b || null;
+  }
   // weapon rows: [type label][key][flavour name] (the key cap from index.html is kept)
   const wrow = {};
   for (const s of SLOT4) {
@@ -367,7 +473,7 @@ export function install(ctx) {
   if (commsEl && typeof ResizeObserver === 'function') {
     new ResizeObserver(() => { commsBottom = commsEl.hidden ? 0 : commsEl.offsetTop + commsEl.offsetHeight; }).observe(commsEl);
   }
-  const panels = { ap: true, en: true, weapons: true, radar: true, compass: true, objectives: true, lock: true, rack: false };
+  const panels = { ap: true, en: true, weapons: true, radar: true, compass: true, objectives: true, lock: true, rack: false, sync: false, tracker: false };
   const slots = { R: { state: 'auto', label: null }, L: { state: 'auto', label: null }, S: { state: 'auto', label: null }, U: { state: 'auto', label: null } };
   const slotGated = { R: false, L: false, S: false, U: false };
   const objSeen = new Map();         // id → { state, at (real time of the last state change) }
@@ -599,6 +705,7 @@ export function install(ctx) {
     for (let i = 0; i < rackCells.length; i++) {
       const c = rackCells[i], id = rack[i];
       toggle(c, 'empty', !id);
+      toggle(c, 'hungry', !!id && (LO.PARTS?.[id]?.haul?.hunger ?? 0) > 0);   // addendum 02 E5
       if (!id) c.classList.remove('in');
       setText(c.querySelector('span'), id ? partName(id) : '—');
       c.title = id || '';
@@ -678,8 +785,17 @@ export function install(ctx) {
   function glossaryList() {
     try { const g = ctx.save?.getFlag?.('glossary'); return Array.isArray(g) ? g : []; } catch (e) { return []; }
   }
-  const exCanRun = () => ctx.simRunning && !cine && (api.fadeLevel ?? 0) < 0.6 && !CH.def && !el.hud.hidden
-    && (ctx.flow?.state ?? 'playing') === 'playing';
+  /** addendum 02 E5: at the Bench and the Count the cards run in real time, above those overlays */
+  const exOverlay = () => { const st = ctx.flow?.state; return st === 'bench' || st === 'count'; };
+  const exCanRun = () => exOverlay() || (ctx.simRunning && !cine && (api.fadeLevel ?? 0) < 0.6 && !CH.def && !el.hud.hidden
+    && (ctx.flow?.state ?? 'playing') === 'playing');
+  /** the card lives in #hud during play and in #game (above #screen) at the Bench and the Count */
+  function exPlace() {
+    const over = exOverlay();
+    const parent = over ? game : el.hud;
+    if (exEl.parentElement !== parent) parent.appendChild(exEl);
+    toggle(exEl, 'over', over);
+  }
   function exShow(e) {
     EX.cur = e; EX.t = 0; EX.out = 0;
     const text = String(forDevice(e.text) ?? '');
@@ -691,7 +807,8 @@ export function install(ctx) {
     setText(ex.tx, text);
     // the first card says where the notes live (non-breaking spaces keep each menu path on one line)
     setText(ex.ft, n === 0 ? (ctx.input?.isTouch ? 'Notes are kept under\u00a0II\u00a0›\u00a0Field\u00a0notes.' : 'Notes are kept under Pause\u00a0(Esc)\u00a0›\u00a0Field\u00a0notes.') : '');
-    if (ctx.input?.isTouch) {   // under the objectives list, whatever its length
+    exPlace();
+    if (ctx.input?.isTouch && !exOverlay()) {   // under the objectives list, whatever its length
       const op = document.getElementById('objpanel'), hr = el.hud.getBoundingClientRect();
       const r = op && op.offsetParent !== null ? op.getBoundingClientRect() : null;
       exEl.style.top = Math.round(Math.max(96, r && r.height ? r.bottom - hr.top + 10 : 96)) + 'px';
@@ -719,6 +836,100 @@ export function install(ctx) {
     EX.t += dt;
     setW(ex.bar, 1 - EX.t / EX.dur);
     if (EX.t >= EX.dur) { exEl.classList.add('out'); EX.out = 0.42; }
+  }
+
+  // ---------------------------------------------------------------- addendum 02 E5: Sync meter, SAIL chip, tracker
+  function updateSync(dt) {
+    const S = ctx.sync;
+    const on = panels.sync && !!S?.enabled;
+    show(syncEl, on);
+    toggle(el.hud, 'syncon', on);
+    const touch = !!ctx.input?.isTouch;
+    const act = S?.active || null;
+    toggle(el.hud, 'sight', act?.move === 'sight');
+    for (const m of ['sight', 'drive']) {
+      const b = syncBtn[m]; if (!b) continue;
+      const vis = !!S?.enabled && touch && S.unlocked?.has?.(m);   // E5: unlocked and enabled (not tied to the meter panel)
+      if (b.hidden === !!vis) b.hidden = !vis;
+      if (vis) {
+        const running = act?.move === m;
+        toggle(b, 'on', running);
+        const afford = S.fill >= (S.costs?.[m] ?? 99) && !act;
+        ctx.input?.setTouchLabel?.(m, running ? act.t.toFixed(1) : String(S.costs?.[m] ?? ''), !afford && !running);
+      }
+    }
+    if (sy.flashT > 0) { sy.flashT -= dt; if (sy.flashT <= 0) toggle(syncEl, 'flash', false); }
+    if (sy.holdT > 0) { sy.holdT -= dt; if (sy.holdT <= 0) toggle(holdTx, 'on', false); }
+    if (!on) return;
+    const cap = Math.max(0, S.capacity | 0), fill = clamp(S.fill || 0, 0, cap);
+    const whole = Math.floor(fill + 1e-6), part = fill - whole;
+    if (sy.cells.length !== cap) {
+      sy.segs.innerHTML = '';
+      sy.cells = [];
+      for (let i = 0; i < Math.min(cap, 64); i++) sy.cells.push(mk('i', '', sy.segs, '<u></u>'));
+    }
+    for (let i = 0; i < sy.cells.length; i++) {
+      const c = sy.cells[i];
+      toggle(c, 'on', i < whole);
+      setW(c.firstChild, i === whole ? part : 0);
+      toggle(c, 'cost', SYNC_MOVES.some(([m]) => S.unlocked?.has?.(m) && (S.costs?.[m] ?? 0) - 1 === i));
+    }
+    setText(sy.head, act ? `${MOVE_TITLE[act.move] || act.move.toUpperCase()} · ${act.t.toFixed(1)}` : 'SYNC');
+    toggle(syncEl, 'act', !!act);
+    setText(sy.num, `${whole} / ${cap}`);
+    let lsig = cap + '|' + touch;
+    for (const [m, label] of SYNC_MOVES) {
+      const T = sy.tick[m], cost = S.costs?.[m] ?? 0;
+      const unl = !!S.unlocked?.has?.(m);
+      show(T.el, unl);
+      if (!unl) continue;
+      let txt = `${label} ${cost}`, cls = '';
+      if (m === 'hold' && cap < cost) { txt = `${label} —`; cls = 'grey'; }
+      else if (m === 'hold' && S.holdReady) { txt = 'HOLD READY'; cls = 'rdy'; }
+      else cls = fill >= cost && (m === 'hold' || !act) ? '' : 'dim';
+      if (T.shown !== txt) { T.shown = txt; setText(T.txt, txt); }
+      if (T.el.className !== cls) T.el.className = cls;
+      lsig += '|' + m + txt;
+    }
+    if (lsig !== sy.sig) { sy.sig = lsig; placeTicks(cap); }   // a layout read only when the labels change
+  }
+  /** each label ends at its cost position (the right edge of that segment), pushed right when it would overlap */
+  function placeTicks(cap) {
+    const W = sy.ticks.clientWidth || 380;
+    let end = -Infinity;
+    for (const [m] of SYNC_MOVES) {
+      const T = sy.tick[m];
+      if (T.el.hidden) continue;
+      const cost = ctx.sync?.costs?.[m] ?? 0;
+      const x = cap > 0 ? clamp(Math.min(cost, cap) / cap, 0, 1) * W : W;
+      const w = T.el.offsetWidth || 50;
+      let left = Math.max(0, x - w);
+      if (left < end + 10) left = end + 10;
+      left = Math.min(left, Math.max(0, W - w));
+      T.el.style.left = left.toFixed(1) + 'px';
+      end = left + w;
+    }
+  }
+  function onHold() {
+    toggle(syncEl, 'flash', true); sy.flashT = 0.6;
+    toggle(holdTx, 'on', true); sy.holdT = 1.5;
+    holdFlare.classList.remove('on'); void holdFlare.offsetWidth; holdFlare.classList.add('on');
+  }
+  function renderTracker() {
+    const d = trk.def;
+    const on = panels.tracker && !!d;
+    show(trackerEl, on);
+    if (!on) return;
+    const alerts = (Array.isArray(d.alerts) ? d.alerts : []).slice(0, 3);
+    const sig = [d.id, d.title, d.value ?? '', d.band ? d.band.state + '|' + d.band.text : '', alerts.map(a => `${a.id}|${a.label}|${a.kind || ''}`).join(',')].join('#');
+    if (sig !== trk.sig) {
+      trk.sig = sig;
+      trackerEl.innerHTML = `<div class="trk-t"><b>${esc(d.title || '')}</b>${d.value ? `<span>${esc(d.value)}</span>` : ''}</div>`
+        + (d.band ? `<div class="trk-b ${['in', 'warn', 'out'].includes(d.band.state) ? d.band.state : 'in'}">${esc(d.band.text || '')}</div>` : '')
+        + alerts.map(a => `<div class="trk-a ${a.kind === 'danger' ? 'danger' : ''}"><div class="ab"><i></i></div><span class="al">${esc(a.label || '')}</span><span class="at"></span></div>`).join('');
+      trk.rows = [...trackerEl.querySelectorAll('.trk-a')].map(r => ({ bar: r.querySelector('.ab i'), t: r.querySelector('.at') }));
+    }
+    alerts.forEach((a, i) => { const r = trk.rows[i]; if (!r) return; setW(r.bar, clamp(+a.t || 0, 0, 1)); setText(r.t, a.text != null ? String(a.text) : ''); });
   }
 
   // ---------------------------------------------------------------- lock box, boss bar, markers, compass, radar
@@ -1104,6 +1315,24 @@ export function install(ctx) {
     },
     /** extra: current panel visibility (tests) */
     get panels() { return { ...panels }; },
+    /** addendum 02 E5: the tracker under the objectives ({ id, title, value?, band?, alerts? } or null). Cheap: callers
+     *  may call it every 0.25 s. Shown only while the 'tracker' panel is on. */
+    tracker(def) {
+      if (!def || typeof def !== 'object') { trk.def = null; trk.sig = ''; renderTracker(); return; }
+      if (trk.def && trk.def.id !== def.id) trk.sig = '';
+      trk.def = { id: String(def.id ?? ''), title: String(def.title ?? ''), value: def.value != null ? String(def.value) : undefined,
+                  band: def.band && typeof def.band === 'object' ? { state: def.band.state, text: String(def.band.text ?? '') } : null,
+                  alerts: Array.isArray(def.alerts) ? def.alerts.slice(0, 3).map(a => ({ id: String(a?.id ?? ''), label: String(a?.label ?? ''),
+                    t: clamp(+a?.t || 0, 0, 1), text: a?.text != null ? String(a.text) : undefined, kind: a?.kind === 'danger' ? 'danger' : a?.kind === 'info' ? 'info' : undefined })) : [] };
+      renderTracker();
+    },
+    get trackerState() { return trk.def ? JSON.parse(JSON.stringify(trk.def)) : null; },
+    /** extra (tests): the Sync meter as drawn ({ visible, segments, filled, labels: { sight, drive, hold } }) */
+    get syncState() {
+      return { visible: !syncEl.hidden, segments: sy.cells.length, filled: sy.cells.filter(c => c.classList.contains('on')).length, head: sy.head.textContent,
+               labels: Object.fromEntries(SYNC_MOVES.map(([m]) => [m, sy.tick[m].el.hidden ? null : { text: sy.tick[m].txt.textContent, cls: sy.tick[m].el.className }])),
+               sight: el.hud.classList.contains('sight'), sail: !sailChip.hidden };
+    },
     /** extra: the prompt being shown ({ text, key, hold, tear } or null) */
     get promptState() { return shownPrompt ? { text: pr.text?.textContent, key: pr.kbd?.textContent, hold: !!pr.hold?.textContent, tear: el.prompt?.classList.contains('tear') } : null; },
     /** extra: true while a choice is open */
@@ -1222,9 +1451,10 @@ export function install(ctx) {
     },
     setPanels(p = {}) {
       for (const k of PANELS) if (k in (p || {})) panels[k] = !!p[k];
-      for (const k of PANELS) if (k !== 'rack') toggle(el.hud, 'hide-' + k, !panels[k]);
+      for (const k of PANELS) if (k !== 'rack' && k !== 'sync' && k !== 'tracker') toggle(el.hud, 'hide-' + k, !panels[k]);
       show(rackEl, panels.rack);
       if (panels.rack) { lastRack = ''; placeRack(); }
+      renderTracker();
     },
     setSlots(s = {}) {
       for (const [k, v] of Object.entries(s || {})) {
@@ -1290,7 +1520,8 @@ export function install(ctx) {
     },
     /** extra: reset per-level HUD state (mission.start calls it before the level script re-applies its own) */
     resetLevel() {
-      api.setPanels({ ap: true, en: true, weapons: true, radar: true, compass: true, objectives: true, lock: true, rack: false });
+      api.setPanels({ ap: true, en: true, weapons: true, radar: true, compass: true, objectives: true, lock: true, rack: false, sync: false, tracker: false });
+      trk.def = null; trk.sig = ''; renderTracker();
       api.setSlots({ R: { state: 'auto', label: null }, L: { state: 'auto', label: null }, S: { state: 'auto', label: null }, K: { state: 'auto', label: null } });
       V.mode = 'hidden'; V.override = null; V.spikeN = null; V.fault = null; V.cur = 80;
       setBladeTear(false);
@@ -1313,6 +1544,9 @@ export function install(ctx) {
       hurtLevel = Math.max(0, hurtLevel - dt * 2.2);
       glitchT = Math.max(0, glitchT - dt * 1.6);
       if (ctx.pipeline?.grade) ctx.pipeline.grade.hurt = hurtLevel;
+      // addendum 02 E5: at the Bench and the Count the cards run in real time above those screens (nothing else shows)
+      if (exOverlay()) { exPlace(); tickExplain(dt); return; }
+      if (exEl.classList.contains('over')) exPlace();
       if (!el.hud || el.hud.hidden) return;
       nOcc = 0;
       const p = ctx.player;
@@ -1341,6 +1575,8 @@ export function install(ctx) {
         updateLock(p);
       } else if (el.lockbox && el.lockbox.style.display !== 'none') el.lockbox.style.display = 'none';
       updateVitals(dt);
+      updateSync(dt);
+      { const sl = !!(p && p.active && p.sail); if (sailChip.hidden === sl) sailChip.hidden = !sl; }
       if (panels.rack) updateRack();
       renderPrompt();
       tickExplain(dt);
@@ -1392,8 +1628,10 @@ export function install(ctx) {
     if (r.height > 0) rackEl.style.bottom = Math.round((ctx.canvas.clientHeight || innerHeight) - r.top + 12) + 'px';
   }
   ctx.events.on('resize', placeRack);
+  ctx.events.on('resize', () => { sy.sig = ''; });
   ctx.events.on('resize', () => { if (CH.def) requestAnimationFrame(layoutChoice); });
   ctx.events.on('player:damaged', (e) => { if (e?.blocked) blockT = 0.35; });
+  ctx.events.on('sync:hold', () => onHold());
   ctx.events.on('level:start', () => { levelStartAt = ctx.clock.realTime; callsignFrame = null; lastFrameAuto = ''; for (const s of SLOT4) slotGated[s] = false; });
   ctx.events.on('level:cleared', () => {
     markers = []; explicitBoss = null; autoBoss = null; if (CH.def) endChoice(null); api.prompt(null); api.progress(null);

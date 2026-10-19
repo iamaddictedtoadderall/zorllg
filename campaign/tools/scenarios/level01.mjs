@@ -235,12 +235,13 @@ export default async function (g) {
       const m = await import('/levels/campaign.js');
       const C = m.default;
       return { v: C.version, water: C.startWater, locker: C.lockerSize, roll: C.roll.length, souls: C.roll.reduce((a, r) => a + r.souls, 0),
-               frags: C.fragments.length, leg: C.legs.l01 && { day: C.legs.l01.day, draw: C.legs.l01.draw, title: C.legs.l01.debriefTitle, keys: Object.keys(C.legs.l01.bench) },
+               frags: C.fragments.length, old: C.fragments.filter(f => /^F\d\d$/.test(f.id)).length, leg: C.legs.l01 && { day: C.legs.l01.day, draw: C.legs.l01.draw, title: C.legs.l01.debriefTitle, keys: Object.keys(C.legs.l01.bench) },
                anyTitle: C.fragments.some(f => 'title' in f || 'text' in f) };
     });
     g.log('campaign', c);
-    g.assert(c.v === 1 && c.water === 4 && c.locker === 4 && c.roll === 40 && c.souls === 300 && c.frags === 12 && !c.anyTitle,
-             'levels/campaign.js: version 1, water 4, locker 4, 40 rigs / 300 souls, 12 glosses without titles');
+    // addendum 02 §B4: CampaignData v2 adds Made fragments (M1…) after the twelve old ones
+    g.assert((c.v === 1 || c.v === 2) && c.water === 4 && c.locker === 4 && c.roll === 40 && c.souls === 300 && c.old === 12 && c.frags >= 12 && !c.anyTitle,
+             `levels/campaign.js: version ${c.v}, water 4, locker 4, 40 rigs / 300 souls, 12 old glosses without titles`);
     g.assert(c.leg?.day === 1 && c.leg.draw === 3 && c.leg.title === 'WALK DAY 1 · THE RIME SHELF', 'campaign leg l01: day 1, draw 3, debrief title');
 
     // ── the clarity pass (docs/todo.md), static: speaker tags, the explainer cards, plain objectives, no spoilers ──
@@ -1060,8 +1061,8 @@ export default async function (g) {
       g.assert(/Day 1/i.test(cnt) && /40 rigs · 300 souls/i.test(cnt) && /no names lost/i.test(cnt), 'the Count card: Day 1, 40 rigs · 300 souls, no names lost');
       if (SHOTS) await shot('morning-count', { settle: false });
       await ev(() => document.querySelector('#screen #bWalk')?.click());
-      r = await until((ctx) => ctx.flow.state === 'title', null, 10, 5);
-      g.assert(r.ok, 'after the Count: back to the title (no Level 2 yet)');
+      r = await until((ctx) => ctx.flow.state === 'title' || ctx.flow.state === 'briefing', null, 10, 5);
+      g.assert(r.ok, 'after the Count: the title, or the Level 2 briefing once Level 2 is registered');
     }
     await noErrors('floes');
   }

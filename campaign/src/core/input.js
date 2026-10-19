@@ -6,6 +6,8 @@ import { detectTouch } from './settings.js';
 export const ACT = Object.freeze({
   FIRE: 'fire', BLADE: 'blade', BOOST: 'boost', JUMP: 'jump', MISSILE: 'missile', LOCK: 'lock',
   KIT: 'kit', INTERACT: 'interact', ALT: 'alt', PAUSE: 'pause', SKIP: 'skip', MAP: 'map',
+  // addendum 02 E2: the partner moves (Second Sight, Moth Drives)
+  SIGHT: 'sight', DRIVE: 'drive',
 });
 const ACTIONS = Object.values(ACT);
 const NO_BINDINGS = [];
@@ -16,11 +18,13 @@ export const DEFAULT_BINDINGS = Object.freeze({
   fire: ['Mouse0'], blade: ['Mouse2'], boost: ['ShiftLeft', 'ShiftRight'], jump: ['Space'], missile: ['KeyQ'],
   lock: ['KeyE', 'Tab', 'Mouse1'], kit: ['KeyR'], interact: ['KeyF'], alt: ['KeyG'], pause: ['Escape', 'KeyP'],
   skip: ['Space', 'Enter'], map: ['KeyM'],
+  sight: ['KeyC'], drive: ['KeyV'],
 });
 /** Standard-mapping gamepad buttons → actions. 0 A, 1 B, 2 X, 3 Y, 4 LB, 5 RB, 6 LT, 7 RT, 8 Back, 9 Start, 10 L3, 11 R3. */
 export const PAD_BINDINGS = Object.freeze({
   fire: [7], blade: [6], boost: [1], jump: [0], missile: [5], lock: [11], kit: [2], interact: [3], alt: [4],
   pause: [9], skip: [0, 9], map: [8],
+  sight: [12], drive: [13],   // addendum 02 E2: D-pad up, D-pad down
 });
 /** The player converts look pixels to radians with this factor × settings.sens (prototype 0.0022). */
 export const LOOK_RAD_PER_PX = 0.0022;
@@ -28,7 +32,8 @@ const TOUCH_LOOK_X = 0.0058 / LOOK_RAD_PER_PX, TOUCH_LOOK_Y = 0.0042 / LOOK_RAD_
 const KEY_YAW_PX = 2.2 / LOOK_RAD_PER_PX, KEY_PITCH_PX = 1.4 / LOOK_RAD_PER_PX;           // arrow keys, rad/s → px/s
 const PAD_YAW_PX = 2.6 / LOOK_RAD_PER_PX, PAD_PITCH_PX = 1.6 / LOOK_RAD_PER_PX;
 const TOUCH_ACT = { fire: 'fire', blade: 'blade', boost: 'boost', jump: 'jump', msl: 'missile', missile: 'missile',
-                    lock: 'lock', kit: 'kit', pause: 'pause', interact: 'interact', skip: 'skip', alt: 'alt' };
+                    lock: 'lock', kit: 'kit', pause: 'pause', interact: 'interact', skip: 'skip', alt: 'alt',
+                    sight: 'sight', drive: 'drive' };   // addendum 02 E2: the HUD creates these two buttons
 
 export function install(ctx) {
   const canvas = ctx.canvas;

@@ -7,6 +7,9 @@
 // Addendum A5.1: `haul` (parsed from o.haul or o.config.haul; heavy defaults to impMax > 1000), `blindT` (counted down
 // here; P4's kinds don't fire while blind and drift), `heldT` (an outside force such as the harpoon reel owns `pos`:
 // P4's kinds skip their own movement while it is > 0).
+// Addendum 02 E4: `windup` (seconds until a telegraphed attack lands, > 0 only while winding up; Second Sight flashes
+// it), `slowT` (the Rivet Driver's slow, counted down here) and `speedScale` (0.8 while slowed; every kind multiplies
+// its movement speed by it, moveGround does it for ground kinds).
 import * as THREE from 'three';
 import { clamp, damp, dampAng, yawTo, angWrap } from '../core/util.js';
 import { isHostile } from '../combat/combat.js';
@@ -26,6 +29,7 @@ export class Unit {
     this.ap = 1000; this.apMax = 1000; this.imp = 0; this.impMax = 600; this.stagT = 0; this.stagDur = 2.2;
     this.lastHit = -9; this.invuln = false; this.hitR = 2.5; this.hitY = 0; this.hitYScale = 0;
     this.blindT = 0; this.heldT = 0; this.haul = null;
+    this.windup = 0; this.slowT = 0;
     // Unit fields
     this.rig = null; this.root = new THREE.Group(); this.faction = 'hostile'; this.behavior = 'assault';
     this.home = new THREE.Vector3(); this.leash = Infinity; this.aggroRange = 600; this.asleep = false; this.ai = {};
@@ -54,6 +58,10 @@ export class Unit {
     if (this.haul.heavy === undefined) this.haul.heavy = (this.impMax ?? 0) > 1000;
     this.haul.taken = !!this.haul.taken;
   }
+  /** addendum 02 E4: 0.8 while slowed (slowT > 0), else 1 */
+  get speedScale() { return this.slowT > 0 ? 0.8 : 1; }
+  /** read-only: an assignment (a level kind initialising its own field) is ignored instead of throwing */
+  set speedScale(v) { /* derived from slowT */ }
   center(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + this.hitY, this.pos.z); }
   hitTest(p) {
     this.center(_c);
@@ -69,6 +77,7 @@ export class Unit {
     if (this.ctx.clock.time - this.lastHit > 1.6) this.imp = Math.max(0, this.imp - this.impMax * 0.35 * dt);
     if (this.blindT > 0) this.blindT = Math.max(0, this.blindT - dt);
     if (this.heldT > 0) this.heldT = Math.max(0, this.heldT - dt);
+    if (this.slowT > 0) this.slowT = Math.max(0, this.slowT - dt);
     if (!Number.isFinite(this.imp)) this.imp = 0;
   }
   update(dt) { this.baseUpdate(dt); }
@@ -138,6 +147,7 @@ export class Unit {
   moveGround(dt, wx, wz, speed, k = 2) {
     if (this.heldT > 0) return;
     if (this.dropping) { this.fall(dt); return; }
+    speed *= this.speedScale;   // addendum 02 E4
     this.vel.x = damp(this.vel.x, wx * speed, k, dt); this.vel.z = damp(this.vel.z, wz * speed, k, dt);
     this.pos.x += this.vel.x * dt; this.pos.z += this.vel.z * dt;
     this.vel.y = 0;

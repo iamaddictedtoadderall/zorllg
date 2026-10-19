@@ -5,8 +5,15 @@
 //   PartDef.stock / PartDef.haul, FrameStats.campaignOnly, weapon types 'harpoon' and 'flares',
 //   MOTH_PAINT, CAMPAIGN_STOCK, campaignLoadout().
 // Display names are placeholders the story team may rename; ids are frozen. Part text is spoiler-safe (§8.6).
+//
+// Addendum 02 E7: hardpoints B (booster), G (legs) and C (core) take mods-only parts (no weapon, weight 0, power 0);
+// PartDef.mods / ghostLight / stats.pref; the parts sail_rig, skate_jets, rivet_driver, crane_claw; weapon types
+// 'rivet' and 'claw'; CAMPAIGN_STOCK.B/G/C (null = stock: Cantor Wings, Cantor Stride, Hymnal Core); campaignLoadout
+// copies B, G and C; computeStats merges the B/G/C mods into stats.mods and applies the *Mul fields.
 
 export const SLOTS = ['R', 'L', 'S', 'U'];
+/** addendum 02 E7: the mods-only hardpoints (booster, legs, core). null or absent in a Loadout = the stock part. */
+export const HARDPOINTS = ['B', 'G', 'C'];
 
 /** Movement constants shared by every frame (prototype values, §1.3). */
 const base = {
@@ -34,7 +41,7 @@ export const PARTS = {
   // ── R: right arm ────────────────────────────────────────────────────────────────────────────────────────────────
   rifle_r30: { id: 'rifle_r30', slot: 'R', name: 'Lantern Carbine', desc: 'Balanced auto-rifle. Leads a locked target.',
     weapon: 'rifle', weight: 12, power: 8, visual: 'rifle', stock: true,
-    stats: { dmg: 245, imp: 70, rate: 0.135, speed: 680, ammo: 600, spread: 0.008 }, unlock: { by: 'start' } },
+    stats: { dmg: 245, imp: 70, rate: 0.135, speed: 680, ammo: 600, spread: 0.008, pref: 140 }, unlock: { by: 'start' } },
   mg_r12: { id: 'mg_r12', slot: 'R', name: 'R-12 Machine Gun', desc: 'High rate of fire, light rounds, wide spread.',
     weapon: 'mg', weight: 10, power: 10, visual: 'mg',
     stats: { dmg: 120, imp: 32, rate: 0.07, speed: 640, ammo: 1200, spread: 0.02 }, unlock: { ...FIELD } },
@@ -42,11 +49,16 @@ export const PARTS = {
     weapon: 'shotgun', weight: 14, power: 8, visual: 'shotgun',
     // A3.2 / L1 §13.4: 8 pellets × (140, 110), every 0.85 s, 520 m/s, 96 shells, 4.5° cone;
     // full damage to 40 m, linear to 25 % at 80 m, nothing past 90 m.
-    stats: { pellets: 8, dmg: 140, imp: 110, rate: 0.85, speed: 520, ammo: 96, cone: 4.5, full: 40, quarter: 80, max: 90 },
+    stats: { pellets: 8, dmg: 140, imp: 110, rate: 0.85, speed: 520, ammo: 96, cone: 4.5, full: 40, quarter: 80, max: 90, pref: 30 },
     haul: { give: 1, hunger: 0, source: 'L1:skiff_sleet' }, unlock: { ...FIELD } },
   cannon_hc90: { id: 'cannon_hc90', slot: 'R', name: 'HC-90 Cannon', desc: 'Heavy shell with splash. Slow to cycle.',
     weapon: 'cannon', weight: 28, power: 14, visual: 'cannon',
     stats: { dmg: 1400, imp: 900, splash: 8, splashDmg: 600, rate: 1.6, speed: 300, ammo: 40 }, unlock: { ...FIELD } },
+  // addendum 02 E7 (L2 §13.8): the harpooner's rivet gun. `rate` is the cooldown; a hit slows the target (slowT)
+  rivet_driver: { id: 'rivet_driver', slot: 'R', name: 'Rivet Driver', desc: 'Slow, heavy bolts. Staggers and slows what it hits.',
+    weapon: 'rivet', weight: 16, power: 8, visual: 'rivet',
+    stats: { dmg: 650, imp: 420, rate: 0.66, speed: 420, ammo: 120, spread: 0.004, range: 400, slow: 0.2, slowT: 2, pref: 100 },
+    haul: { give: 2, hunger: 0, source: 'L2:harpooner' }, unlock: { ...FIELD } },
 
   // ── L: left arm ─────────────────────────────────────────────────────────────────────────────────────────────────
   blade_pb2: { id: 'blade_pb2', slot: 'L', name: 'Psalter Blade', desc: 'Pulse-blade lunge to the locked target.',
@@ -59,6 +71,12 @@ export const PARTS = {
     weapon: 'harpoon', weight: 10, power: 10, visual: 'harpoon',
     stats: { range: 80, cd: 3.0, speed: 220, dmg: 300, imp: 2000, reelTo: 12, reelTime: 0.6, pullSpeed: 70, pullStop: 6, lightImpMax: 1000 },
     haul: { give: 1, hunger: 0, source: 'L1:skiff_gaffer' }, unlock: { ...FIELD } },
+  // addendum 02 E7: the Tally's boarding claw. Grab a staggered light enemy, throw it; a swipe with nothing to grab
+  crane_claw: { id: 'crane_claw', slot: 'L', name: 'Crane-Claw', desc: 'Grab a staggered enemy, then throw it.',
+    weapon: 'claw', weight: 14, power: 10, visual: 'claw',
+    stats: { grabR: 25, cone: 20, hold: 6, throwSpeed: 90, dmg: 1600, imp: 1800, splashR: 8, splashDmg: 600, splashImp: 600,
+             swipeR: 12, swipeDmg: 900, swipeImp: 900, cd: 1.2, lightImpMax: 1000 },
+    haul: { give: 2, hunger: 0, source: 'L2:tally_crane' }, unlock: { ...FIELD } },
 
   // ── S: shoulder ─────────────────────────────────────────────────────────────────────────────────────────────────
   msl_vm4: { id: 'msl_vm4', slot: 'S', name: 'Chorus Rack', desc: 'Four-lock homing missile volley.',
@@ -82,6 +100,16 @@ export const PARTS = {
   kit_rk2f: { id: 'kit_rk2f', slot: 'U', name: 'RK-2F Fast Kit', desc: 'Two fast repairs.',
     weapon: 'kit', weight: 3, power: 0, visual: 'kit',
     stats: { kits: 2, heal: 7200, duration: 0.6, ammo: 2 }, unlock: { ...FIELD } },
+
+  // ── B: booster, G: legs (addendum 02 E7). Mods only: no weapon, weight 0, power 0 ─────────────────────────────────
+  sail_rig: { id: 'sail_rig', slot: 'B', name: 'Sail-Rig', desc: 'Long straight runs go faster, and their quick boosts are free. No chained quick boosts.',
+    weight: 0, power: 0, visual: 'sailrig', stats: {},
+    mods: { qbCooldown: 1.0, sail: { after: 2, minSpeedFrac: 0.9, maxTurn: 12, breakTurn: 25, speedMul: 1.2, qbFree: true } },
+    haul: { give: 2, hunger: 0, source: 'L2:land_yacht' }, unlock: { ...FIELD } },
+  skate_jets: { id: 'skate_jets', slot: 'G', name: 'Skate-Jets', desc: 'Much faster on the ground. Slides on turns. Skims water.',
+    weight: 0, power: 0, visual: 'skates', ghostLight: true, stats: {},
+    mods: { speedMul: 1.35, accelMul: 0.55, lateralGrip: 2.5, waterHover: true, wallRide: 1.5 },
+    haul: { give: 2, hunger: 1, source: 'L2:skimmer' }, unlock: { ...FIELD } },
 };
 
 export const PAINT_PRESETS = [
@@ -95,8 +123,8 @@ export const PAINT_PRESETS = [
 export const MOTH_PAINT = Object.freeze({ id: 'founders', name: 'Founders', base: '#d8d2c4', mid: '#aaa494', accent: '#c99a3e',
                                           visor: '#5fe3ff', flame: '#a8ecff', blade: '#8fe9ff' });
 
-/** A3.2: the campaign frame's stock parts. */
-export const CAMPAIGN_STOCK = Object.freeze({ R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4', U: 'kit_rk3' });
+/** A3.2 + addendum 02 E7: the campaign frame's stock parts (B, G and C null = Cantor Wings, Cantor Stride, Hymnal Core). */
+export const CAMPAIGN_STOCK = Object.freeze({ R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4', U: 'kit_rk3', B: null, G: null, C: null });
 
 export const DEFAULT_LOADOUT = Object.freeze({
   frame: 'vanguard', R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4', U: 'kit_rk3',
@@ -109,16 +137,37 @@ export function startingUnlocks() { return ['rifle_r30', 'blade_pb2', 'msl_vm4',
 /**
  * A3.2: the campaign loadout. { frame: 'moth', ...CAMPAIGN_STOCK, ...fitted, paint: MOTH_PAINT }.
  * Ignores ids that aren't in PARTS or don't fit their slot (and the utility slot, which is fixed in V1).
+ * Addendum 02 E7: B, G and C are copied the same way (null or absent = stock).
  */
 export function campaignLoadout(fitted) {
   const lo = { frame: 'moth', ...CAMPAIGN_STOCK, paint: { ...MOTH_PAINT } };
   if (fitted && typeof fitted === 'object') {
-    for (const s of ['R', 'L', 'S']) {
+    for (const s of ['R', 'L', 'S', 'B', 'G', 'C']) {
       const id = fitted[s];
       if (typeof id === 'string' && PARTS[id] && PARTS[id].slot === s) lo[s] = id;
     }
   }
   return lo;
+}
+
+/**
+ * addendum 02 E7: the merged mods of a loadout's B, G and C parts. *Mul fields multiply, qbCooldown and wallRide take
+ * the max, waterHover ORs, lateralGrip and sail take the last part that sets them. {} when nothing is fitted.
+ */
+export function mergeMods(lo) {
+  const out = {};
+  for (const h of HARDPOINTS) {
+    const m = PARTS[lo?.[h]]?.slot === h ? PARTS[lo[h]].mods : null;
+    if (!m) continue;
+    for (const [k, v] of Object.entries(m)) {
+      if (k.endsWith('Mul') && typeof v === 'number') out[k] = (out[k] ?? 1) * v;
+      else if ((k === 'qbCooldown' || k === 'wallRide' || k === 'holdCost') && typeof v === 'number') out[k] = Math.max(out[k] ?? 0, v);
+      else if (k === 'waterHover') out[k] = !!(out[k] || v);
+      else if (k === 'sail' && v && typeof v === 'object') out.sail = { ...v };
+      else out[k] = v;
+    }
+  }
+  return out;
 }
 
 /** extra: true for a hauled part (A3.2 `haul` block). ctx.haul.isHaulPart uses it. */
@@ -128,13 +177,20 @@ export function computeStats(lo) {
   const f = FRAMES[lo?.frame] || FRAMES.vanguard;
   let weight = 0, powerDraw = 0;
   for (const s of SLOTS) { const p = PARTS[lo?.[s]]; if (p) { weight += p.weight; powerDraw += p.power; } }
+  // B, G and C parts weigh 0 and draw 0 power (addendum 02 E7): load and power never bind in the campaign
   const overweight = weight > f.load, overpower = powerDraw > f.power;
   // §8.5: 1 % speed per point over the load (floor 50 %); quick-boost cost rises by the same factor
-  const speedMul = overweight ? Math.max(0.5, 1 - 0.01 * (weight - f.load)) : 1;
+  const loadMul = overweight ? Math.max(0.5, 1 - 0.01 * (weight - f.load)) : 1;
   const warnings = [];
-  if (overweight) warnings.push(`Overweight by ${weight - f.load}: speed −${Math.round((1 - speedMul) * 100)}%`);
+  if (overweight) warnings.push(`Overweight by ${weight - f.load}: speed −${Math.round((1 - loadMul) * 100)}%`);
   if (overpower) warnings.push(`Power draw ${powerDraw} exceeds frame power ${f.power}`);
-  return { ...f, weight, powerDraw, overweight, overpower, speedMul, qbCost: f.qbCost / speedMul, warnings };
+  const mods = mergeMods(lo);
+  const st = { ...f, weight, powerDraw, overweight, overpower, speedMul: loadMul * (mods.speedMul ?? 1), qbCost: f.qbCost / loadMul, warnings, mods };
+  if (mods.apMul) st.ap = Math.round(f.ap * mods.apMul);
+  if (mods.enMul) st.en = Math.round(f.en * mods.enMul);
+  if (mods.enRegenMul) { st.enRegen = f.enRegen * mods.enRegenMul; st.enRegenAir = f.enRegenAir * mods.enRegenMul; }
+  if (mods.hoverMul) st.hoverAccel = f.hoverAccel * mods.hoverMul;
+  return st;
 }
 
 export function validate(lo, unlocked) {

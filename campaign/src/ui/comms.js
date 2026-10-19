@@ -15,7 +15,10 @@
 // Clarity pass: an optional SpeakerDef.tag ('your scout') shows after the name on the first line that speaker says in
 // a playthrough (save.flags.commsMet records { who: tag }; flow clears it on a New game). A level that later gives the
 // speaker a different tag shows the new one once. The tag rides in the log entry and the 'comms:line' payload.
-import { simDeferred, simResolved, injectCSS } from '../core/util.js';
+// Addendum 02 E6: SpeakerDef.wobble (each typed letter starts displaced up to wobble × 3 px and settles over 0.25 s; at
+// ≥ 0.5 the line keeps a 0.5 px jitter) and speedVar (per-letter delay × (1 + speedVar × 0.8 × r), r in [−1, 1], plus a
+// 5 % chance of a 4× pause; r from a hash of the line text, so it is deterministic). The log and comms:line stay plain.
+import { simDeferred, simResolved, injectCSS, mulberry32, hashString } from '../core/util.js';
 
 const CPS = 42;                        // prototype characters per second at commsSpeed 1
 const CHIME_WAIT = 1.05;               // A5.2: play the chime, wait 1.05 s, then type
@@ -68,7 +71,11 @@ const CSS = `
 #game #comms.overblack[data-font=sans] .line{font-size:21px}
 #game #comms.overblack[data-font=serif] .line{font-size:19px}
 #game #comms.overblack .who{font-size:12px}
-@media (prefers-reduced-motion:reduce){#comms .stat{animation:none}#comms:not([hidden]){animation:none}}
+#comms .line .wl{display:inline-block;white-space:pre;animation:commsWob .25s ease-out both}
+@keyframes commsWob{from{transform:translate(var(--wx,0),var(--wy,0));opacity:.55}to{transform:none;opacity:1}}
+#comms .line.jit{animation:commsJit .16s steps(2) infinite}
+@keyframes commsJit{0%{transform:translate(.5px,0)}50%{transform:translate(-.5px,.5px)}100%{transform:translate(0,-.5px)}}
+@media (prefers-reduced-motion:reduce){#comms .stat{animation:none}#comms:not([hidden]){animation:none}#comms .line .wl,#comms .line.jit{animation:none}}
 `;
 
 export function install(ctx) {
@@ -95,6 +102,7 @@ export function install(ctx) {
   const speakers = {};
   const queue = [];
   let cur = null, typed = 0, holdT = 0, blipT = 0, sp = null, phase = 'type', waveT = 0, lastShown = '';
+  let delays = null, charAcc = 0, wob = 0, wobN = 0;   // addendum 02 E6
   let tagCheck = false;   // a tag went up: once the box is visible, see whether it wrapped under the name (one layout read)
 
   function finish() {
@@ -158,6 +166,19 @@ export function install(ctx) {
     tagCheck = !!tag;
     if (lineEl) lineEl.textContent = '';
     lastShown = '';
+    // E6: per-letter typing delays (speedVar) and the wobble, both from a hash of the line text (deterministic)
+    const sv = Math.max(0, Math.min(1, +sp.speedVar || 0));
+    wob = Math.max(0, Math.min(1, +sp.wobble || 0)); wobN = 0; charAcc = 0;
+    delays = null;
+    if (sv > 0) {
+      const rng = mulberry32(hashString('sv:' + cur.text));
+      delays = new Float32Array(cur.text.length);
+      for (let i = 0; i < delays.length; i++) {
+        const r = rng() * 2 - 1, pause = rng() < 0.05 ? 4 : 1;
+        delays[i] = Math.max(0.2, 1 + sv * 0.8 * r) * pause;
+      }
+    }
+    if (lineEl) lineEl.classList.toggle('jit', wob >= 0.5);
     const entry = { who: cur.who, name, text: cur.text, t: ctx.mission?.elapsed ?? ctx.clock.time };
     if (tag) entry.tag = tag;
     api.log.push(entry);
@@ -174,6 +195,25 @@ export function install(ctx) {
   function render(c) {
     if (!lineEl) return;
     const n = Math.floor(typed);
+    if (wob > 0) {   // E6: each new letter arrives displaced and settles
+      if (n < wobN) { lineEl.textContent = ''; wobN = 0; }
+      if (n > wobN) {
+        const rng = mulberry32(hashString('wb:' + c.text) + wobN);
+        const frag = document.createDocumentFragment();
+        for (let i = wobN; i < n; i++) {
+          const ch = c.text[i];
+          if (ch === '\n') { frag.appendChild(document.createTextNode(ch)); continue; }
+          const e = document.createElement('span'); e.className = 'wl'; e.textContent = ch;
+          const a = rng() * Math.PI * 2, m = wob * 3 * (0.4 + 0.6 * rng());
+          e.style.setProperty('--wx', (Math.cos(a) * m).toFixed(2) + 'px'); e.style.setProperty('--wy', (Math.sin(a) * m).toFixed(2) + 'px');
+          frag.appendChild(e);
+        }
+        lineEl.appendChild(frag);
+        wobN = n;
+      }
+      lastShown = c.text.slice(0, n);
+      return;
+    }
     let s = c.text.slice(0, n);
     const st = +sp?.static || 0;
     if (st > 0 && n < c.text.length && s.length > 2) {   // visual static: a few corrupted glyphs at the write head
@@ -264,7 +304,12 @@ export function install(ctx) {
       }
       const cps = CPS * (ctx.settings.get('commsSpeed') || 1) * (sp?.speed > 0 ? sp.speed : 1);
       if (typed < c.text.length) {
-        typed = Math.min(c.text.length, typed + dt * cps);
+        if (delays) {   // E6 speedVar: letter by letter, each with its own delay
+          charAcc += dt * cps;
+          let n = Math.floor(typed);
+          while (n < c.text.length && charAcc >= delays[n]) { charAcc -= delays[n]; n++; }
+          typed = n;
+        } else typed = Math.min(c.text.length, typed + dt * cps);
         render(c);
         blipT -= dt;
         if (blipT <= 0) { blipT = 0.07; if (c.text[Math.floor(typed) - 1] !== ' ') ctx.audio?.blip?.(sp?.voice); }
