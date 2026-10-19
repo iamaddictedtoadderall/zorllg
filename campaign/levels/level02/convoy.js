@@ -362,7 +362,7 @@ export class Convoy {
       this.bandState = { state: 'out', text: `OUT OF RANGE · ${Math.max(0, Math.ceil(B.grace - this.outT))} s` };
     } else {
       this.outside = false;
-      if (this.outT > 0) { this.outT = 0; this.bandBroken = false; }
+      if (this.outT > 0) { this.outT = 0; this.bandBroken = false; this.nextInstant = false; }
       this.bandState = d > B.warn ? { state: 'warn', text: `TOO FAR · ${Math.round(d / 10) * 10} m` } : { state: 'in', text: 'WITH THE WAKE' };
     }
   }

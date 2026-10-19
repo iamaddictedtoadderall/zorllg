@@ -244,13 +244,13 @@ type('rig_wreck', {
       B.add(side([[-10, 0.3], [-9.6, 2.2], [9.6, 2.2], [10, 0.3], [9.2, -0.1], [-9.2, -0.1]], 2.4, lod ? 0 : 0.3), M.dark, -8.2, -0.4, 2.0, 0, 0.08, 1.35);
       if (!lod) {
         // the empty wheel wells and the canvas ribs over the rear deck, rag remnants
-        for (let i = 0; i < 6; i++) B.add(cyl(0.95, 0.95, 0.6, 12), M.rustDark, -5.4, 1.2, -8 + i * 3.2, 0, 0, PI / 2);
+        for (let i = 0; i < 6; i++) B.add(cyl(0.95, 0.95, 0.6, 12), M.dark, -5.4, 1.2, -8 + i * 3.2, 0, 0, PI / 2);
         for (let i = 0; i < 6; i++) {
           const z = 1.5 + i * 1.7;
           B.add(KIT.ring(4.4, 0.2, 0.2, 18), M.dark, 0, 5.2, z, PI / 2, 0, 0);
           if (rng() < 0.5) B.add(slab(0.06, 1.2 + rng() * 1.2, 1.5, 0.01), M.canvasRed, (rng() - 0.5) * 6, 7 + rng(), z, 0, 0, (rng() - 0.5) * 1.2);
         }
-        for (let i = 0; i < 7; i++) B.add(slab(q5(0.8 + rng() * 1.6), q5(0.6 + rng()), 0.1, 0.03), [M.wakeRed, M.rust, M.wakeCream][i % 3], 5.15, 3.0 + (rng() - 0.5) * 2.4, -8 + rng() * 16, 0, PI / 2, 0);
+        for (let i = 0; i < 7; i++) B.add(slab(q5(0.8 + rng() * 1.6), q5(0.6 + rng()), 0.1, 0.03), [M.canvasRed, M.wakeCream, M.wakeCream][i % 3], 5.15, 3.0 + (rng() - 0.5) * 2.4, -8 + rng() * 16, 0, PI / 2, 0);
         B.add(KIT.greebles(() => 0.53, 2.0, 1.0, 1.0), M.dark, 0, 3.5, 10.05);
       }
     }, { lod: true, remap });
@@ -355,7 +355,7 @@ type('water_cache', {
         for (const sx of [-1, 1]) B.add(slab(0.5, 0.1, 6.6, 0.02), M.reedMat, sx * 2.0, 1.6, 0, 0, 0, sx * 0.9);
         for (const [x, z] of [[-2.4, -3.2], [2.4, -3.2], [-2.4, 3.2], [2.4, 3.2]]) {
           B.add(cyl(0.05, 0.07, 0.9, 5), M.dark, x, 0.35, z, 0.2, 0, x * 0.08);
-          B.add(cyl(0.025, 0.025, 1.4, 4), M.cable, x * 0.85, 1.1, z * 0.95, 0, 0, x > 0 ? 0.8 : -0.8);
+          B.add(cyl(0.025, 0.025, 1.4, 4), M.dark, x * 0.85, 1.1, z * 0.95, 0, 0, x > 0 ? 0.8 : -0.8);
         }
       }
     }, { lod: true });
