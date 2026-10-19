@@ -167,6 +167,10 @@ export class SundialBlade {
     this.farShade = new THREE.MeshBasicMaterial({ color: '#7d8aa6', fog: false });
     this.far = new THREE.Mesh(this.farGeo, [this.farSun, this.farShade]); this.far.name = 'sundialFar';
     this.far.castShadow = false; this.far.receiveShadow = false;
+    // no ambient occlusion on the blade: GTAO's half-resolution depth can't resolve a kilometre-long sliver kilometres
+    // away (it darkened the whole silhouette to slate and stair-stepped its edges), and nothing is near enough to occlude it
+    this.far.userData.noAO = true;
+    this.near.traverse(o => { if (o.isMesh) o.userData.noAO = true; });
     for (const o of [this.near, this.far]) {
       o.matrixAutoUpdate = false; o.frustumCulled = false;
       ctx.levelRoot.add(o);
@@ -184,6 +188,7 @@ export class SundialBlade {
     ring.position.copy(bz).multiplyScalar(a).addScaledVector(by, -0.35 * d - 0.7);
     ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), by.clone().negate());   // the ring's axis along the face normal
     ring.castShadow = false;
+    ring.userData.noAO = true;
     this.near.add(ring);
   }
   /** split the LOD geometry into a sunlit and a shaded group (by face normal against the sun direction) */

@@ -698,7 +698,7 @@ export function install(ctx) {
       const gloss = (id) => (data.fragments || []).find(f => f.id === id)?.gloss || '';
       const isNew = new Set(w.ledger?.made || []);
       const intact = ids.filter(id => (w.fragments[id] ?? 'intact') === 'intact').length;
-      const head = P ? `<div class="gx-picker"><b>MAKE ROOM: ${P.remaining} FRAGMENT${P.remaining === 1 ? '' : 'S'} · ${esc(partName(P.part).toUpperCase())}</b>
+      const head = P ? `<div class="gx-picker"><b>MAKE ROOM: ${P.remaining} FRAGMENT${P.remaining === 1 ? '' : 'S'} · <span class="nw">${esc(partName(P.part).toUpperCase())}</span></b>
           <button type="button" class="btn ghost gx-pback" id="bPick">Back</button></div>` : '';
       body = `${head}<div class="gx-sub gx-lhead">MOTH — RECOVERED FRAGMENTS (${intact}) <span class="gx-sync">SYNC ${syncCap(w)}</span></div><div class="gx-frags">${ids.map(id => {
         const st = w.fragments[id] ?? 'intact';
@@ -1518,6 +1518,7 @@ const BENCH_CSS = `
 .gx-roll span.road em{font:600 9px var(--f-display);font-style:normal;letter-spacing:.2em;color:var(--threat);margin-left:6px;text-decoration:none;display:inline-block}
 .gx-picker{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid #7fe9ff;background:rgba(127,233,255,.08)}
 .gx-picker b{font:600 13px var(--f-display);letter-spacing:.2em;color:#7fe9ff}
+.gx-picker b .nw{white-space:nowrap}
 .gx-picker .btn{font-size:12px;padding:6px 12px}
 .gx-lhead{display:flex;justify-content:space-between;align-items:baseline}
 .gx-sync{font:600 11px var(--f-mono);letter-spacing:.12em;color:#7fe9ff;border:1px solid rgba(127,233,255,.5);padding:1px 6px}

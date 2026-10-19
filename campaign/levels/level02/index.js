@@ -100,10 +100,12 @@ function createRuntime(ctx, m, DATA, opts) {
   };
 
   // ── comms scripts with {rig} filled in (the convoy's templates), played through ctx.comms ──
-  L.playComms = (name, vars) => {
+  // o.urgent: the script jumps the comms queue (a hooked rig's 25 s clock can't wait behind banter)
+  L.playComms = (name, vars, o = {}) => {
     const lines = m?.def?.comms?.[name];
     if (!lines) return simResolved();
-    const out = vars ? lines.map(l => (l.text ? { ...l, text: l.text.replace(/\{(\w+)\}/g, (s, k) => vars[k] ?? s) } : l)) : lines;
+    let out = vars ? lines.map(l => (l.text ? { ...l, text: l.text.replace(/\{(\w+)\}/g, (s, k) => vars[k] ?? s) } : l)) : lines;
+    if (o.urgent) out = out.map(l => (l.text ? { ...l, priority: 'high' } : l));
     try { return ctx.comms?.play?.(out) ?? simResolved(); } catch (e) { ctx.recordError?.('level02', e); return simResolved(); }
   };
   // ── one-per-save hints (flag hint:<id>), as the level script's `hint()` ──

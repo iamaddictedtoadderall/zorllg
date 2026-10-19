@@ -435,7 +435,7 @@ export class Convoy {
     L.mission?.run?.([{ objective: { add: 'o_free' + n } }, { objective: { text: ['o_free' + n, `Cut ${rig.name} free: shoot or blade the cable`] } }]);
     L.terms.request('harpooned');
     L.runHint('cable');
-    L.playComms('c_hooked', { rig: rig.name });
+    L.playComms('c_hooked', { rig: rig.name }, { urgent: true });
     ctx.events.emit('l02:hooked', { id: rig.id, name: rig.name, n });
     this.saveFlags();
     if (this.bandBroken || this.nextInstant || o.instant) { this.nextInstant = false; this.loseHook(h); return h; }
@@ -490,7 +490,7 @@ export class Convoy {
     r.hook = null; r.state = 'hauled';
     this.lost.add(r.id);
     L.mission?.run?.([{ objective: { fail: 'o_free' + h.n } }, { objective: { remove: 'o_free' + h.n } }]);
-    L.playComms('c_lost', { rig: r.name });
+    L.playComms('c_lost', { rig: r.name }, { urgent: true });
     L.terms.request('rig_lost');
     h.puller.onCableEnd?.('won');
     L.counters.lost = (L.counters.lost || 0) + 1;

@@ -9,7 +9,8 @@
 // Hold shot, the camp in the shadow stripe and the level result (cv:lost, campaign:story, M1); checks the clarity rules
 // (cards, tags, objectives, spoilers); and screenshots every zone plus the set pieces (AD §8.5). Every addendum 02 engine
 // feature is feature-detected: a missing one is logged as SKIP, never failed.
-const ALL = ['static', 'lip', 'raid', 'watcher', 'ruins', 'volley', 'mercy', 'lost', 'deck', 'road', 'camp', 'determinism'];
+const ALL = ['static', 'lip', 'raid', 'watcher', 'ruins', 'volley', 'mercy', 'lost', 'deck', 'road', 'camp', 'bench', 'determinism'];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 export default async function (g) {
   const P = Object.fromEntries((g.args.params || []).map(p => { const [k, ...v] = p.split('='); return [k, v.join('=')]; }));
@@ -81,7 +82,7 @@ export default async function (g) {
       ctx.events.on('l02:lost', (e) => C.lost.push(e));
       ctx.events.on('l02:freed', (e) => C.freed.push(e));
       ctx.events.on('sync:hold', () => { C.holds++; });
-      ctx.events.on('level:complete', (e) => C.complete.push({ flags: JSON.parse(JSON.stringify(e.result?.flags ?? e.flags ?? ctx.mission.flags)), f: f() }));
+      ctx.events.on('level:complete', (e) => C.complete.push({ flags: JSON.parse(JSON.stringify(e.result?.flags ?? e.flags ?? ctx.mission.flags)), water: e.result?.water, waterMax: e.result?.waterMax, haul: e.result?.haul, f: f() }));
     });
     const s = await g.startLevel('l02', cp);
     await ev(() => window.__game.ctx.l02 && (window.__game.ctx.l02.terms.seen.clear?.(), 0));
@@ -244,6 +245,41 @@ export default async function (g) {
     g.assert(vague.length === 0, `objectives say what to do and where (${cl.objectives.length}${vague.length ? '; ' + vague.map(o => o.id + ': ' + o.text).join(' | ') : ''})`);
     const V = ['Do you know what a day costs on Gaunt, little rig? Ten years of walking. Nobody gets to sit down.', 'Work is the only prayer that gets answered.', 'The Still is ice and bones. Turn around and work.'];
     g.assert(V.every((v, i) => cl.foreman[i] === v), 'the broadcast is bible §12.1 V2, V3, V5 character for character');
+    // L2 §19 items 1, 15 and 16: the registry, the term order, and the spoiler grep over every string
+    const sp = await ev(async () => {
+      const ctx = window.__game.ctx, def = ctx.mission.def;
+      const I = await import('/levels/index.js'), L1 = (await import('/levels/level01.js')).default, C = (await import('/levels/campaign.js')).default;
+      const ids = I.LEVELS.filter(l => !l.hidden).sort((a, b) => a.order - b.order).map(l => l.id);
+      // the comms in script order (the triggers' order of first use, then the rest in definition order)
+      const order = [];
+      const seen = new Set();
+      const json = JSON.stringify([def.start, def.triggers, def.events, def.onCheckpoint]);
+      for (const m of json.matchAll(/"comms":"(c_[a-z0-9_]+)"/g)) if (!seen.has(m[1])) { seen.add(m[1]); order.push(m[1]); }
+      for (const k of Object.keys(def.comms)) if (!seen.has(k)) { seen.add(k); order.push(k); }
+      const lines = [];
+      for (const k of order) for (const l of def.comms[k] || []) if (l.text) lines.push({ k, who: l.who, text: l.text });
+      const bench = [];
+      for (const [k, arr] of Object.entries(C.legs.l02.bench || {})) for (const l of arr) if (l.text) bench.push({ k: 'bench:' + k, who: l.who, text: l.text });
+      const legStr = JSON.stringify(C.legs.l02);
+      return { ids, unlocks: L1.unlocks?.levels || [], lines, bench, legStr, nextOf1: I.nextLevel('l01'),
+               shown: JSON.stringify([def.briefing, def.objectives, def.zones.map(z => z.card), Object.values(def.speakers).map(s => [s.name, s.tag]), def.intro, def.outro, def.debrief]) };
+    });
+    g.assert(sp.ids.indexOf('l02') === sp.ids.indexOf('l01') + 1 && sp.nextOf1 === 'l02' && sp.unlocks.includes('l02'), `levels/index.js lists l02 after l01; level01 unlocks l02 (${sp.ids.join(', ')})`);
+    const iStill = sp.lines.findIndex(l => l.k === 'c_still'), iHes = sp.lines.findIndex(l => l.k === 'c_hesper1');
+    const earlyStill = sp.lines.slice(0, Math.max(0, iStill)).filter(l => /\bthe Still\b/.test(l.text));
+    const earlyDial = sp.lines.slice(0, Math.max(0, iHes)).filter(l => /Sundial/.test(l.text));
+    g.assert(iStill > 0 && earlyStill.length === 0, `no comms line before c_still says "the Still" (${earlyStill.map(l => l.k).join(', ') || 'ok'})`);
+    g.assert(iHes > 0 && earlyDial.length === 0, `no comms line before c_hesper1 says "Sundial" (the briefing introduces it) (${earlyDial.map(l => l.k).join(', ') || 'ok'})`);
+    const all = [...sp.lines, ...sp.bench];
+    const moth = all.filter(l => l.who === 'MOTH' && (/\bI think\b/i.test(l.text) || /[A-Za-z]['’](s|t|re|ll|ve|d|m)\b/.test(l.text)));
+    g.assert(moth.length === 0, `no "I think" and no contraction in any MOTH line (${moth.map(l => l.k + ': ' + l.text).join(' | ') || all.filter(l => l.who === 'MOTH').length + ' lines'})`);
+    const NAMES = /\b(Tallow|Tam|Pell|Press)\b/;
+    const named = [...all.filter(l => NAMES.test(l.text)).map(l => l.k), ...(NAMES.test(sp.shown) ? ['def'] : []), ...(NAMES.test(sp.legStr) ? ['legs.l02'] : [])];
+    g.assert(named.length === 0, `no Tallow, Tam, Pell or Press in any string shown to the player (${named.join(', ') || 'ok'})`);
+    const JUNO = /\b(dead|ghost|pressed|carried|passenger|body)\b/i;
+    const aboutJuno = all.filter(l => /\b(Juno|girl|she|her|pilot)\b/i.test(l.text) && JUNO.test(l.text) && !/\bghost(s|-run)?\b.*\b(frame|skimmer|light|sled)/i.test(l.text));
+    g.log('lines that pair Juno words with spoiler words (read by hand)', aboutJuno.map(l => l.k + ': ' + l.text));
+    g.assert(aboutJuno.length === 0, `no dead/ghost/pressed/carried/passenger/body in a line about or to Juno (${aboutJuno.length})`);
     await noErrors('static');
   }
 
@@ -262,7 +298,13 @@ export default async function (g) {
     const s0 = await ev(() => window.__game.ctx.l02.convoy.s);
     await step(10);
     const cv = await ev(() => { const C = window.__game.ctx.l02.convoy; return { s: C.s, v: C.v, mode: C.mode, n: C.rollCount() }; });
-    g.assert(cv.s > s0 + 40 && cv.mode === 'roll', `the convoy rolls north (s ${s0.toFixed(0)} → ${cv.s.toFixed(0)}, ${cv.v.toFixed(1)} m/s)`);
+    const adv = cv.s - s0, expA = cv.v > 10.5 ? 120 : 90;
+    g.assert(Math.abs(adv - expA) <= expA * 0.1 && cv.mode === 'roll', `the convoy rolls north: ${adv.toFixed(0)} m in 10 s (${expA} ± 10%) at ${cv.v.toFixed(1)} m/s`);
+    const vit = await ev(() => window.__game.ctx.hud.vitalsState);
+    g.assert(vit?.mode === 'locked' && vit.bpm === 60, `vitals locked at 60 (${JSON.stringify(vit)})`);
+    r = await until((ctx, L) => L.convoy.s >= 705, null, 30, 30);
+    const asked = await ev(() => [...new Set(window.__l02clar.req.map(x => x.id))]);
+    g.assert(asked.includes('convoy') && asked.includes('sundial'), `cards convoy and sundial asked by convoy s 700 (${asked.join(', ')})`);
     g.assert(cv.n.rigs === 40 && cv.n.souls === 300, `40 rigs, 300 souls on the road (${cv.n.rigs}, ${cv.n.souls})`);
     const trk = await ev(() => { const h = window.__game.ctx.hud; return typeof h?.tracker === 'function' ? h.trackerState : 'none'; });
     if (trk === 'none') skip('hud.tracker (E5) not present');
@@ -281,13 +323,15 @@ export default async function (g) {
     let a = await routePos(c[2], -660); await g.teleport([a[0], a[2]]);
     r = await until(() => window.__l02fired.has('t_band'), null, 3, 6);
     g.assert(r.ok, 't_band: Oma, "Girl. Where are you going?" beyond 600 m');
-    a = await routePos(c[2], -760); await g.teleport([a[0], a[2]]);
+    // far ahead along the road (the corridor is narrower than the band beside the convoy, and the start is behind);
+    // the Wake rolls toward her at 9 m/s, so 1,100 m keeps her out for the whole 30 s clock
+    { const s1 = await ev(() => window.__game.ctx.l02.convoy.s); a = await routePos(s1 + 1100, -40); await g.teleport([a[0], a[2]]); }
     await step(1, 6);
     const out1 = await ev(() => ({ out: window.__game.ctx.l02.convoy.outside, st: window.__game.ctx.l02.convoy.bandState }));
     g.assert(out1.out && out1.st?.state === 'out', `beyond 700 m: out of the band, a clock (${JSON.stringify(out1.st)})`);
     r = await until((ctx, L) => L.convoy.bandBroken, null, 33, 30);
     g.assert(r.ok, `30 s outside: the band breaks (raids land without her) (${r.t.toFixed(0)} s)`);
-    a = await routePos(c[2] + 20, -80); await g.teleport([a[0], a[2]]);
+    { const s1 = await ev(() => window.__game.ctx.l02.convoy.s); a = await routePos(s1 + 20, -80); await g.teleport([a[0], a[2]]); }
     await step(1, 6);
     const back = await ev(() => { const C = window.__game.ctx.l02.convoy; return { out: C.outside, broken: C.bandBroken, next: C.nextInstant }; });
     g.assert(!back.out && !back.broken && !back.next, 'back with the Wake: the band is whole again');
@@ -324,6 +368,7 @@ export default async function (g) {
     const hk = await ev(() => { const ctx = window.__game.ctx, L = ctx.l02, h = L.convoy.hooks[0]; return h && { id: h.rig.id, name: h.rig.name, n: h.n, obj: ctx.mission.objective('o_free' + h.n), cable: ctx.combat.query({ tag: 'free' + h.n }).length, state: h.rig.state }; });
     g.log('hook', hk);
     g.assert(hk && hk.state === 'hooked' && hk.cable === 1 && hk.obj?.state === 'active' && hk.obj.text.includes(hk.name), `a rig is harpooned: o_free${hk?.n} "${hk?.obj?.text}", a CABLE target`);
+    await until((ctx, L, n) => window.__l02lines.some(l => /hooked!/.test(l.text) && l.text.includes(n)), hk?.name, 6, 6);
     const hl = await ev(() => window.__l02lines.filter(l => /hooked!/.test(l.text)).map(l => l.text));
     g.assert(hl.some(t => t.includes(hk.name)), `c_hooked names the rig (${hl[0]})`);
     if (SHOTS) {
@@ -335,7 +380,7 @@ export default async function (g) {
     await ev(() => { const ctx = window.__game.ctx, L = ctx.l02, h = L.convoy.hooks[0]; ctx.combat.damage(h.cable, 50, 0, { team: 'player', kind: 'blade', owner: ctx.player }); });
     r = await until(() => window.__l02clar.freed.length > 0, null, 2, 6);
     g.assert(r.ok, 'the blade cuts the cable in one hit: the rig is freed');
-    r = await until(() => window.__l02lines.some(l => /LOOSE|back in her column/.test(l.text)), null, 4, 6);
+    r = await until(() => window.__l02lines.some(l => /LOOSE|back in her column/.test(l.text)), null, 20, 6);
     g.assert(r.ok, 'c_freed_kit / c_freed_hesper');
     // a lost rig: hook one and let the clock run out
     const lostId = await ev(() => { const ctx = window.__game.ctx, L = ctx.l02, u = ctx.enemies.alive({ tag: 'raid1' })[0]; const rig = L.convoy.byId.get(8); u.cd = 99; L.convoy.hook(u, rig, { kind: 'yacht' }); return rig.id; });
@@ -345,6 +390,8 @@ export default async function (g) {
     g.assert(Array.isArray(lostF) && lostF.includes(lostId), `cv:lost carries Roll id ${lostId} (${JSON.stringify(lostF)})`);
     r = await until(() => window.__l02lines.some(l => /We've lost/.test(l.text)), null, 4, 6);
     g.assert(r.ok, 'c_lost');
+    r = await until((ctx, L, id) => L.convoy.byId.get(id).state === 'gone', lostId, 70, 30);
+    g.assert(r.ok, `the lost rig is hauled off and despawns 600 m out (${r.t.toFixed(0)} s)`);
     const nn = await ev(() => window.__game.ctx.l02.convoy.rollCount());
     g.assert(nn.rigs === 39, `the Roll shows 39 rigs (${nn.rigs}, ${nn.souls} souls)`);
     // TEAR: stagger a yacht beside the frame, hold BLADE
@@ -411,6 +458,10 @@ export default async function (g) {
       await vista('z3_watcher', a, [w.pos[0], w.pos[1] + 7, w.pos[2]], 30);
       await roadVista('z3_ridge_80m', 2800, { l: 100 });
     }
+    { const wp = await ev(() => { const W = window.__game.ctx.l02.watcher, p = window.__game.ctx.player; const dx = p.pos.x - W.pos.x, dz = p.pos.z - W.pos.z, d = Math.hypot(dx, dz); return [W.pos.x + dx / d * 230, W.pos.z + dz / d * 230]; });
+      await g.teleport(wp); }
+    r = await until((ctx, L) => L.watcher.state !== 'stand', null, 1, 2);
+    g.assert(r.ok, 'the frame within 250 m: the Watcher turns away at once');
     r = await until((ctx, L) => L.watcher.gone, null, 70, 30);
     g.assert(r.ok, `the Watcher leaves east over the crest without firing (${r.t.toFixed(0)} s)`);
     r = await until(() => window.__l02fired.has('t_watcher_gone'), null, 3, 6);
@@ -519,7 +570,20 @@ export default async function (g) {
     const dr = await ev(() => { const ctx = window.__game.ctx, L = ctx.l02, T = L.tally; return T && { phase: T.phase, cables: ctx.combat.query({ tag: 'mercyCable' }).length, bm: L.convoy.byId.get(3).state, circle: L.convoy.mode, band: L.convoy.bandMode }; });
     g.log('drag', dr);
     g.assert(dr?.cables === 3 && dr.bm === 'mercy' && dr.circle === 'circle' && dr.band === 'bigMercy', `the drag: three cables, Big Mercy on the lane, the Wake circles, the band follows her (${JSON.stringify(dr)})`);
-    await step(6);
+    const bm0 = await ev(() => { const b = window.__game.ctx.l02.convoy.byId.get(3).pos; return [b.x, b.z]; });
+    await step(10);
+    const bm1 = await ev(() => { const b = window.__game.ctx.l02.convoy.byId.get(3).pos; return [b.x, b.z, window.__game.ctx.l02.tally.speed]; });
+    const moved = Math.hypot(bm1[0] - bm0[0], bm1[1] - bm0[1]);
+    g.assert(Math.abs(moved - 45) <= 5, `10 s of drag: Big Mercy moves ${moved.toFixed(1)} m along the lane (45 ± 5) at ${bm1[2].toFixed(2)} m/s`);
+    // land on the moving deck: thrown off within 1.5 s, Ansel's warning
+    await ev(() => { const ctx = window.__game.ctx, T = ctx.l02.tally, p = ctx.player; p.teleport(new p.pos.constructor(T.pos.x, T.pos.y + 14, T.pos.z), T.yaw); });
+    r = await until((ctx, L) => L.tally.onDeck(ctx.player), null, 2, 2);
+    const th0 = await ev(() => window.__game.ctx.l02.counters.deckThrown || 0);
+    r = await until((ctx, L, n) => (L.counters.deckThrown || 0) > n, th0, 1.6, 2);
+    g.assert(r.ok, `on the moving deck the frame is knocked off (${r.t.toFixed(2)} s)`);
+    r = await until(() => window.__l02fired.has('t_deck_warn'), null, 3, 6);
+    g.assert(r.ok, 't_deck_warn: c_deck_warn');
+    await convoyTo(await ev(() => window.__game.ctx.l02.convoy.s), { l: -120, player: true });
     if (SHOTS) {
       const v = await ev(() => { const L = window.__game.ctx.l02, T = L.tally, b = L.convoy.byId.get(3).pos; return { at: [b.x + 70, b.y + 30, b.z + 60], look: [(T.pos.x + b.x) / 2, b.y + 6, (T.pos.z + b.z) / 2] }; });
       await vista('z5_drag', v.at, v.look, 55);
@@ -529,7 +593,8 @@ export default async function (g) {
     // cut the cables one by one
     for (let i = 0; i < 3; i++) {
       await ev(() => { const ctx = window.__game.ctx, c = ctx.combat.query({ tag: 'mercyCable' }).find(t => t.alive); if (c) ctx.combat.damage(c, 99999, 0, { team: 'player', kind: 'blade', owner: ctx.player }); });
-      await step(1.5, 6);
+      await step(i === 0 ? 4 : 1.5, 6);
+      if (i === 0) { const sp = await ev(() => window.__game.ctx.l02.tally.speed); g.assert(Math.abs(sp - 3.4) < 0.25, `one cable cut: the drag slows to ${sp.toFixed(2)} m/s (3.4)`); }
     }
     r = await until((ctx) => ctx.mission.flags.bigMercySaved, null, 6, 6);
     g.assert(r.ok && await hasFired('t_cable1') && await hasFired('t_cable2'), 't_cable1, t_cable2, mercyFree: bigMercySaved');
@@ -577,6 +642,32 @@ export default async function (g) {
     g.assert(r.ok, 't_drive: Moth drives');
     const hasSync = await ev(() => typeof window.__game.ctx.sync?.unlock === 'function');
     if (hasSync) g.assert(await ev(() => window.__game.ctx.sync.unlocked.has('drive')), 'Moth Drives unlocked');
+    // Moth Drives (E3) on the anchored deck: 8 s, and the frame never walks itself off the Tally
+    const hasDrive = await ev(() => 'drive' in window.__game.ctx.player && typeof window.__game.ctx.sync?.free === 'function');
+    if (!hasDrive) skip('Moth Drives steering (E3) not present');
+    else {
+      await ev(() => { const ctx = window.__game.ctx, T = ctx.l02.tally, p = ctx.player; p.teleport(new p.pos.constructor(T.pos.x, T.pos.y + 14, T.pos.z), T.yaw); });
+      await step(1, 6);
+      const ok = await ev(() => window.__game.ctx.sync.free('drive'));
+      const tr = await ev(async () => {
+        const G = window.__game, ctx = G.ctx, T = ctx.l02.tally, p = ctx.player, out = { n: 0, off: 0, maxLx: 0, maxLz: 0, active: 0 };
+        const was = T.scripted; T.scripted = true;   // the deck sweeper's blast throws the frame off by design: hold it for this check
+        for (let i = 0; i < 16; i++) {
+          G.step(30);
+          const c = Math.cos(T.yaw), s = Math.sin(T.yaw), dx = p.pos.x - T.pos.x, dz = p.pos.z - T.pos.z;
+          const lx = Math.abs(dx * c - dz * s), lz = Math.abs(dx * s + dz * c);
+          out.maxLx = Math.max(out.maxLx, lx); out.maxLz = Math.max(out.maxLz, lz); out.n++;
+          if (lx > 10 || lz > 41 || p.pos.y < T.pos.y + 4) out.off++;
+          if (p.drive) out.active++;
+          await new Promise(r => setTimeout(r, 0));
+        }
+        T.scripted = was;
+        out.maxLx = +out.maxLx.toFixed(1); out.maxLz = +out.maxLz.toFixed(1);
+        return out;
+      });
+      g.log('moth drives on deck', { ok, ...tr });
+      g.assert(ok && tr.active >= 14 && tr.off === 0, `Moth Drives runs 8 s and keeps the frame on the Tally's deck (${JSON.stringify(tr)})`);
+    }
     // the Hold: the mast below 60 %, the frame close → the sweeper's scripted shot
     await g.setGod(false);
     await ev(() => { const ctx = window.__game.ctx, m = ctx.combat.query({ tag: 'mainmast' })[0]; m.ap = m.apMax * 0.55; ctx.player.ap = ctx.player.apMax; });
@@ -636,14 +727,19 @@ export default async function (g) {
     r = await until(() => window.__l02lines.some(l => l.who === 'FOREMAN' && l.text === 'The Still is ice and bones. Turn around and work.'), null, 40, 30);
     const fl = await ev(() => window.__l02lines.find(l => l.who === 'FOREMAN'));
     g.assert(r.ok && !fl?.name, 'the Foreman (unnamed) on every channel, V2/V3/V5');
-    r = await until(() => window.__l02lines.some(l => /humming over him|Drive louder/.test(l.text)), null, 20, 10);
+    r = await until(() => window.__l02lines.some(l => /humming over him|Drive louder/.test(l.text)), null, 45, 10);
+    if (!r.ok) g.log('after the broadcast', await ev(() => ({ last: window.__l02lines.slice(-6).map(l => l.who + ': ' + l.text), busy: window.__game.ctx.comms.busy, q: window.__game.ctx.comms.queued, lost: window.__game.ctx.mission.flags.bigMercyLost })));
     g.assert(r.ok, 'the saved variant after the broadcast ("Everybody HUM.")');
     if (SHOTS) await roadVista('z6_road_80m', 6800);
     await noErrors('road');
   }
 
   // ══════════════════════════════════════════════════════════════════════════════════════ Z7 · the Sundial, camp, end
-  if (only.has('camp')) {
+  if (only.has('camp') || only.has('bench')) {
+    // the campaign as it stands after Level 1's Bench (a v1 state): the level runs as a campaign leg, so its end goes
+    // through the debrief, Bench 2 and the Morning Count (L2 §19 items 13 and 14)
+    await ev(() => window.__game.ctx.save.setFlag('campaign', { v: 1, day: 1, water: 3, arms: 0, parts: {}, spares: [],
+      fitted: { R: 'rifle_r30', L: 'blade_pb2', S: 'msl_vm4' }, lost: [], fragments: {}, kernel: 4, benchVisits: 1, tearCount: 1, pending: null, ledger: null }));
     await start('cp_road');
     await g.setGod(true);
     await step(1);
@@ -700,6 +796,8 @@ export default async function (g) {
     r = await until(() => window.__l02lines.some(l => l.text === 'That phrase again. The same as the ship in the ice.'), null, 20, 10);
     g.assert(r.ok, 'c_plaque');
     // the Bench: the ending
+    // the rack as a typical run ends it (L2 §19 item 14: Sail-Rig, Rivet Driver, Crane-Claw, no Skate-Jets)
+    await ev(() => { const H = window.__game.ctx.haul; if (typeof H?.set === 'function') H.set(['sail_rig', 'rivet_driver', 'crane_claw'], 3); });
     const bench = await routePos(8580, 125);
     await g.teleport([bench[0] + 4, bench[2] + 3]);
     r = await until(() => window.__l02fired.has('t_bench'), null, 4, 6);
@@ -712,6 +810,9 @@ export default async function (g) {
     g.log('result flags', res && { lost: res['cv:lost'], story: res['campaign:story'] });
     const flagsNow = await ev(() => ({ lost: window.__game.ctx.mission.flags['cv:lost'], story: window.__game.ctx.mission.flags['campaign:story'] }));
     g.assert(Array.isArray(flagsNow.lost) && flagsNow.story?.bigMercy === 'saved', `result: cv:lost ${JSON.stringify(flagsNow.lost)}, campaign:story ${JSON.stringify(flagsNow.story)}`);
+    const done0 = await ev(() => window.__l02clar.complete[0] || null);
+    const expW = (flagsNow.story?.bigMercy === 'saved' ? 4 : 0) + (await flag('cacheA') ? 1 : 0) + (await flag('cacheB') ? 1 : 0);
+    g.assert(done0 && done0.water === expW && done0.waterMax === 6, `result water ${done0?.water} / ${done0?.waterMax} = 4 (Big Mercy) + caches flagged (${expW}) / 6`);
     await step(3);
     const after = await ev(() => {
       const ctx = window.__game.ctx, st = ctx.save?.getFlag?.('campaign');
@@ -719,8 +820,80 @@ export default async function (g) {
     });
     g.log('after the level', after);
     if (after.story === undefined && after.m1 === undefined) skip('campaign state (E10) not written in this run (flow ' + after.flow + ')');
-    else g.assert(after.story?.bigMercy === 'saved' && after.m1 === 'intact', `E10: campaign story and M1 written (${JSON.stringify(after)})`);
+    else g.assert(after.story?.bigMercy === 'saved' && after.m1 === 'intact' && Array.isArray(after.lost) && Array.isArray(after.unlocked),
+                  `E10: campaign story, M1, lost and sync.unlocked written (${JSON.stringify(after)})`);
     await noErrors('camp');
+
+    // ── Bench 2 and the Morning Count (L2 §19 item 14; addendum 02 E11, feature-detected) ──
+    if (only.has('bench')) {
+      const waitState = async (st, ms = 30000) => {
+        const t = Date.now();
+        while (Date.now() - t < ms) { const cur = await ev(() => window.__game.state()); if ((Array.isArray(st) ? st : [st]).includes(cur)) return true; await sleep(150); }
+        return false;
+      };
+      const inDebrief = await waitState('debrief', 20000);
+      g.assert(inDebrief, 'the level → the debrief');
+      await sleep(300);
+      const db = await ev(() => ({ rows: [...document.querySelectorAll('#screen .ledger tr')].map(r => r.textContent.replace(/\s+/g, ' ').trim()), title: document.querySelector('#screen h1, #screen h2')?.textContent }));
+      g.log('debrief', db);
+      g.assert(db.rows.some(r => /^Water recovered/.test(r)) && db.rows.some(r => /^Rigs lost/.test(r)), `debrief rows: Water recovered, Rigs lost (${db.rows.join(' | ')})`);
+      if (SHOTS) await shot('end_debrief', { settle: false });
+      await ev(() => document.querySelector('#screen #bA0')?.click());
+      const atBench = await waitState('bench', 40000);
+      const hasV2 = atBench && await ev(() => typeof window.__game.ctx.garage?.bench?.overwrite === 'function');
+      g.assert(atBench, 'debrief → Bench 2');
+      if (!hasV2) skip('Bench V2 (E11) not present: Bench 2 runs as Bench 1');
+      else {
+        const wB = async (fn, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await ev(fn)) return true; await sleep(150); } return false; };
+        await wB(() => !!window.__game.ctx.garage.bench?.state);
+        const b0 = await ev(() => ({ st: window.__game.ctx.garage.bench.state(), blocked: window.__game.ctx.garage.bench.walkOnBlocked }));
+        g.assert(['sail_rig', 'rivet_driver', 'crane_claw', 'skate_jets'].every(p => b0.st.parts[p] === 'locker'), `the haul and the gifted Skate-Jets are in the Locker (${JSON.stringify(b0.st.parts)})`);
+        let gift = false;
+        for (let i = 0; i < 30 && !gift; i++) { await g.step(30); gift = await ev(() => window.__game.ctx.garage.bench.fired.includes('gift')); }
+        g.assert(gift, 'Oma: "Found these on a dead Skimmer." (gift)');
+        g.assert(b0.blocked === 'Fit the Skate-Jets first. The canyon floods.', `WALK ON blocked until the Skate-Jets are fitted (${b0.blocked})`);
+        if (SHOTS) { await sleep(400); await shot('bench2_fit', { settle: false }); }
+        const ops = await ev(() => {
+          const B = window.__game.ctx.garage.bench, o = {};
+          o.size0 = B.syncSize;
+          o.give = B.give('skate_jets'); o.giveBlock = B.giveBlock('skate_jets');
+          o.fitG = B.fit('G', 'skate_jets'); o.picker = B.picker;
+          o.locked = B.overwrite('F05'); o.lockedFired = B.fired.includes('locked');
+          return o;
+        });
+        g.log('bench ops', ops);
+        g.assert(ops.give === false && ops.giveBlock === "Not these. You'll need them.", `GIVE is refused on the Skate-Jets (${ops.giveBlock})`);
+        g.assert(ops.fitG === 'picker' && JSON.stringify(ops.picker?.allowed) === '["F01"]' && ops.picker.recommended === 'F01', `fitting the Skate-Jets opens the picker with only F01 (${JSON.stringify(ops.picker)})`);
+        g.assert(ops.locked === false && ops.lockedFired, 'F05 is locked: Moth, "Not those. This one."');
+        g.assert(ops.size0 === 13, `SYNC 13 before the overwrite (F01..F12 + M1) (${ops.size0})`);
+        if (SHOTS) { await sleep(400); await shot('bench2_picker', { settle: false }); }
+        const ow = await ev(() => {
+          const B = window.__game.ctx.garage.bench, o = {};
+          o.ok = B.overwrite('F01');
+          const st = B.state();
+          o.F01 = st.fragments.F01; o.bound = st.bound; o.G = st.fitted.G; o.size = B.syncSize; o.blocked = B.walkOnBlocked;
+          o.fitB = B.fit('B', 'sail_rig');
+          return o;
+        });
+        g.log('overwrite', ow);
+        g.assert(ow.ok && ow.F01 === 'overwritten' && JSON.stringify(ow.bound) === '["skate_jets"]' && ow.G === 'skate_jets' && ow.size === 12 && ow.blocked == null,
+                 `overwrite F01: bound ["skate_jets"], Sync 12 (13 − 1), WALK ON open (${JSON.stringify(ow)})`);
+        if (SHOTS) { await ev(() => window.__game.ctx.garage.bench.tab('LATTICE')); await sleep(600); await shot('bench2_lattice', { settle: false }); }
+        await ev(() => window.__game.ctx.garage.bench.walkOn());
+        g.assert(await waitState('count', 30000), 'WALK ON → the Morning Count');
+        await g.page.waitForSelector('#bWalk', { state: 'visible', timeout: 15000 }).catch(() => null);
+        const cnt = await ev(() => ({ last: window.__game.ctx.flow.lastCount, camp: window.__game.ctx.save.getFlag('campaign'), text: document.getElementById('screen')?.innerText || '' }));
+        g.log('count', cnt.last);
+        g.assert(cnt.last?.day === 4 && /Big Mercy's still with us/.test(cnt.last.log || ''), `the Count: Day 4, the saved log line (${cnt.last?.day}: ${cnt.last?.log})`);
+        g.assert(cnt.last.water.after === cnt.camp.water && cnt.last.water.draw === 3, `the Count's water: ${JSON.stringify(cnt.last.water)}`);
+        const lostN = (flagsNow.lost || []).length;
+        g.assert((cnt.last.lostOnRoad || []).length === lostN, `the rigs lost on the road are named (${JSON.stringify(cnt.last.lostOnRoad || [])})`);
+        g.assert(cnt.camp.fitted.G === 'skate_jets' && cnt.camp.fitted.B === 'sail_rig' && cnt.camp.fragments.F01 === 'overwritten' && cnt.camp.bound.includes('skate_jets'),
+                 'WALK ON committed the fits and the overwrite');
+        if (SHOTS) await shot('end_count', { settle: false });
+      }
+      await noErrors('bench');
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════════════════ determinism

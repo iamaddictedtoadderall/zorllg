@@ -38,7 +38,7 @@ function reedTexture() {
   g.clearRect(0, 0, W, H);
   let seed = 9173;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  const root = [0x5a, 0x3a, 0x1e], tip = [0xe0, 0xa8, 0x5a];
+  const root = [0x6e, 0x4e, 0x28], tip = [0xec, 0xc0, 0x74];   // gold steppe reeds (L2 §1.1): darker roots, pale gold heads
   const mix = (t, k = 1) => `rgb(${Math.round((root[0] + (tip[0] - root[0]) * t) * k)},${Math.round((root[1] + (tip[1] - root[1]) * t) * k)},${Math.round((root[2] + (tip[2] - root[2]) * t) * k)})`;
   for (let i = 0; i < 22; i++) {
     const x0 = 20 + rnd() * (W - 40), lean = (rnd() - 0.5) * 60, h = H * (0.62 + rnd() * 0.36), w = 3 + rnd() * 2.5;

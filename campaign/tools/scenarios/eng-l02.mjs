@@ -502,6 +502,7 @@ export default async function (g) {
     g.assert(r.amber?.color === '#ffbf4a' && !r.amber.hungry, 'an ordinary part glints amber');
     await g.camera(await g.eval(() => { const v = window.__e2.fwd(40, 12, 0); return [v.x, v.y, v.z]; }),
                    await g.eval(() => { const v = window.__e2.fwd(60, 10); return [v.x, v.y + 1, v.z]; }), 50);
+    await g.eval(() => window.__e2.c.comms?.clear?.());   // the test level's radio card would cover the left drone
     await shot('glints', { hud: false });
     await g.freeCam(false);
     await g.eval(() => window.__e2.clean());

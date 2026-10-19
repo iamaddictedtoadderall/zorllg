@@ -451,7 +451,7 @@ const def = {
     skyline: [{ kind: 'smoke', at: { azimuth: 10, dist: 14000 }, size: 3, color: '#4a3a30' }],
     ambience: [],
     scatter: [
-      { prop: 'reed_clump', density: 350, scale: [0.85, 1.25], slope: [0, 0.45], avoidRoute: true, maxDist: 250, seed: 21 },
+      { prop: 'reed_clump', density: 1000, scale: [0.95, 1.45], slope: [0, 0.45], avoidRoute: true, maxDist: 250, seed: 21 },
       { prop: 'scrub', density: 30, scale: [0.6, 1.4], slope: [0, 0.5], maxDist: 180 },
       { prop: 'rock_medium', density: 2, scale: [1, 3], slope: [0.1, 0.8], collide: true, collideMinScale: 2.4 },
       { prop: 'boulder', density: 0.3, scale: [4, 9], avoidRoute: true, collide: true, castShadow: true },
